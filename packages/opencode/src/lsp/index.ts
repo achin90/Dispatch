@@ -12,7 +12,7 @@ import { Config } from "../config/config"
 import { Flag } from "@/flag/flag"
 import { Process } from "../util/process"
 import { spawn as lspspawn } from "./launch"
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Fiber, Layer, ServiceMap } from "effect"
 
 export namespace LSP {
   const log = Log.create({ service: "lsp" })
@@ -161,54 +161,61 @@ export namespace LSP {
       const broken = new Set<string>()
       const spawning = new Map<string, Promise<LSPClient.Info | undefined>>()
 
-      // Load server configs
-      yield* Effect.promise(async () => {
-        const cfg = await Config.get()
+      // Load server configs lazily — forkScoped so it doesn't block layer construction
+      const load = Effect.fn("LSP.load")(function* () {
+        yield* Effect.promise(async () => {
+          const cfg = await Config.get()
 
-        if (cfg.lsp === false) {
-          log.info("all LSPs are disabled")
-          return
-        }
-
-        for (const server of Object.values(LSPServer)) {
-          servers[server.id] = server
-        }
-
-        filterExperimentalServers(servers)
-
-        for (const [name, item] of Object.entries(cfg.lsp ?? {})) {
-          const existing = servers[name]
-          if (item.disabled) {
-            log.info(`LSP server ${name} is disabled`)
-            delete servers[name]
-            continue
+          if (cfg.lsp === false) {
+            log.info("all LSPs are disabled")
+            return
           }
-          servers[name] = {
-            ...existing,
-            id: name,
-            root: existing?.root ?? (async () => directory),
-            extensions: item.extensions ?? existing?.extensions ?? [],
-            spawn: async (root) => {
-              return {
-                process: lspspawn(item.command[0], item.command.slice(1), {
-                  cwd: root,
-                  env: {
-                    ...process.env,
-                    ...item.env,
-                  },
-                }),
-                initialization: item.initialization,
-              }
-            },
-          }
-        }
 
-        log.info("enabled LSP servers", {
-          serverIds: Object.values(servers)
-            .map((server) => server.id)
-            .join(", "),
+          for (const server of Object.values(LSPServer)) {
+            servers[server.id] = server
+          }
+
+          filterExperimentalServers(servers)
+
+          for (const [name, item] of Object.entries(cfg.lsp ?? {})) {
+            const existing = servers[name]
+            if (item.disabled) {
+              log.info(`LSP server ${name} is disabled`)
+              delete servers[name]
+              continue
+            }
+            servers[name] = {
+              ...existing,
+              id: name,
+              root: existing?.root ?? (async () => directory),
+              extensions: item.extensions ?? existing?.extensions ?? [],
+              spawn: async (root) => {
+                return {
+                  process: lspspawn(item.command[0], item.command.slice(1), {
+                    cwd: root,
+                    env: {
+                      ...process.env,
+                      ...item.env,
+                    },
+                  }),
+                  initialization: item.initialization,
+                }
+              },
+            }
+          }
+
+          log.info("enabled LSP servers", {
+            serverIds: Object.values(servers)
+              .map((server) => server.id)
+              .join(", "),
+          })
         })
       })
+
+      const loadFiber = yield* load().pipe(
+        Effect.catchCause((cause) => Effect.sync(() => log.error("init failed", { cause }))),
+        Effect.forkScoped,
+      )
 
       // Cleanup: shut down all LSP clients when the scope is closed
       yield* Effect.addFinalizer(() =>
@@ -314,10 +321,11 @@ export namespace LSP {
       }
 
       const init = Effect.fn("LSP.init")(function* () {
-        // State is initialized in the layer body above; this is a no-op now
+        yield* Fiber.join(loadFiber)
       })
 
       const status = Effect.fn("LSP.status")(function* () {
+        yield* Fiber.join(loadFiber)
         const result: Status[] = []
         for (const client of clients) {
           result.push({
@@ -331,6 +339,7 @@ export namespace LSP {
       })
 
       const hasClients = Effect.fn("LSP.hasClients")(function* (file: string) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           const extension = path.parse(file).ext || file
           for (const server of Object.values(servers)) {
@@ -345,6 +354,7 @@ export namespace LSP {
       })
 
       const touchFile = Effect.fn("LSP.touchFile")(function* (input: string, waitForDiagnostics?: boolean) {
+        yield* Fiber.join(loadFiber)
         yield* Effect.promise(async () => {
           log.info("touching file", { file: input })
           const matched = await getClientsForFile(input)
@@ -361,6 +371,7 @@ export namespace LSP {
       })
 
       const diagnostics = Effect.fn("LSP.diagnostics")(function* () {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           const results: Record<string, LSPClient.Diagnostic[]> = {}
           for (const result of await runAllClients(async (client) => client.diagnostics)) {
@@ -375,6 +386,7 @@ export namespace LSP {
       })
 
       const hover = Effect.fn("LSP.hover")(function* (input: { file: string; line: number; character: number }) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runForFile(input.file, (client) => {
             return client.connection
@@ -393,6 +405,7 @@ export namespace LSP {
       })
 
       const workspaceSymbol = Effect.fn("LSP.workspaceSymbol")(function* (query: string) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runAllClients((client) =>
             client.connection
@@ -407,6 +420,7 @@ export namespace LSP {
       })
 
       const documentSymbol = Effect.fn("LSP.documentSymbol")(function* (uri: string) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           const file = fileURLToPath(uri)
           return runForFile(file, (client) =>
@@ -428,6 +442,7 @@ export namespace LSP {
         line: number
         character: number
       }) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runForFile(input.file, (client) =>
             client.connection
@@ -445,6 +460,7 @@ export namespace LSP {
         line: number
         character: number
       }) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runForFile(input.file, (client) =>
             client.connection
@@ -463,6 +479,7 @@ export namespace LSP {
         line: number
         character: number
       }) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runForFile(input.file, (client) =>
             client.connection
@@ -480,6 +497,7 @@ export namespace LSP {
         line: number
         character: number
       }) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runForFile(input.file, (client) =>
             client.connection
@@ -497,6 +515,7 @@ export namespace LSP {
         line: number
         character: number
       }) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runForFile(input.file, async (client) => {
             const items = (await client.connection
@@ -518,6 +537,7 @@ export namespace LSP {
         line: number
         character: number
       }) {
+        yield* Fiber.join(loadFiber)
         return yield* Effect.promise(async () => {
           return runForFile(input.file, async (client) => {
             const items = (await client.connection
