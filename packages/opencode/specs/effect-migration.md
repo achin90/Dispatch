@@ -140,5 +140,5 @@ Still open and likely worth migrating:
 - [ ] `SessionCompaction`
 - [ ] `Provider`
 - [ ] `Project`
-- [ ] `LSP`
+- [x] `LSP`
 - [ ] `MCP`

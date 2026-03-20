@@ -3,6 +3,7 @@ import { File } from "@/file"
 import { FileTime } from "@/file/time"
 import { FileWatcher } from "@/file/watcher"
 import { Format } from "@/format"
+import { LSP } from "@/lsp"
 import { PermissionNext } from "@/permission"
 import { Instance } from "@/project/instance"
 import { Vcs } from "@/project/vcs"
@@ -26,6 +27,7 @@ export type InstanceServices =
   | File.Service
   | Skill.Service
   | Snapshot.Service
+  | LSP.Service
 
 // NOTE: LayerMap only passes the key (directory string) to lookup, but we need
 // the full instance context (directory, worktree, project). We read from the
@@ -46,6 +48,7 @@ function lookup(_key: string) {
     Layer.fresh(File.layer),
     Layer.fresh(Skill.defaultLayer),
     Layer.fresh(Snapshot.defaultLayer),
+    Layer.fresh(LSP.layer),
   ).pipe(Layer.provide(ctx))
 }
 
