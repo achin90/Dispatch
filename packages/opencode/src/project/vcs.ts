@@ -2,7 +2,7 @@ import { Effect, Layer, ServiceMap } from "effect"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect/instance-state"
-import { makeRunPromise } from "@/effect/run-service"
+import { makeRuntime } from "@/effect/run-service"
 import { FileWatcher } from "@/file/watcher"
 import { Log } from "@/util/log"
 import { git } from "@/util/git"
@@ -99,7 +99,7 @@ export namespace Vcs {
     }),
   )
 
-  const runPromise = makeRunPromise(Service, layer)
+  const { runPromise } = makeRuntime(Service, layer)
 
   export function init() {
     return runPromise((svc) => svc.init())
