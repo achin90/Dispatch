@@ -13,6 +13,7 @@ import { fn } from "../util/fn"
 import { Log } from "../util/log"
 import { Process } from "../util/process"
 import { git } from "../util/git"
+import { errorMessage } from "../util/error"
 import { BusEvent } from "@/bus/bus-event"
 import { GlobalBus } from "@/bus/global"
 
@@ -385,7 +386,7 @@ export namespace Worktree {
         })
           .then(() => true)
           .catch((error) => {
-            const message = error instanceof Error ? error.message : String(error)
+            const message = errorMessage(error)
             log.error("worktree bootstrap failed", { directory: info.directory, message })
             GlobalBus.emit("event", {
               directory: info.directory,
@@ -473,7 +474,7 @@ export namespace Worktree {
           retryDelay: 100,
         })
         .catch((error) => {
-          const message = error instanceof Error ? error.message : String(error)
+          const message = errorMessage(error)
           throw new RemoveFailedError({ message: message || "Failed to remove git worktree directory" })
         })
 

@@ -1,4 +1,5 @@
 import { Process } from "./process"
+import { errorMessage } from "./error"
 
 export interface GitResult {
   exitCode: number
@@ -30,6 +31,6 @@ export async function git(args: string[], opts: { cwd: string; env?: Record<stri
       exitCode: 1,
       text: () => "",
       stdout: Buffer.alloc(0),
-      stderr: Buffer.from(error instanceof Error ? error.message : String(error)),
+      stderr: Buffer.from(errorMessage(error)),
     }))
 }
