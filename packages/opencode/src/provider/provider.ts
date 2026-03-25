@@ -1195,6 +1195,12 @@ export namespace Provider {
     const filtered: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
     for (const [id, provider] of Object.entries(providers)) {
       if (id === "anthropic") {
+        // The Claude Agent SDK enables the 1M context beta automatically
+        for (const model of Object.values(provider.models)) {
+          if (model.limit.context < 1_000_000) {
+            model.limit.context = 1_000_000
+          }
+        }
         filtered[id as ProviderID] = provider
       }
     }

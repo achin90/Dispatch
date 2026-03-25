@@ -71,6 +71,7 @@ export async function createClaudeSdkQuery(
     systemPrompt: input.systemPrompt,
     cwd: input.cwd ?? process.cwd(),
     env,
+    betas: ["context-1m-2025-08-07"],
     permissionMode: input.permissionMode ?? "default",
     allowedTools: input.allowedTools,
     disallowedTools: input.disallowedTools,
