@@ -1,0 +1,319 @@
+import { describe, test, expect } from "bun:test"
+import {
+  extractPatterns,
+  derivePermissionName,
+  createCanUseToolBridge,
+} from "../../src/session/claude-sdk-permissions"
+import { Bus } from "../../src/bus"
+import { Permission } from "../../src/permission"
+import { Instance } from "../../src/project/instance"
+import { SessionID } from "../../src/session/schema"
+import { tmpdir } from "../fixture/fixture"
+
+const sid = SessionID.make("ses_test-perms")
+
+describe("claude-sdk permissions", () => {
+  describe("extractPatterns", () => {
+    test("Read tool extracts file_path", () => {
+      expect(extractPatterns("Read", { file_path: "/tmp/test.ts" })).toEqual(["/tmp/test.ts"])
+    })
+
+    test("Write tool extracts file_path", () => {
+      expect(extractPatterns("Write", { file_path: "/tmp/out.ts", content: "hello" })).toEqual(["/tmp/out.ts"])
+    })
+
+    test("Edit tool extracts file_path", () => {
+      expect(extractPatterns("Edit", { file_path: "/tmp/x.ts", old_string: "a", new_string: "b" })).toEqual([
+        "/tmp/x.ts",
+      ])
+    })
+
+    test("Bash tool extracts command", () => {
+      expect(extractPatterns("Bash", { command: "npm install" })).toEqual(["npm install"])
+    })
+
+    test("Glob tool extracts pattern", () => {
+      expect(extractPatterns("Glob", { pattern: "**/*.ts" })).toEqual(["**/*.ts"])
+    })
+
+    test("Grep tool extracts path when present", () => {
+      expect(extractPatterns("Grep", { path: "/src", pattern: "TODO" })).toEqual(["/src"])
+    })
+
+    test("Grep tool extracts pattern when no path", () => {
+      expect(extractPatterns("Grep", { pattern: "TODO" })).toEqual(["TODO"])
+    })
+
+    test("WebFetch extracts url", () => {
+      expect(extractPatterns("WebFetch", { url: "https://example.com" })).toEqual(["https://example.com"])
+    })
+
+    test("WebSearch extracts query", () => {
+      expect(extractPatterns("WebSearch", { query: "test query" })).toEqual(["test query"])
+    })
+
+    test("NotebookEdit extracts notebook_path", () => {
+      expect(extractPatterns("NotebookEdit", { notebook_path: "/tmp/nb.ipynb" })).toEqual(["/tmp/nb.ipynb"])
+    })
+
+    test("unknown tool with file_path falls back to file_path", () => {
+      expect(extractPatterns("CustomTool", { file_path: "/x" })).toEqual(["/x"])
+    })
+
+    test("unknown tool with path falls back to path", () => {
+      expect(extractPatterns("CustomTool", { path: "/y" })).toEqual(["/y"])
+    })
+
+    test("unknown tool with command falls back to command", () => {
+      expect(extractPatterns("CustomTool", { command: "do thing" })).toEqual(["do thing"])
+    })
+
+    test("unknown tool with no recognized fields falls back to tool name", () => {
+      expect(extractPatterns("CustomTool", { foo: "bar" })).toEqual(["CustomTool"])
+    })
+
+    test("MCP tool with no recognized fields falls back to tool name", () => {
+      expect(extractPatterns("mcp__github__list_issues", { repo: "test" })).toEqual([
+        "mcp__github__list_issues",
+      ])
+    })
+  })
+
+  describe("derivePermissionName", () => {
+    test("maps Read to read", () => {
+      expect(derivePermissionName("Read")).toBe("read")
+    })
+
+    test("maps Write to write", () => {
+      expect(derivePermissionName("Write")).toBe("write")
+    })
+
+    test("maps Edit to edit", () => {
+      expect(derivePermissionName("Edit")).toBe("edit")
+    })
+
+    test("maps Bash to bash", () => {
+      expect(derivePermissionName("Bash")).toBe("bash")
+    })
+
+    test("maps Glob to glob", () => {
+      expect(derivePermissionName("Glob")).toBe("glob")
+    })
+
+    test("maps Grep to grep", () => {
+      expect(derivePermissionName("Grep")).toBe("grep")
+    })
+
+    test("maps WebFetch to webfetch", () => {
+      expect(derivePermissionName("WebFetch")).toBe("webfetch")
+    })
+
+    test("maps WebSearch to websearch", () => {
+      expect(derivePermissionName("WebSearch")).toBe("websearch")
+    })
+
+    test("lowercases unknown tools", () => {
+      expect(derivePermissionName("CustomTool")).toBe("customtool")
+    })
+
+    test("passes MCP tools through lowercased", () => {
+      expect(derivePermissionName("mcp__github__list_issues")).toBe("mcp__github__list_issues")
+    })
+  })
+
+  describe("createCanUseToolBridge", () => {
+    const defaultCallOptions = { signal: AbortSignal.any([]), toolUseID: "toolu_test" }
+
+    async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
+      await using tmp = await tmpdir({ git: true })
+      return Instance.provide({ directory: tmp.path, fn })
+    }
+
+    test("publishes Permission.Event.Asked and resolves allow on 'once' reply", async () => {
+      await withInstance(async () => {
+        const bridge = createCanUseToolBridge({ sessionID: sid })
+        let capturedPermission: string | undefined
+        let capturedPatterns: string[] | undefined
+        let capturedSessionID: unknown
+
+        // Subscribe MUST auto-reply so bridge() resolves
+        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
+          capturedPermission = event.properties.permission
+          capturedPatterns = event.properties.patterns
+          capturedSessionID = event.properties.sessionID
+          Bus.publish(Permission.Event.Replied, {
+            sessionID: sid,
+            requestID: event.properties.id,
+            reply: "once",
+          })
+        })
+
+        try {
+          const result = await bridge("Read", { file_path: "/tmp/test.ts" }, defaultCallOptions)
+          expect(result.behavior).toBe("allow")
+          expect(capturedPermission).toBe("read")
+          expect(capturedPatterns).toEqual(["/tmp/test.ts"])
+          expect(capturedSessionID).toBe(sid)
+        } finally {
+          unsubscribe()
+        }
+      })
+    })
+
+    test("publishes Permission.Event.Asked and resolves allow on 'always' reply", async () => {
+      await withInstance(async () => {
+        const bridge = createCanUseToolBridge({ sessionID: sid })
+
+        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
+          Bus.publish(Permission.Event.Replied, {
+            sessionID: sid,
+            requestID: event.properties.id,
+            reply: "always",
+          })
+        })
+
+        try {
+          const result = await bridge("Bash", { command: "echo hi" }, defaultCallOptions)
+          expect(result.behavior).toBe("allow")
+        } finally {
+          unsubscribe()
+        }
+      })
+    })
+
+    test("publishes Permission.Event.Asked and resolves deny on 'reject' reply", async () => {
+      await withInstance(async () => {
+        const bridge = createCanUseToolBridge({ sessionID: sid })
+
+        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
+          Bus.publish(Permission.Event.Replied, {
+            sessionID: sid,
+            requestID: event.properties.id,
+            reply: "reject",
+          })
+        })
+
+        try {
+          const result = await bridge("Write", { file_path: "/etc/passwd", content: "bad" }, defaultCallOptions)
+          expect(result.behavior).toBe("deny")
+          if (result.behavior === "deny") {
+            expect(result.message).toBe("User rejected permission")
+          }
+        } finally {
+          unsubscribe()
+        }
+      })
+    })
+
+    test("resolves deny when signal is already aborted", async () => {
+      await withInstance(async () => {
+        const bridge = createCanUseToolBridge({ sessionID: sid })
+
+        const result = await bridge(
+          "Read",
+          { file_path: "/tmp/x" },
+          { signal: AbortSignal.abort(), toolUseID: "toolu_test" },
+        )
+
+        expect(result.behavior).toBe("deny")
+        if (result.behavior === "deny") {
+          expect(result.message).toBe("Request aborted")
+        }
+      })
+    })
+
+    test("resolves deny when signal aborts while waiting", async () => {
+      await withInstance(async () => {
+        const bridge = createCanUseToolBridge({ sessionID: sid })
+        const controller = new AbortController()
+
+        const resultPromise = bridge(
+          "Read",
+          { file_path: "/tmp/x" },
+          { signal: controller.signal, toolUseID: "toolu_test" },
+        )
+
+        setTimeout(() => controller.abort(), 10)
+
+        const result = await resultPromise
+        expect(result.behavior).toBe("deny")
+        if (result.behavior === "deny") {
+          expect(result.message).toBe("Request aborted")
+        }
+      })
+    })
+
+    test("ignores replies for other request IDs", async () => {
+      await withInstance(async () => {
+        const bridge = createCanUseToolBridge({ sessionID: sid })
+
+        let capturedRequestID: unknown
+
+        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
+          capturedRequestID = event.properties.id
+
+          // Publish a reply with a WRONG request ID — should be ignored
+          Bus.publish(Permission.Event.Replied, {
+            sessionID: sid,
+            requestID: "wrong-id" as any,
+            reply: "once",
+          })
+
+          // Then publish the correct reply after a tick
+          setTimeout(() => {
+            Bus.publish(Permission.Event.Replied, {
+              sessionID: sid,
+              requestID: event.properties.id,
+              reply: "reject",
+            })
+          }, 10)
+        })
+
+        try {
+          const result = await bridge(
+            "Read",
+            { file_path: "/tmp/x" },
+            { signal: AbortSignal.any([]), toolUseID: "toolu_test" },
+          )
+
+          // Should get deny from the correct reply, not allow from the wrong one
+          expect(result.behavior).toBe("deny")
+          expect(capturedRequestID).toBeDefined()
+        } finally {
+          unsubscribe()
+        }
+      })
+    })
+
+    test("request contains tool metadata", async () => {
+      await withInstance(async () => {
+        const bridge = createCanUseToolBridge({ sessionID: sid })
+        let capturedRequest: Permission.Request | undefined
+
+        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
+          capturedRequest = event.properties
+          Bus.publish(Permission.Event.Replied, {
+            sessionID: sid,
+            requestID: event.properties.id,
+            reply: "once",
+          })
+        })
+
+        try {
+          await bridge(
+            "Bash",
+            { command: "rm -rf /tmp/test" },
+            { signal: AbortSignal.any([]), toolUseID: "toolu_test", title: "Claude wants to run: rm -rf /tmp/test" },
+          )
+
+          expect(capturedRequest).toBeDefined()
+          expect(capturedRequest!.metadata.toolName).toBe("Bash")
+          expect(capturedRequest!.metadata.title).toBe("Claude wants to run: rm -rf /tmp/test")
+          expect(capturedRequest!.always).toEqual(["rm -rf /tmp/test"])
+        } finally {
+          unsubscribe()
+        }
+      })
+    })
+  })
+})

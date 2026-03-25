@@ -34,6 +34,7 @@
     }
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.81",
     "@babel/core": "7.28.4",
     "@effect/language-service": "0.79.0",
     "@octokit/webhooks-types": "7.6.1",
