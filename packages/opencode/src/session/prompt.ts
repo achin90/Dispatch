@@ -648,7 +648,7 @@ export namespace SessionPrompt {
       const sdkQuery = await createClaudeSdkQuery({
         prompt: userPromptText,
         sessionID,
-        model: `${model.providerID}/${model.id}`,
+        model: model.id,
         systemPrompt,
         cwd: Instance.directory,
         abortController: controller,

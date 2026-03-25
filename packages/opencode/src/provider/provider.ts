@@ -1180,7 +1180,15 @@ export namespace Provider {
   })
 
   export async function list() {
-    return state().then((state) => state.providers)
+    const providers = await state().then((state) => state.providers)
+    // Filter to only Anthropic/Claude models — the Claude Agent SDK only supports these
+    const filtered: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
+    for (const [id, provider] of Object.entries(providers)) {
+      if (id === "anthropic") {
+        filtered[id as ProviderID] = provider
+      }
+    }
+    return filtered
   }
 
   async function getSDK(model: Model) {
