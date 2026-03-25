@@ -93,7 +93,7 @@ mock.module("@modelcontextprotocol/sdk/client/auth.js", () => ({
 // Mock Client that delegates to per-name MockClientState
 mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
   Client: class MockClient {
-    _state: MockClientState
+    _state!: MockClientState
     transport: any
 
     constructor(_opts: any) {
