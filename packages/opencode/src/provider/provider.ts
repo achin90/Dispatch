@@ -1181,6 +1181,16 @@ export namespace Provider {
 
   export async function list() {
     const providers = await state().then((state) => state.providers)
+    // The Claude Agent SDK handles auth — always include Anthropic even without a local API key
+    const anthropicID = ProviderID.make("anthropic")
+    if (!providers[anthropicID]) {
+      const modelsDev = await ModelsDev.get()
+      const anthropicDb = modelsDev["anthropic"]
+      if (anthropicDb) {
+        providers[anthropicID] = fromModelsDevProvider(anthropicDb)
+        providers[anthropicID].source = "env"
+      }
+    }
     // Filter to only Anthropic/Claude models — the Claude Agent SDK only supports these
     const filtered: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
     for (const [id, provider] of Object.entries(providers)) {
