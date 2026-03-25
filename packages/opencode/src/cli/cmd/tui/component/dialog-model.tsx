@@ -83,7 +83,7 @@ export function DialogModel(props: { providerID?: string }) {
             title: info.name ?? model,
             description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
               ? "(Favorite)"
-              : undefined,
+              : (info.options?.sdkDescription as string | undefined),
             category: connected() ? provider.name : undefined,
             disabled: provider.id === "opencode" && model.includes("-nano"),
             footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
