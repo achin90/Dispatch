@@ -1179,51 +1179,108 @@ export namespace Provider {
     }
   })
 
-  // Models that support the [1m] context variant in the Claude Agent SDK
-  const MODELS_WITH_1M = new Set([
-    "claude-opus-4-6",
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-  ])
+  // Claude Agent SDK model metadata — maps SDK model aliases to concrete info.
+  // This is the source of truth for models, replacing models.dev for the Claude SDK path.
+  const SDK_MODELS: Record<string, {
+    resolves: string
+    name: string
+    context: number
+    output: number
+    description: string
+    reasoning: boolean
+  }> = {
+    "default": {
+      resolves: "claude-opus-4-6[1m]",
+      name: "Opus 4.6 (1M context)",
+      context: 1_000_000,
+      output: 64_000,
+      description: "Most capable for complex work",
+      reasoning: true,
+    },
+    "sonnet": {
+      resolves: "claude-sonnet-4-6",
+      name: "Sonnet 4.6",
+      context: 200_000,
+      output: 32_000,
+      description: "Best for everyday tasks",
+      reasoning: true,
+    },
+    "sonnet[1m]": {
+      resolves: "claude-sonnet-4-6[1m]",
+      name: "Sonnet 4.6 (1M context)",
+      context: 1_000_000,
+      output: 32_000,
+      description: "Extra usage · $3/$15 per Mtok",
+      reasoning: true,
+    },
+    "haiku": {
+      resolves: "claude-haiku-4-5-20251001",
+      name: "Haiku 4.5",
+      context: 200_000,
+      output: 8_192,
+      description: "Fastest for quick answers",
+      reasoning: false,
+    },
+  }
+
+  function buildSdkModel(alias: string, info: typeof SDK_MODELS[string], displayName: string): Model {
+    return {
+      id: ModelID.make(alias),
+      providerID: ProviderID.make("anthropic"),
+      name: displayName,
+      family: info.resolves.split("-").slice(0, 2).join("-"),
+      api: {
+        id: info.resolves,
+        url: "https://api.anthropic.com",
+        npm: "@ai-sdk/anthropic",
+      },
+      status: "active",
+      headers: {},
+      options: {
+        sdkDescription: info.description,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+        cache: { read: 0, write: 0 },
+      },
+      limit: {
+        context: info.context,
+        output: info.output,
+      },
+      capabilities: {
+        temperature: true,
+        reasoning: info.reasoning,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: true,
+      },
+      release_date: "2025-05-14",
+    }
+  }
 
   export async function list() {
-    const providers = await state().then((state) => state.providers)
-    // The Claude Agent SDK handles auth — always include Anthropic even without a local API key
+    // Build provider from Claude Agent SDK supported models
     const anthropicID = ProviderID.make("anthropic")
-    if (!providers[anthropicID]) {
-      const modelsDev = await ModelsDev.get()
-      const anthropicDb = modelsDev["anthropic"]
-      if (anthropicDb) {
-        providers[anthropicID] = fromModelsDevProvider(anthropicDb)
-        providers[anthropicID].source = "env"
-      }
+    const models: Record<string, Model> = {}
+
+    // Build models from the static SDK model list
+    for (const [alias, info] of Object.entries(SDK_MODELS)) {
+      models[alias] = buildSdkModel(alias, info, info.name)
     }
-    // Filter to only Anthropic/Claude models — the Claude Agent SDK only supports these
-    const filtered: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
-    for (const [id, provider] of Object.entries(providers)) {
-      if (id === "anthropic") {
-        // Add [1m] context variants for models that support it
-        for (const [modelID, model] of Object.entries(provider.models)) {
-          if (MODELS_WITH_1M.has(modelID)) {
-            const variantID = `${modelID}[1m]`
-            if (!provider.models[variantID]) {
-              provider.models[variantID] = {
-                ...structuredClone(model),
-                id: ModelID.make(variantID),
-                name: `${model.name} (1M context)`,
-                limit: {
-                  ...model.limit,
-                  context: 1_000_000,
-                },
-              }
-            }
-          }
-        }
-        filtered[id as ProviderID] = provider
-      }
+
+    const provider: Info = {
+      id: anthropicID,
+      name: "Anthropic",
+      source: "env",
+      env: ["ANTHROPIC_API_KEY"],
+      options: {},
+      models,
     }
-    return filtered
+
+    return { [anthropicID]: provider } as Record<ProviderID, Info>
   }
 
   async function getSDK(model: Model) {
@@ -1364,6 +1421,14 @@ export namespace Provider {
   }
 
   export async function getModel(providerID: ProviderID, modelID: ModelID) {
+    // Check SDK models first (from list()), then fall back to state()
+    const sdkProviders = await list()
+    const sdkProvider = sdkProviders[providerID]
+    if (sdkProvider) {
+      const sdkModel = sdkProvider.models[modelID]
+      if (sdkModel) return sdkModel
+    }
+
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) {
