@@ -161,43 +161,22 @@ export namespace Snapshot {
               const all = Array.from(new Set([...diff.text.split("\0"), ...other.text.split("\0")].filter(Boolean)))
               if (!all.length) return
 
-              const files = yield* Effect.all(
-                all.map((file) =>
-                  fs.stat(path.join(state.directory, file)).pipe(
-                    Effect.map((info) => ({
-                      file,
-                      info,
-                      size: typeof info.size === "bigint" ? Number(info.size) : info.size,
-                    })),
-                    Effect.catch(() => Effect.succeed({ file, info: undefined, size: undefined })),
-                  ),
-                ),
+              const [drop, keep] = yield* Effect.partition(
+                all,
+                Effect.fn(function* (item) {
+                  const stat = yield* fs.stat(path.join(state.directory, item)).pipe(Effect.catch(() => Effect.void))
+                  if (!stat) return yield* Effect.fail(item)
+                  const size = typeof stat.size === "bigint" ? Number(stat.size) : stat.size
+                  if (stat.type === "File" && size > limit) return false
+                  return item
+                }),
                 { concurrency: 8 },
               )
 
-              const skip = files.filter(
-                (item) => item.info?.type === "File" && typeof item.size === "number" && item.size > limit,
-              )
-              if (skip.length) {
-                log.info("skipping large files", {
-                  limit,
-                  files: skip.map((item) => ({
-                    file: path.join(state.directory, item.file).replaceAll("\\", "/"),
-                    size: item.size,
-                  })),
-                })
-              }
-
-              const keep = files
-                .filter(
-                  (item) =>
-                    item.info && !(item.info.type === "File" && typeof item.size === "number" && item.size > limit),
-                )
-                .map((item) => item.file)
-              const drop = files.filter((item) => !item.info).map((item) => item.file)
-
               if (keep.length) {
-                yield* git([...cfg, ...args(["add", "--", ...keep])], { cwd: state.directory })
+                yield* git([...cfg, ...args(["add", "--", ...keep.filter((x) => x !== false)])], {
+                  cwd: state.directory,
+                })
               }
               if (drop.length) {
                 yield* git([...cfg, ...args(["add", "-u", "--", ...drop])], { cwd: state.directory })
