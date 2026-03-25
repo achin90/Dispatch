@@ -129,20 +129,19 @@ describe("claude-sdk permissions", () => {
       return Instance.provide({ directory: tmp.path, fn })
     }
 
-    test("publishes Permission.Event.Asked and resolves allow on 'once' reply", async () => {
+    test("resolves allow on 'once' reply via Permission.reply()", async () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid })
         let capturedPermission: string | undefined
         let capturedPatterns: string[] | undefined
         let capturedSessionID: unknown
 
-        // Subscribe MUST auto-reply so bridge() resolves
+        // Listen for the Asked event and reply through the Permission system
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
           capturedPermission = event.properties.permission
           capturedPatterns = event.properties.patterns
           capturedSessionID = event.properties.sessionID
-          Bus.publish(Permission.Event.Replied, {
-            sessionID: sid,
+          Permission.reply({
             requestID: event.properties.id,
             reply: "once",
           })
@@ -160,13 +159,12 @@ describe("claude-sdk permissions", () => {
       })
     })
 
-    test("publishes Permission.Event.Asked and resolves allow on 'always' reply", async () => {
+    test("resolves allow on 'always' reply via Permission.reply()", async () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid })
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
-          Bus.publish(Permission.Event.Replied, {
-            sessionID: sid,
+          Permission.reply({
             requestID: event.properties.id,
             reply: "always",
           })
@@ -181,13 +179,12 @@ describe("claude-sdk permissions", () => {
       })
     })
 
-    test("publishes Permission.Event.Asked and resolves deny on 'reject' reply", async () => {
+    test("resolves deny on 'reject' reply via Permission.reply()", async () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid })
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
-          Bus.publish(Permission.Event.Replied, {
-            sessionID: sid,
+          Permission.reply({
             requestID: event.properties.id,
             reply: "reject",
           })
@@ -243,48 +240,6 @@ describe("claude-sdk permissions", () => {
       })
     })
 
-    test("ignores replies for other request IDs", async () => {
-      await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid })
-
-        let capturedRequestID: unknown
-
-        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
-          capturedRequestID = event.properties.id
-
-          // Publish a reply with a WRONG request ID — should be ignored
-          Bus.publish(Permission.Event.Replied, {
-            sessionID: sid,
-            requestID: "wrong-id" as any,
-            reply: "once",
-          })
-
-          // Then publish the correct reply after a tick
-          setTimeout(() => {
-            Bus.publish(Permission.Event.Replied, {
-              sessionID: sid,
-              requestID: event.properties.id,
-              reply: "reject",
-            })
-          }, 10)
-        })
-
-        try {
-          const result = await bridge(
-            "Read",
-            { file_path: "/tmp/x" },
-            { signal: AbortSignal.any([]), toolUseID: "toolu_test" },
-          )
-
-          // Should get deny from the correct reply, not allow from the wrong one
-          expect(result.behavior).toBe("deny")
-          expect(capturedRequestID).toBeDefined()
-        } finally {
-          unsubscribe()
-        }
-      })
-    })
-
     test("request contains tool metadata", async () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid })
@@ -292,8 +247,7 @@ describe("claude-sdk permissions", () => {
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
           capturedRequest = event.properties
-          Bus.publish(Permission.Event.Replied, {
-            sessionID: sid,
+          Permission.reply({
             requestID: event.properties.id,
             reply: "once",
           })

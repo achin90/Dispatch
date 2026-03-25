@@ -1,136 +1,246 @@
-import { Prompt, type PromptRef } from "@tui/component/prompt"
-import { createEffect, createMemo, Match, on, onMount, Show, Switch } from "solid-js"
-import { useTheme } from "@tui/context/theme"
-import { useKeybind } from "@tui/context/keybind"
-import { Logo } from "../component/logo"
-import { Tips } from "../component/tips"
-import { Locale } from "@/util/locale"
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
+import { useTheme, selectedForeground } from "@tui/context/theme"
 import { useSync } from "../context/sync"
-import { Toast } from "../ui/toast"
-import { useArgs } from "../context/args"
 import { useDirectory } from "../context/directory"
-import { useRouteData } from "@tui/context/route"
-import { usePromptRef } from "../context/prompt"
-import { Installation } from "@/installation"
 import { useKV } from "../context/kv"
-import { useCommandDialog } from "../component/dialog-command"
-import { useLocal } from "../context/local"
+import { useRoute } from "@tui/context/route"
+import { useSDK } from "../context/sdk"
+import { useDialog } from "@tui/ui/dialog"
+import { DialogPrompt } from "@tui/ui/dialog-prompt"
+import { Installation } from "@/installation"
+import { Locale } from "@/util/locale"
+import { Spinner } from "@tui/component/spinner"
+import { useKeyboard } from "@opentui/solid"
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
+import { useKeybind } from "@tui/context/keybind"
+import { useExit } from "../context/exit"
 
-// TODO: what is the best way to do this?
-let once = false
+interface AgentEntry {
+  id: string
+  name: string
+  sessionID: string
+  createdAt: number
+}
 
 export function Home() {
   const sync = useSync()
   const kv = useKV()
   const { theme } = useTheme()
-  const route = useRouteData("home")
-  const promptRef = usePromptRef()
-  const command = useCommandDialog()
+  const route = useRoute()
+  const sdk = useSDK()
+  const directory = useDirectory()
+  const dialog = useDialog()
+  const keybind = useKeybind()
+  const exit = useExit()
+  const fg = selectedForeground(theme)
+
   const mcp = createMemo(() => Object.keys(sync.data.mcp).length > 0)
   const mcpError = createMemo(() => {
     return Object.values(sync.data.mcp).some((x) => x.status === "failed")
   })
-
   const connectedMcpCount = createMemo(() => {
     return Object.values(sync.data.mcp).filter((x) => x.status === "connected").length
   })
 
-  const isFirstTimeUser = createMemo(() => sync.data.session.length === 0)
-  const tipsHidden = createMemo(() => kv.get("tips_hidden", false))
-  const showTips = createMemo(() => {
-    // Don't show tips for first-time users
-    if (isFirstTimeUser()) return false
-    return !tipsHidden()
+  const [selectedIndex, setSelectedIndex] = createSignal(0)
+  const [toDelete, setToDelete] = createSignal<string>()
+  const [dialogOpen, setDialogOpen] = createSignal(false)
+
+  const agents = createMemo(() => {
+    const entries: AgentEntry[] = kv.get("agents", [])
+    return entries.map((entry) => {
+      const session = sync.data.session.find((s) => s.id === entry.sessionID)
+      const status = sync.data.session_status[entry.sessionID]
+      return {
+        ...entry,
+        session,
+        status,
+      }
+    })
   })
 
-  command.register(() => [
-    {
-      title: tipsHidden() ? "Show tips" : "Hide tips",
-      value: "tips.toggle",
-      keybind: "tips_toggle",
-      category: "System",
-      onSelect: (dialog) => {
-        kv.set("tips_hidden", !tipsHidden())
+  function clampIndex(index: number) {
+    const len = agents().length
+    if (len === 0) return 0
+    if (index < 0) return len - 1
+    if (index >= len) return 0
+    return index
+  }
+
+  let scroll: ScrollBoxRenderable | undefined
+
+  function scrollToSelected() {
+    if (!scroll) return
+    const children = scroll.getChildren()
+    const target = children[selectedIndex()]
+    if (!target) return
+    const y = target.y - scroll.y
+    if (y >= scroll.height) {
+      scroll.scrollBy(y - scroll.height + 1)
+    }
+    if (y < 0) {
+      scroll.scrollBy(y)
+    }
+  }
+
+  useKeyboard((evt) => {
+    if (keybind.match("app_exit", evt)) {
+      exit()
+      return
+    }
+    if (dialogOpen()) return
+    if (agents().length === 0 && evt.name !== "a") return
+
+    if (evt.name === "j" || evt.name === "down") {
+      setSelectedIndex((i) => clampIndex(i + 1))
+      setToDelete(undefined)
+      scrollToSelected()
+    }
+    if (evt.name === "k" || evt.name === "up") {
+      setSelectedIndex((i) => clampIndex(i - 1))
+      setToDelete(undefined)
+      scrollToSelected()
+    }
+    if (evt.name === "return") {
+      const agent = agents()[selectedIndex()]
+      if (agent) {
+        route.navigate({ type: "session", sessionID: agent.sessionID })
+      }
+    }
+    if (evt.name === "a") {
+      ;(async () => {
+        setDialogOpen(true)
+        const name = await DialogPrompt.show(dialog, "New Agent", {
+          placeholder: "Agent name",
+        })
         dialog.clear()
-      },
-    },
-  ])
-
-  const Hint = (
-    <Show when={connectedMcpCount() > 0}>
-      <box flexShrink={0} flexDirection="row" gap={1}>
-        <text fg={theme.text}>
-          <Switch>
-            <Match when={mcpError()}>
-              <span style={{ fg: theme.error }}>•</span> mcp errors{" "}
-              <span style={{ fg: theme.textMuted }}>ctrl+x s</span>
-            </Match>
-            <Match when={true}>
-              <span style={{ fg: theme.success }}>•</span>{" "}
-              {Locale.pluralize(connectedMcpCount(), "{} mcp server", "{} mcp servers")}
-            </Match>
-          </Switch>
-        </text>
-      </box>
-    </Show>
-  )
-
-  let prompt: PromptRef
-  const args = useArgs()
-  const local = useLocal()
-  onMount(() => {
-    if (once) return
-    if (route.initialPrompt) {
-      prompt.set(route.initialPrompt)
-      once = true
-    } else if (args.prompt) {
-      prompt.set({ input: args.prompt, parts: [] })
-      once = true
+        setDialogOpen(false)
+        if (!name) return
+        const result = await sdk.client.session.create({})
+        if (!result.data) return
+        const current: AgentEntry[] = kv.get("agents", [])
+        const entry: AgentEntry = {
+          id: crypto.randomUUID(),
+          name,
+          sessionID: result.data.id,
+          createdAt: Date.now(),
+        }
+        kv.set("agents", [...current, entry])
+        setSelectedIndex(current.length)
+      })()
+    }
+    if (evt.name === "d") {
+      const agent = agents()[selectedIndex()]
+      if (!agent) return
+      if (toDelete() === agent.id) {
+        const current: AgentEntry[] = kv.get("agents", [])
+        kv.set(
+          "agents",
+          current.filter((a) => a.id !== agent.id),
+        )
+        setToDelete(undefined)
+        setSelectedIndex((i) => Math.min(i, agents().length - 2))
+      } else {
+        setToDelete(agent.id)
+      }
     }
   })
 
-  // Wait for sync and model store to be ready before auto-submitting --prompt
-  createEffect(
-    on(
-      () => sync.ready && local.model.ready,
-      (ready) => {
-        if (!ready) return
-        if (!args.prompt) return
-        if (prompt.current?.input !== args.prompt) return
-        prompt.submit()
-      },
-    ),
-  )
-  const directory = useDirectory()
-
-  const keybind = useKeybind()
-
   return (
     <>
-      <box flexGrow={1} alignItems="center" paddingLeft={2} paddingRight={2}>
-        <box flexGrow={1} minHeight={0} />
-        <box height={4} minHeight={0} flexShrink={1} />
-        <box flexShrink={0}>
-          <Logo />
+      <box flexGrow={1} flexDirection="column" paddingLeft={2} paddingRight={2} paddingTop={1}>
+        {/* Header */}
+        <box flexDirection="row" flexShrink={0}>
+          <box width={4}>
+            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
+              #
+            </text>
+          </box>
+          <box flexGrow={1}>
+            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
+              Name
+            </text>
+          </box>
+          <box width={20}>
+            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
+              Status
+            </text>
+          </box>
+          <box width={25}>
+            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
+              Activity
+            </text>
+          </box>
         </box>
-        <box height={1} minHeight={0} flexShrink={1} />
-        <box width="100%" maxWidth={75} zIndex={1000} paddingTop={1} flexShrink={0}>
-          <Prompt
-            ref={(r) => {
-              prompt = r
-              promptRef.set(r)
-            }}
-            hint={Hint}
-            workspaceID={route.workspaceID}
-          />
-        </box>
-        <box height={4} minHeight={0} width="100%" maxWidth={75} alignItems="center" paddingTop={3} flexShrink={1}>
-          <Show when={showTips()}>
-            <Tips />
-          </Show>
-        </box>
-        <box flexGrow={1} minHeight={0} />
-        <Toast />
+
+        {/* Agent rows */}
+        <Show
+          when={agents().length > 0}
+          fallback={
+            <box flexGrow={1} alignItems="center" justifyContent="center">
+              <text fg={theme.textMuted}>No agents yet. Press 'a' to create one.</text>
+            </box>
+          }
+        >
+          <scrollbox
+            flexGrow={1}
+            scrollbarOptions={{ visible: false }}
+            ref={(r: ScrollBoxRenderable) => (scroll = r)}
+          >
+            <For each={agents()}>
+              {(agent, index) => {
+                const isSelected = createMemo(() => index() === selectedIndex())
+                const isDeleting = createMemo(() => toDelete() === agent.id)
+                return (
+                  <box
+                    flexDirection="row"
+                    backgroundColor={isDeleting() ? theme.error : isSelected() ? theme.primary : undefined}
+                  >
+                    <box width={4}>
+                      <text fg={isSelected() || isDeleting() ? fg : theme.textMuted}>{index() + 1}</text>
+                    </box>
+                    <box flexGrow={1}>
+                      <text
+                        fg={isSelected() || isDeleting() ? fg : theme.text}
+                        attributes={isSelected() ? TextAttributes.BOLD : undefined}
+                        overflow="hidden"
+                        wrapMode="none"
+                      >
+                        {isDeleting() ? "Press 'd' again to remove" : agent.name}
+                      </text>
+                    </box>
+                    <box width={20}>
+                      <Switch>
+                        <Match when={agent.status?.type === "busy"}>
+                          <Spinner color={isSelected() ? fg : undefined}>Working</Spinner>
+                        </Match>
+                        <Match when={agent.status?.type === "retry"}>
+                          <text fg={isSelected() ? fg : theme.warning}>Retrying</text>
+                        </Match>
+                        <Match when={true}>
+                          <text fg={isSelected() ? fg : theme.textMuted}>Waiting for user</text>
+                        </Match>
+                      </Switch>
+                    </box>
+                    <box width={25}>
+                      <Show
+                        when={agent.session?.summary}
+                        fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
+                      >
+                        {(summary) => (
+                          <text fg={isSelected() ? fg : theme.textMuted}>
+                            +{summary().additions} -{summary().deletions} {summary().files}{" "}
+                            {Locale.pluralize(summary().files, "file", "files")}
+                          </text>
+                        )}
+                      </Show>
+                    </box>
+                  </box>
+                )
+              }}
+            </For>
+          </scrollbox>
+        </Show>
       </box>
       <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="row" flexShrink={0} gap={2}>
         <text fg={theme.textMuted}>{directory()}</text>

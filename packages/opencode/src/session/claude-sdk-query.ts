@@ -2,14 +2,16 @@
  * Wrapper around the Claude Agent SDK's query() function that:
  * 1. Resolves the Anthropic API key from the existing auth system or env
  * 2. Sets up the canUseTool permission bridge
- * 3. Calls query() with proper options
- * 4. Returns the message stream for processClaudeSdkStream()
+ * 3. Resumes previous SDK sessions for conversation continuity
+ * 4. Calls query() with proper options
+ * 5. Returns the message stream for processClaudeSdkStream()
  */
 
 import { query, type Options, type Query } from "@anthropic-ai/claude-agent-sdk"
 import { Auth } from "@/auth"
 import { SessionID } from "@/session/schema"
 import { createCanUseToolBridge } from "./claude-sdk-permissions"
+import { getSdkSessionID } from "./claude-sdk-session-map"
 
 export interface ClaudeSdkQueryInput {
   prompt: string
@@ -53,6 +55,7 @@ export async function resolveApiKey(): Promise<string | undefined> {
  * - API key from the existing auth system
  * - Permission bridge to the TUI
  * - Model and system prompt configuration
+ * - Session resumption for conversation continuity
  */
 export async function createClaudeSdkQuery(
   input: ClaudeSdkQueryInput,
@@ -66,6 +69,10 @@ export async function createClaudeSdkQuery(
     env.ANTHROPIC_API_KEY = apiKey
   }
 
+  // Check if we have a previous SDK session UUID for this opencode session.
+  // If so, resume it so the SDK loads the full conversation history from disk.
+  const sdkSessionID = await getSdkSessionID(input.sessionID)
+
   const options: Options = {
     model: input.model,
     systemPrompt: input.systemPrompt,
@@ -78,6 +85,7 @@ export async function createClaudeSdkQuery(
     canUseTool: createCanUseToolBridge({ sessionID: input.sessionID }),
     abortController: input.abortController,
     maxTurns: input.maxTurns,
+    ...(sdkSessionID ? { resume: sdkSessionID } : {}),
   }
 
   return query({

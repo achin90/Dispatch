@@ -1,16 +1,18 @@
 /**
  * Permission bridge between the Claude Agent SDK's canUseTool callback
- * and the existing Permission event system (Bus events → TUI permission dock).
+ * and the existing Permission system.
  *
  * The Agent SDK calls canUseTool() before executing each tool.
- * This bridge publishes Permission.Event.Asked, waits for the user's reply
- * via Permission.Event.Replied, and returns the appropriate PermissionResult.
+ * This bridge calls Permission.ask() which registers the request in the
+ * pending map, publishes the Bus event for the TUI, and waits for the
+ * user's reply via Permission.reply().
  */
 
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk"
-import { Bus } from "@/bus"
+import { createTwoFilesPatch } from "diff"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
+import { Filesystem } from "@/util/filesystem"
 import { SessionID } from "@/session/schema"
 
 // ---------------------------------------------------------------------------
@@ -84,11 +86,58 @@ export function derivePermissionName(toolName: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Diff generation for edit/write tools
+// ---------------------------------------------------------------------------
+
+function trimDiff(diff: string): string {
+  const lines = diff.split("\n")
+  const contentLines = lines.filter(
+    (line) =>
+      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
+      !line.startsWith("---") &&
+      !line.startsWith("+++"),
+  )
+  if (contentLines.length === 0) return diff
+  return diff
+}
+
+async function generateEditDiff(
+  toolName: string,
+  input: Record<string, unknown>,
+): Promise<{ filepath: string; diff: string } | undefined> {
+  const filePath = typeof input.file_path === "string" ? input.file_path : undefined
+  if (!filePath) return undefined
+
+  try {
+    if (toolName === "Edit") {
+      const oldString = typeof input.old_string === "string" ? input.old_string : ""
+      const newString = typeof input.new_string === "string" ? input.new_string : ""
+      const contentOld = (await Filesystem.exists(filePath)) ? await Filesystem.readText(filePath) : ""
+      const contentNew = contentOld.replace(oldString, newString)
+      const diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
+      return { filepath: filePath, diff }
+    }
+
+    if (toolName === "Write") {
+      const contentOld = (await Filesystem.exists(filePath)) ? await Filesystem.readText(filePath) : ""
+      const contentNew = typeof input.content === "string" ? input.content : ""
+      const diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
+      return { filepath: filePath, diff }
+    }
+  } catch {
+    // If we can't read the file or generate a diff, proceed without it
+  }
+
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Create canUseTool callback
 // ---------------------------------------------------------------------------
 
 export interface CanUseToolBridgeOptions {
   sessionID: SessionID
+  ruleset?: Permission.Ruleset
 }
 
 export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUseTool {
@@ -102,62 +151,48 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
     const permission = derivePermissionName(toolName)
     const requestID = PermissionID.ascending()
 
-    const request: Permission.Request = {
-      id: requestID,
-      sessionID: options.sessionID,
-      permission,
-      patterns,
-      metadata: { toolName, title: callOptions.title },
-      always: patterns,
-    }
-
     // If the signal is already aborted, deny immediately
     if (signal.aborted) {
       return { behavior: "deny", message: "Request aborted" }
     }
 
-    // Set up the reply listener BEFORE publishing the request
-    // so we don't miss a synchronous reply from the subscriber
-    return new Promise<PermissionResult>((resolve) => {
-      let resolved = false
+    // Generate diff metadata for edit/write tools
+    const diffInfo = await generateEditDiff(toolName, input)
+    const metadata: Record<string, unknown> = { toolName, title: callOptions.title }
+    if (diffInfo) {
+      metadata.filepath = diffInfo.filepath
+      metadata.diff = diffInfo.diff
+    }
 
-      const unsubscribe = Bus.subscribe(Permission.Event.Replied, (event) => {
-        if (event.properties.requestID !== requestID) return
-        if (resolved) return
-        resolved = true
-
-        unsubscribe()
-
-        if (event.properties.reply === "reject") {
-          resolve({
-            behavior: "deny",
-            message: "User rejected permission",
-          })
-        } else {
-          resolve({
-            behavior: "allow",
-            updatedInput: input,
-          })
-        }
-      })
-
-      signal.addEventListener(
-        "abort",
-        () => {
-          if (resolved) return
-          resolved = true
-          unsubscribe()
-          resolve({
-            behavior: "deny",
-            message: "Request aborted",
-          })
-        },
-        { once: true },
-      )
-
-      // Publish the request — the TUI listens for this event
-      // and shows the permission dock to the user
-      Bus.publish(Permission.Event.Asked, request)
-    })
+    try {
+      // Use Permission.ask() which registers in the pending map,
+      // publishes the Bus event for the TUI, and waits for the user's reply.
+      // This ensures Permission.reply() (called by the server route when the
+      // TUI responds) can find the request and resolve it.
+      await Promise.race([
+        Permission.ask({
+          id: requestID,
+          sessionID: options.sessionID,
+          permission,
+          patterns,
+          metadata,
+          always: patterns,
+          ruleset: options.ruleset ?? [],
+        }),
+        new Promise<never>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
+        }),
+      ])
+      return { behavior: "allow", updatedInput: input }
+    } catch (error) {
+      if (error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError) {
+        return { behavior: "deny", message: "User rejected permission" }
+      }
+      if (error instanceof Permission.DeniedError) {
+        return { behavior: "deny", message: "Permission denied by ruleset" }
+      }
+      // Abort or unexpected error
+      return { behavior: "deny", message: error instanceof Error ? error.message : "Permission denied" }
+    }
   }
 }
