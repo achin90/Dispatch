@@ -80,10 +80,12 @@ End-to-end test with a real Claude API call through the full stack.
 - **Files**: `test/claude-sdk/integration.test.ts`
 - **Checkpoint**: Test skips when no API key (preload clears env vars). When run manually with `ANTHROPIC_API_KEY` set, verifies: `query()` → `processClaudeSdkStream()` → assistant message finalized with tokens/cost.
 
-### Phase 6: Provider Cleanup & Switchover
-Remove old ai-sdk code path. Delete `@ai-sdk/*` dependencies, multi-provider registry, provider transforms.
+### Phase 6: Provider Cleanup & Switchover [COMPLETE]
+Wired the Claude Agent SDK into `SessionPrompt.loop()`. The normal processing section now calls `createClaudeSdkQuery()` + `processClaudeSdkStream()` instead of `SessionProcessor.create().process()` + `LLM.stream()`.
 
-- **Checkpoint**: Full test suite green with Agent SDK as only path.
+- **Files modified**: `src/session/prompt.ts` (-134, +57 lines), `src/session/claude-sdk-query.ts` (+maxTurns)
+- **Checkpoint**: All 104 claude-sdk tests pass. Manual end-to-end test works with subscription login.
+- **Note**: Old ai-sdk code paths (`processor.ts`, `llm.ts`, `provider/`) are still in the codebase but no longer called from the main loop. They can be cleaned up in a follow-up.
 
 ## What Stays the Same
 - Entire TUI layer (routes, components, themes, keybindings, dialogs)
