@@ -34,6 +34,7 @@ export namespace Snapshot {
 
   const log = Log.create({ service: "snapshot" })
   const prune = "7.days"
+  const limit = 2 * 1024 * 1024
   const core = ["-c", "core.longpaths=true", "-c", "core.symlinks=true"]
   const cfg = ["-c", "core.autocrlf=false", ...core]
   const quote = [...cfg, "-c", "core.quotepath=false"]
@@ -136,7 +137,71 @@ export namespace Snapshot {
 
             const add = Effect.fnUntraced(function* () {
               yield* sync()
-              yield* git([...cfg, ...args(["add", "."])], { cwd: state.directory })
+              const [diff, other] = yield* Effect.all(
+                [
+                  git([...quote, ...args(["diff-files", "--name-only", "-z", "--", "."])], {
+                    cwd: state.directory,
+                  }),
+                  git([...quote, ...args(["ls-files", "--others", "--exclude-standard", "-z", "--", "."])], {
+                    cwd: state.directory,
+                  }),
+                ],
+                { concurrency: 2 },
+              )
+              if (diff.code !== 0 || other.code !== 0) {
+                log.warn("failed to list snapshot files", {
+                  diffCode: diff.code,
+                  diffStderr: diff.stderr,
+                  otherCode: other.code,
+                  otherStderr: other.stderr,
+                })
+                return
+              }
+
+              const all = Array.from(new Set([...diff.text.split("\0"), ...other.text.split("\0")].filter(Boolean)))
+              if (!all.length) return
+
+              const files = yield* Effect.all(
+                all.map((file) =>
+                  fs.stat(path.join(state.directory, file)).pipe(
+                    Effect.map((info) => ({
+                      file,
+                      info,
+                      size: typeof info.size === "bigint" ? Number(info.size) : info.size,
+                    })),
+                    Effect.catch(() => Effect.succeed({ file, info: undefined, size: undefined })),
+                  ),
+                ),
+                { concurrency: 8 },
+              )
+
+              const skip = files.filter(
+                (item) => item.info?.type === "File" && typeof item.size === "number" && item.size > limit,
+              )
+              if (skip.length) {
+                log.info("skipping large files", {
+                  limit,
+                  files: skip.map((item) => ({
+                    file: path.join(state.directory, item.file).replaceAll("\\", "/"),
+                    size: item.size,
+                  })),
+                })
+              }
+
+              const keep = files
+                .filter(
+                  (item) =>
+                    item.info && !(item.info.type === "File" && typeof item.size === "number" && item.size > limit),
+                )
+                .map((item) => item.file)
+              const drop = files.filter((item) => !item.info).map((item) => item.file)
+
+              if (keep.length) {
+                yield* git([...cfg, ...args(["add", "--", ...keep])], { cwd: state.directory })
+              }
+              if (drop.length) {
+                yield* git([...cfg, ...args(["add", "-u", "--", ...drop])], { cwd: state.directory })
+              }
             })
 
             const cleanup = Effect.fnUntraced(function* () {
@@ -177,7 +242,7 @@ export namespace Snapshot {
             const patch = Effect.fnUntraced(function* (hash: string) {
               yield* add()
               const result = yield* git(
-                [...quote, ...args(["diff", "--no-ext-diff", "--name-only", hash, "--", "."])],
+                [...quote, ...args(["diff", "--cached", "--no-ext-diff", "--name-only", hash, "--", "."])],
                 {
                   cwd: state.directory,
                 },
@@ -245,7 +310,7 @@ export namespace Snapshot {
 
             const diff = Effect.fnUntraced(function* (hash: string) {
               yield* add()
-              const result = yield* git([...quote, ...args(["diff", "--no-ext-diff", hash, "--", "."])], {
+              const result = yield* git([...quote, ...args(["diff", "--cached", "--no-ext-diff", hash, "--", "."])], {
                 cwd: state.worktree,
               })
               if (result.code !== 0) {
