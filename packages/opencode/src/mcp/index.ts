@@ -11,7 +11,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { Config } from "../config/config"
 import { Log } from "../util/log"
-import { Process } from "../util/process"
 import { NamedError } from "@opencode-ai/util/error"
 import z from "zod/v4"
 import { Instance } from "../project/instance"
@@ -24,9 +23,13 @@ import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, ServiceMap, Stream } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRunPromise } from "@/effect/run-service"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
+import { NodeFileSystem } from "@effect/platform-node"
+import * as NodePath from "@effect/platform-node/NodePath"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -164,23 +167,6 @@ export namespace MCP {
     })
   }
 
-  async function descendants(pid: number): Promise<number[]> {
-    if (process.platform === "win32") return []
-    const pids: number[] = []
-    const queue = [pid]
-    while (queue.length > 0) {
-      const current = queue.shift()!
-      const lines = await Process.lines(["pgrep", "-P", String(current)], { nothrow: true })
-      for (const tok of lines) {
-        const cpid = parseInt(tok, 10)
-        if (!isNaN(cpid) && !pids.includes(cpid)) {
-          pids.push(cpid)
-          queue.push(cpid)
-        }
-      }
-    }
-    return pids
-  }
 
   // Helper function to fetch prompts for a specific client
   async function fetchPromptsForClient(clientName: string, client: Client) {
@@ -477,16 +463,45 @@ export namespace MCP {
   export const layer = Layer.effect(
     Service,
     Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+
+      const descendants = Effect.fnUntraced(
+        function* (pid: number) {
+          if (process.platform === "win32") return [] as number[]
+          const pids: number[] = []
+          const queue = [pid]
+          while (queue.length > 0) {
+            const current = queue.shift()!
+            const handle = yield* spawner.spawn(
+              ChildProcess.make("pgrep", ["-P", String(current)], { stdin: "ignore" }),
+            )
+            const text = yield* Stream.mkString(Stream.decodeText(handle.stdout))
+            yield* handle.exitCode
+            for (const tok of text.split("\n")) {
+              const cpid = parseInt(tok, 10)
+              if (!isNaN(cpid) && !pids.includes(cpid)) {
+                pids.push(cpid)
+                queue.push(cpid)
+              }
+            }
+          }
+          return pids
+        },
+        Effect.scoped,
+        Effect.catch(() => Effect.succeed([] as number[])),
+      )
+
       const cache = yield* InstanceState.make<State>(
         Effect.fn("MCP.state")(function* () {
-          const s = yield* Effect.promise(async () => {
-            const cfg = await Config.get()
-            const config = cfg.mcp ?? {}
-            const clients: Record<string, MCPClient> = {}
-            const statusMap: Record<string, Status> = {}
+          const cfg = yield* Effect.promise(() => Config.get())
+          const config = cfg.mcp ?? {}
+          const clients: Record<string, MCPClient> = {}
+          const statusMap: Record<string, Status> = {}
 
-            await Promise.all(
-              Object.entries(config).map(async ([key, mcp]) => {
+          yield* Effect.forEach(
+            Object.entries(config),
+            ([key, mcp]) =>
+              Effect.gen(function* () {
                 if (!isMcpConfigured(mcp)) {
                   log.error("Ignoring MCP config entry without type", { key })
                   return
@@ -497,38 +512,35 @@ export namespace MCP {
                   return
                 }
 
-                const result = await create(key, mcp).catch(() => undefined)
+                const result = yield* Effect.promise(() => create(key, mcp).catch(() => undefined))
                 if (!result) return
 
                 statusMap[key] = result.status
-
                 if (result.mcpClient) {
                   clients[key] = result.mcpClient
                 }
               }),
-            )
-            return { status: statusMap, clients }
-          })
+            { concurrency: "unbounded" },
+          )
+
+          const s: State = { status: statusMap, clients }
 
           yield* Effect.addFinalizer(() =>
-            Effect.promise(async () => {
-              // Kill descendant trees for stdio servers
-              for (const client of Object.values(s.clients)) {
-                const pid = (client.transport as any)?.pid
-                if (typeof pid !== "number") continue
-                for (const dpid of await descendants(pid)) {
-                  try {
-                    process.kill(dpid, "SIGTERM")
-                  } catch {}
-                }
-              }
-
-              await Promise.all(
-                Object.values(s.clients).map((client) =>
-                  client.close().catch((error) => {
-                    log.error("Failed to close MCP client", { error })
+            Effect.gen(function* () {
+              yield* Effect.forEach(
+                Object.values(s.clients),
+                (client) =>
+                  Effect.gen(function* () {
+                    const pid = (client.transport as any)?.pid
+                    if (typeof pid === "number") {
+                      const pids = yield* descendants(pid)
+                      yield* Effect.forEach(pids, (dpid) =>
+                        Effect.try(() => process.kill(dpid, "SIGTERM")).pipe(Effect.ignore),
+                      )
+                    }
+                    yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
                   }),
-                ),
+                { concurrency: "unbounded" },
               )
               pendingOAuthTransports.clear()
             }),
@@ -541,11 +553,13 @@ export namespace MCP {
       function closeClient(s: State, name: string) {
         const client = s.clients[name]
         if (!client) return Effect.void
-        return Effect.promise(() =>
-          client.close().catch((error: any) => {
+        return Effect.tryPromise({
+          try: () => client.close(),
+          catch: (error) => {
             log.error("failed to close MCP client", { name, error })
-          }),
-        )
+            return error
+          },
+        }).pipe(Effect.ignore)
       }
 
       const status = Effect.fn("MCP.status")(function* () {
@@ -635,31 +649,37 @@ export namespace MCP {
           ([clientName]) => s.status[clientName]?.status === "connected",
         )
 
-        yield* Effect.promise(async () => {
-          await Promise.all(
-            connectedClients.map(async ([clientName, client]) => {
-              const toolsResult = await client.listTools().catch((e: any) => {
-                log.error("failed to get tools", { clientName, error: e.message })
-                s.status[clientName] = {
-                  status: "failed" as const,
-                  error: e instanceof Error ? e.message : String(e),
-                }
-                delete s.clients[clientName]
-                return undefined
-              })
-              if (!toolsResult) return
+        yield* Effect.forEach(
+          connectedClients,
+          ([clientName, client]) =>
+            Effect.gen(function* () {
+              const toolsResult = yield* Effect.tryPromise({
+                try: () => client.listTools(),
+                catch: (e: any) => {
+                  log.error("failed to get tools", { clientName, error: e?.message })
+                  s.status[clientName] = {
+                    status: "failed" as const,
+                    error: e instanceof Error ? e.message : String(e),
+                  }
+                  delete s.clients[clientName]
+                  return e
+                },
+              }).pipe(Effect.option)
+              if (toolsResult._tag === "None") return
 
               const mcpConfig = config[clientName]
               const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
               const timeout = entry?.timeout ?? defaultTimeout
-              for (const mcpTool of toolsResult.tools) {
-                const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
-                const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-                result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
-              }
+              yield* Effect.forEach(toolsResult.value.tools, (mcpTool) =>
+                Effect.promise(async () => {
+                  const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+                  const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+                  result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
+                }),
+              )
             }),
-          )
-        })
+          { concurrency: "unbounded" },
+        )
         return result
       })
 
@@ -667,22 +687,22 @@ export namespace MCP {
         s: State,
         fetchFn: (clientName: string, client: Client) => Promise<Record<string, T> | undefined>,
       ) {
-        return Promise.all(
-          Object.entries(s.clients).map(async ([clientName, client]) => {
-            if (s.status[clientName]?.status !== "connected") return []
-            return Object.entries((await fetchFn(clientName, client)) ?? {})
-          }),
-        ).then((results) => Object.fromEntries<T>(results.flat()))
+        return Effect.forEach(
+          Object.entries(s.clients).filter(([name]) => s.status[name]?.status === "connected"),
+          ([clientName, client]) =>
+            Effect.promise(async () => Object.entries((await fetchFn(clientName, client)) ?? {})),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((results) => Object.fromEntries<T>(results.flat())))
       }
 
       const prompts = Effect.fn("MCP.prompts")(function* () {
         const s = yield* InstanceState.get(cache)
-        return yield* Effect.promise(() => collectFromConnected(s, fetchPromptsForClient))
+        return yield* collectFromConnected(s, fetchPromptsForClient)
       })
 
       const resources = Effect.fn("MCP.resources")(function* () {
         const s = yield* InstanceState.get(cache)
-        return yield* Effect.promise(() => collectFromConnected(s, fetchResourcesForClient))
+        return yield* collectFromConnected(s, fetchResourcesForClient)
       })
 
       const getPrompt = Effect.fn("MCP.getPrompt")(function* (
@@ -992,7 +1012,13 @@ export namespace MCP {
 
   // --- Per-service runtime ---
 
-  const runPromise = makeRunPromise(Service, layer)
+  const defaultLayer = layer.pipe(
+    Layer.provide(CrossSpawnSpawner.layer),
+    Layer.provide(NodeFileSystem.layer),
+    Layer.provide(NodePath.layer),
+  )
+
+  const runPromise = makeRunPromise(Service, defaultLayer)
 
   // --- Async facade functions ---
 
