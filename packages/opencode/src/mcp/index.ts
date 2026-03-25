@@ -137,7 +137,7 @@ export namespace MCP {
   }
 
   // Convert MCP tool definition to AI SDK Tool type
-  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Promise<Tool> {
+  function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool {
     const inputSchema = mcpTool.inputSchema
 
     // Spread first, then override type to ensure it's always "object"
@@ -535,7 +535,10 @@ export namespace MCP {
                     if (typeof pid === "number") {
                       const pids = yield* descendants(pid)
                       yield* Effect.forEach(pids, (dpid) =>
-                        Effect.try(() => process.kill(dpid, "SIGTERM")).pipe(Effect.ignore),
+                        Effect.try({
+                          try: () => process.kill(dpid, "SIGTERM"),
+                          catch: () => new Error(`failed to kill ${dpid}`),
+                        }).pipe(Effect.ignore),
                       )
                     }
                     yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
@@ -581,24 +584,26 @@ export namespace MCP {
         return s.clients
       })
 
-      const add = Effect.fn("MCP.add")(function* (name: string, mcp: Config.Mcp) {
-        const s = yield* InstanceState.get(cache)
+      const createAndStore = Effect.fn("MCP.createAndStore")(function* (name: string, mcp: Config.Mcp) {
         const result = yield* Effect.promise(() => create(name, mcp))
+        const s = yield* InstanceState.get(cache)
 
         if (!result) {
-          const failedStatus = { status: "failed" as const, error: "unknown error" }
-          s.status[name] = failedStatus
-          return { status: failedStatus }
-        }
-        if (!result.mcpClient) {
-          s.status[name] = result.status
-          return { status: s.status }
+          s.status[name] = { status: "failed" as const, error: "unknown error" }
+          return s.status[name]
         }
 
-        yield* closeClient(s, name)
-        s.clients[name] = result.mcpClient
         s.status[name] = result.status
+        if (result.mcpClient) {
+          yield* closeClient(s, name)
+          s.clients[name] = result.mcpClient
+        }
+        return result.status
+      })
 
+      const add = Effect.fn("MCP.add")(function* (name: string, mcp: Config.Mcp) {
+        yield* createAndStore(name, mcp)
+        const s = yield* InstanceState.get(cache)
         return { status: s.status }
       })
 
@@ -610,25 +615,11 @@ export namespace MCP {
           log.error("MCP config not found", { name })
           return
         }
-
         if (!isMcpConfigured(mcp)) {
           log.error("Ignoring MCP connect request for config without type", { name })
           return
         }
-
-        const result = yield* Effect.promise(() => create(name, { ...mcp, enabled: true }))
-
-        const s = yield* InstanceState.get(cache)
-        if (!result) {
-          s.status[name] = { status: "failed", error: "Unknown error during connection" }
-          return
-        }
-
-        s.status[name] = result.status
-        if (result.mcpClient) {
-          yield* closeClient(s, name)
-          s.clients[name] = result.mcpClient
-        }
+        yield* createAndStore(name, { ...mcp, enabled: true })
       })
 
       const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
@@ -670,13 +661,11 @@ export namespace MCP {
               const mcpConfig = config[clientName]
               const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
               const timeout = entry?.timeout ?? defaultTimeout
-              yield* Effect.forEach(toolsResult.value.tools, (mcpTool) =>
-                Effect.promise(async () => {
-                  const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
-                  const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-                  result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
-                }),
-              )
+              for (const mcpTool of toolsResult.value.tools) {
+                const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+                const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+                result[sanitizedClientName + "_" + sanitizedToolName] = convertMcpTool(mcpTool, client, timeout)
+              }
             }),
           { concurrency: "unbounded" },
         )
@@ -705,53 +694,48 @@ export namespace MCP {
         return yield* collectFromConnected(s, fetchResourcesForClient)
       })
 
+      function withClient<A>(
+        clientName: string,
+        fn: (client: MCPClient) => Promise<A>,
+        label: string,
+        meta?: Record<string, unknown>,
+      ) {
+        return Effect.gen(function* () {
+          const s = yield* InstanceState.get(cache)
+          const client = s.clients[clientName]
+          if (!client) {
+            log.warn(`client not found for ${label}`, { clientName })
+            return undefined
+          }
+          return yield* Effect.tryPromise({
+            try: () => fn(client),
+            catch: (e: any) => {
+              log.error(`failed to ${label}`, { clientName, ...meta, error: e?.message })
+              return e
+            },
+          }).pipe(Effect.orElseSucceed(() => undefined))
+        })
+      }
+
       const getPrompt = Effect.fn("MCP.getPrompt")(function* (
         clientName: string,
         name: string,
         args?: Record<string, string>,
       ) {
-        const s = yield* InstanceState.get(cache)
-        const client = s.clients[clientName]
-
-        if (!client) {
-          log.warn("client not found for prompt", { clientName })
-          return undefined
-        }
-
-        return yield* Effect.promise(() =>
-          client
-            .getPrompt({ name, arguments: args })
-            .catch((e) => {
-              log.error("failed to get prompt from MCP server", {
-                clientName,
-                promptName: name,
-                error: e.message,
-              })
-              return undefined
-            }),
+        return yield* withClient(
+          clientName,
+          (client) => client.getPrompt({ name, arguments: args }),
+          "getPrompt",
+          { promptName: name },
         )
       })
 
       const readResource = Effect.fn("MCP.readResource")(function* (clientName: string, resourceUri: string) {
-        const s = yield* InstanceState.get(cache)
-        const client = s.clients[clientName]
-
-        if (!client) {
-          log.warn("client not found for resource", { clientName })
-          return undefined
-        }
-
-        return yield* Effect.promise(() =>
-          client
-            .readResource({ uri: resourceUri })
-            .catch((e: any) => {
-              log.error("failed to read resource from MCP server", {
-                clientName,
-                resourceUri,
-                error: e.message,
-              })
-              return undefined
-            }),
+        return yield* withClient(
+          clientName,
+          (client) => client.readResource({ uri: resourceUri }),
+          "readResource",
+          { resourceUri },
         )
       })
 
@@ -765,26 +749,22 @@ export namespace MCP {
 
       const finishAuth = Effect.fn("MCP.finishAuth")(function* (mcpName: string, authorizationCode: string) {
         const result = yield* Effect.promise(() => finishAuthImpl(mcpName, authorizationCode))
-        // finishAuthImpl calls create() which returns a client but doesn't
-        // store it in state. Re-add via the config so state is updated.
         if (result.status === "connected") {
           const cfg = yield* Effect.promise(() => Config.get())
           const mcpConfig = cfg.mcp?.[mcpName]
           if (mcpConfig && isMcpConfigured(mcpConfig)) {
-            yield* add(mcpName, mcpConfig)
+            yield* createAndStore(mcpName, mcpConfig)
           }
         }
         return result
       })
 
       const removeAuth = Effect.fn("MCP.removeAuth")(function* (mcpName: string) {
-        yield* Effect.promise(async () => {
-          await McpAuth.remove(mcpName)
-          McpOAuthCallback.cancelPending(mcpName)
-          pendingOAuthTransports.delete(mcpName)
-          await McpAuth.clearOAuthState(mcpName)
-          log.info("removed oauth credentials", { mcpName })
-        })
+        yield* Effect.promise(() => McpAuth.remove(mcpName))
+        McpOAuthCallback.cancelPending(mcpName)
+        pendingOAuthTransports.delete(mcpName)
+        yield* Effect.promise(() => McpAuth.clearOAuthState(mcpName))
+        log.info("removed oauth credentials", { mcpName })
       })
 
       const supportsOAuth = Effect.fn("MCP.supportsOAuth")(function* (mcpName: string) {
