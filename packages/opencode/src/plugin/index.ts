@@ -11,9 +11,9 @@ import { NamedError } from "@opencode-ai/util/error"
 import { CopilotAuthPlugin } from "./copilot"
 import { gitlabAuthPlugin as GitlabAuthPlugin } from "opencode-gitlab-auth"
 import { PoeAuthPlugin } from "opencode-poe-auth"
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, ServiceMap, Stream } from "effect"
 import { InstanceState } from "@/effect/instance-state"
-import { makeRunPromise } from "@/effect/run-service"
+import { makeRuntime } from "@/effect/run-service"
 
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
@@ -49,6 +49,8 @@ export namespace Plugin {
   export const layer = Layer.effect(
     Service,
     Effect.gen(function* () {
+      const bus = yield* Bus.Service
+
       const cache = yield* InstanceState.make<State>(
         Effect.fn("Plugin.state")(function* (ctx) {
           const hooks: Hooks[] = []
@@ -139,15 +141,15 @@ export namespace Plugin {
             }
           })
 
-          yield* Effect.acquireRelease(
-            Effect.sync(() =>
-              Bus.subscribeAll(async (input) => {
+          yield* bus.subscribeAll().pipe(
+            Stream.runForEach((input) =>
+              Effect.sync(() => {
                 for (const hook of hooks) {
-                  hook.event?.({ event: input })
+                  hook.event?.({ event: input as any })
                 }
               }),
             ),
-            (unsub) => Effect.sync(unsub),
+            Effect.forkScoped,
           )
 
           return { hooks }
@@ -184,7 +186,8 @@ export namespace Plugin {
     }),
   )
 
-  const runPromise = makeRunPromise(Service, layer)
+  const defaultLayer = layer.pipe(Layer.provide(Bus.layer))
+  const { runPromise } = makeRuntime(Service, defaultLayer)
 
   export async function trigger<
     Name extends TriggerName,
