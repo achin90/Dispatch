@@ -10,6 +10,7 @@ import type {
   SDKMessage,
   SDKAssistantMessage,
   SDKResultMessage,
+  SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk"
 import { Session } from "./index"
 import { MessageV2 } from "./message-v2"
@@ -19,6 +20,7 @@ import {
   resultMessageToMetadata,
   type CompletionMetadata,
 } from "./claude-sdk-adapter"
+import { setSdkSessionID } from "./claude-sdk-session-map"
 
 export interface ClaudeSdkProcessorInput {
   assistantMessage: MessageV2.Assistant
@@ -65,7 +67,13 @@ export async function processClaudeSdkStream(
         await Session.updateMessage(assistantMessage)
         break
 
-      // system, user, stream_event, etc. — ignored
+      case "system":
+        // Capture the SDK-assigned session UUID so we can resume this session later.
+        // The SDK generates the UUID on first query; we persist the mapping.
+        await setSdkSessionID(sessionID, (msg as SDKSystemMessage).session_id)
+        break
+
+      // user, stream_event, etc. — ignored
       default:
         break
     }

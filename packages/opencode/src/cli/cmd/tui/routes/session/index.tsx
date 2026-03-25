@@ -260,6 +260,10 @@ export function Session() {
   })
 
   useKeyboard((evt) => {
+    if (keybind.match("dashboard", evt)) {
+      navigate({ type: "home" })
+      return
+    }
     if (!session()?.parentID) return
     if (keybind.match("app_exit", evt)) {
       exit()
