@@ -21,6 +21,7 @@ export interface ClaudeSdkQueryInput {
   allowedTools?: string[]
   disallowedTools?: string[]
   abortController?: AbortController
+  maxTurns?: number
 }
 
 /**
@@ -75,6 +76,7 @@ export async function createClaudeSdkQuery(
     disallowedTools: input.disallowedTools,
     canUseTool: createCanUseToolBridge({ sessionID: input.sessionID }),
     abortController: input.abortController,
+    maxTurns: input.maxTurns,
   }
 
   return query({
