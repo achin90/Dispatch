@@ -1179,6 +1179,14 @@ export namespace Provider {
     }
   })
 
+  // Models that support the [1m] context variant in the Claude Agent SDK
+  const MODELS_WITH_1M = new Set([
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
+  ])
+
   export async function list() {
     const providers = await state().then((state) => state.providers)
     // The Claude Agent SDK handles auth — always include Anthropic even without a local API key
@@ -1195,10 +1203,21 @@ export namespace Provider {
     const filtered: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
     for (const [id, provider] of Object.entries(providers)) {
       if (id === "anthropic") {
-        // The Claude Agent SDK enables the 1M context beta automatically
-        for (const model of Object.values(provider.models)) {
-          if (model.limit.context < 1_000_000) {
-            model.limit.context = 1_000_000
+        // Add [1m] context variants for models that support it
+        for (const [modelID, model] of Object.entries(provider.models)) {
+          if (MODELS_WITH_1M.has(modelID)) {
+            const variantID = `${modelID}[1m]`
+            if (!provider.models[variantID]) {
+              provider.models[variantID] = {
+                ...structuredClone(model),
+                id: ModelID.make(variantID),
+                name: `${model.name} (1M context)`,
+                limit: {
+                  ...model.limit,
+                  context: 1_000_000,
+                },
+              }
+            }
           }
         }
         filtered[id as ProviderID] = provider
