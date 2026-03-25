@@ -70,6 +70,7 @@ export function Prompt(props: PromptProps) {
   const sdk = useSDK()
   const route = useRoute()
   const sync = useSync()
+  const directory = createMemo(() => sync.session.get(props.sessionID ?? "")?.directory)
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
@@ -238,6 +239,7 @@ export function Prompt(props: PromptProps) {
           if (store.interrupt >= 2) {
             sdk.client.session.abort({
               sessionID: props.sessionID,
+              directory: directory(),
             })
             setStore("interrupt", 0)
           }
@@ -546,6 +548,7 @@ export function Prompt(props: PromptProps) {
     if (sessionID == null) {
       const res = await sdk.client.session.create({
         workspaceID: props.workspaceID,
+        directory: directory(),
       })
 
       if (res.error) {
@@ -591,6 +594,7 @@ export function Prompt(props: PromptProps) {
     if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
+        directory: directory(),
         agent: local.agent.current().name,
         model: {
           providerID: selectedModel.providerID,
@@ -616,6 +620,7 @@ export function Prompt(props: PromptProps) {
 
       sdk.client.session.command({
         sessionID,
+        directory: directory(),
         command: command.slice(1),
         arguments: args,
         agent: local.agent.current().name,
@@ -633,6 +638,7 @@ export function Prompt(props: PromptProps) {
       sdk.client.session
         .prompt({
           sessionID,
+          directory: directory(),
           ...selectedModel,
           messageID,
           agent: local.agent.current().name,

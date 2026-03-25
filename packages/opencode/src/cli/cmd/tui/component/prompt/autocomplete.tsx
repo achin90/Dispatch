@@ -77,6 +77,7 @@ export function Autocomplete(props: {
 }) {
   const sdk = useSDK()
   const sync = useSync()
+  const directory = createMemo(() => sync.session.get(props.sessionID ?? "")?.directory)
   const command = useCommandDialog()
   const { theme } = useTheme()
   const dimensions = useTerminalDimensions()
@@ -228,6 +229,7 @@ export function Autocomplete(props: {
       // Get files from SDK
       const result = await sdk.client.find.files({
         query: baseQuery,
+        directory: directory(),
       })
 
       const options: AutocompleteOption[] = []

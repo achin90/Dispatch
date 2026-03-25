@@ -7,6 +7,7 @@ import { useRoute } from "@tui/context/route"
 import { useSDK } from "../context/sdk"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogPrompt } from "@tui/ui/dialog-prompt"
+import { DialogDirectorySelect } from "@tui/component/dialog-directory-select"
 import { Installation } from "@/installation"
 import { Locale } from "@/util/locale"
 import { Spinner } from "@tui/component/spinner"
@@ -20,6 +21,7 @@ interface AgentEntry {
   name: string
   sessionID: string
   createdAt: number
+  directory?: string
 }
 
 export function Home() {
@@ -110,13 +112,23 @@ export function Home() {
     if (evt.name === "a") {
       ;(async () => {
         setDialogOpen(true)
+        const dir = await DialogDirectorySelect.show(dialog, "Select Directory")
+        if (!dir) {
+          dialog.clear()
+          setDialogOpen(false)
+          return
+        }
         const name = await DialogPrompt.show(dialog, "New Agent", {
           placeholder: "Agent name",
         })
         dialog.clear()
         setDialogOpen(false)
         if (!name) return
-        const result = await sdk.client.session.create({})
+        const absoluteDir =
+          dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
+        const result = await sdk.client.session.create({
+          directory: absoluteDir,
+        })
         if (!result.data) return
         const current: AgentEntry[] = kv.get("agents", [])
         const entry: AgentEntry = {
@@ -124,6 +136,7 @@ export function Home() {
           name,
           sessionID: result.data.id,
           createdAt: Date.now(),
+          directory: dir,
         }
         kv.set("agents", [...current, entry])
         setSelectedIndex(current.length)
