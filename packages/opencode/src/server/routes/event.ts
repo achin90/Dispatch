@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming"
 import { Log } from "@/util/log"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
+import { GlobalBus } from "@/bus/global"
 import { lazy } from "../../util/lazy"
 import { AsyncQueue } from "../../util/queue"
 import { Instance } from "@/project/instance"
@@ -53,6 +54,7 @@ export const EventRoutes = lazy(() =>
           )
         }, 10_000)
 
+        const currentDirectory = Instance.directory
         const unsub = Bus.subscribeAll((event) => {
           q.push(JSON.stringify(event))
           if (event.type === Bus.InstanceDisposed.type) {
@@ -60,11 +62,20 @@ export const EventRoutes = lazy(() =>
           }
         })
 
+        // Also listen to events from other directories (e.g. agent sessions
+        // running in a different working directory).
+        const globalHandler = ({ directory, payload }: { directory?: string; payload: any }) => {
+          if (directory === currentDirectory) return
+          q.push(JSON.stringify(payload))
+        }
+        GlobalBus.on("event", globalHandler)
+
         const stop = () => {
           if (done) return
           done = true
           clearInterval(heartbeat)
           unsub()
+          GlobalBus.off("event", globalHandler)
           q.push(null)
           log.info("event disconnected")
         }
