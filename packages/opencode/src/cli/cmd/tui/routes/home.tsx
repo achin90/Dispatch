@@ -32,6 +32,8 @@ interface AgentEntry {
   }
 }
 
+let lastEnteredSessionID: string | undefined
+
 export function Home() {
   const sync = useSync()
   const kv = useKV()
@@ -89,6 +91,12 @@ export function Home() {
   })
 
   const flat = createMemo(() => grouped().flatMap((g) => g.agents))
+
+  // Restore selection to the last-entered agent
+  if (lastEnteredSessionID) {
+    const idx = flat().findIndex((a) => a.sessionID === lastEnteredSessionID)
+    if (idx >= 0) setSelectedIndex(idx)
+  }
 
   function move(direction: number) {
     const len = flat().length
@@ -152,6 +160,7 @@ export function Home() {
     if (evt.name === "return") {
       const agent = selected()
       if (agent) {
+        lastEnteredSessionID = agent.sessionID
         route.navigate({ type: "session", sessionID: agent.sessionID })
       }
     }
