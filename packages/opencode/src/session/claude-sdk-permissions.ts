@@ -13,6 +13,7 @@ import { createTwoFilesPatch } from "diff"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Filesystem } from "@/util/filesystem"
+import { Instance } from "@/project/instance"
 import { SessionID } from "@/session/schema"
 
 // ---------------------------------------------------------------------------
@@ -141,7 +142,13 @@ export interface CanUseToolBridgeOptions {
 }
 
 export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUseTool {
-  return async (
+  // Bind the callback to the current Instance ALS context.
+  // The Agent SDK spawns a subprocess and calls canUseTool from a stream
+  // reader context that may lose the AsyncLocalStorage context. Without
+  // this bind, Permission.ask() and Bus.publish() would operate on a
+  // different Instance state than what Permission.reply() sees from the
+  // HTTP route handler.
+  return Instance.bind(async (
     toolName: string,
     input: Record<string, unknown>,
     callOptions: Parameters<CanUseTool>[2],
@@ -194,5 +201,5 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       // Abort or unexpected error
       return { behavior: "deny", message: error instanceof Error ? error.message : "Permission denied" }
     }
-  }
+  })
 }

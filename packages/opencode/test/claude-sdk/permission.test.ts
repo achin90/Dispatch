@@ -240,6 +240,130 @@ describe("claude-sdk permissions", () => {
       })
     })
 
+    // Regression: agent sessions run in a different directory than the TUI.
+    // Permission.ask() fires in the agent's directory, but Permission.reply()
+    // fires in the TUI's directory (from the HTTP route handler). The pending
+    // map must be global, not per-directory, or replies silently fail.
+    test("cross-directory: reply from different directory resolves 'once'", async () => {
+      await using agentDir = await tmpdir({ git: true })
+      await using tuiDir = await tmpdir({ git: true })
+
+      // Bridge is created in the agent's directory (like createClaudeSdkQuery does)
+      const bridge = await Instance.provide({
+        directory: agentDir.path,
+        fn: () => createCanUseToolBridge({ sessionID: sid }),
+      })
+
+      // Bus.subscribe must run inside an Instance context (Bus state is per-directory).
+      // We subscribe from the agent's directory since that's where ask() publishes.
+      let capturedID: unknown
+      const unsubscribe = await Instance.provide({
+        directory: agentDir.path,
+        fn: () => {
+          return Bus.subscribe(Permission.Event.Asked, (event) => {
+            capturedID = event.properties.id
+            // reply() runs inside the TUI's directory — different from the agent.
+            // This simulates the real flow: TUI sends HTTP request with its own
+            // x-opencode-directory header, server runs Permission.reply() in that context.
+            Instance.provide({
+              directory: tuiDir.path,
+              fn: () =>
+                Permission.reply({
+                  requestID: event.properties.id,
+                  reply: "once",
+                }),
+            })
+          })
+        },
+      })
+
+      try {
+        const result = await Instance.provide({
+          directory: agentDir.path,
+          fn: () => bridge("Read", { file_path: "/tmp/test.ts" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross" }),
+        })
+        expect(capturedID).toBeDefined()
+        expect(result.behavior).toBe("allow")
+      } finally {
+        unsubscribe()
+      }
+    })
+
+    test("cross-directory: reply from different directory resolves 'always'", async () => {
+      await using agentDir = await tmpdir({ git: true })
+      await using tuiDir = await tmpdir({ git: true })
+
+      const bridge = await Instance.provide({
+        directory: agentDir.path,
+        fn: () => createCanUseToolBridge({ sessionID: sid }),
+      })
+
+      const unsubscribe = await Instance.provide({
+        directory: agentDir.path,
+        fn: () => {
+          return Bus.subscribe(Permission.Event.Asked, (event) => {
+            Instance.provide({
+              directory: tuiDir.path,
+              fn: () =>
+                Permission.reply({
+                  requestID: event.properties.id,
+                  reply: "always",
+                }),
+            })
+          })
+        },
+      })
+
+      try {
+        const result = await Instance.provide({
+          directory: agentDir.path,
+          fn: () => bridge("Bash", { command: "echo hi" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross" }),
+        })
+        expect(result.behavior).toBe("allow")
+      } finally {
+        unsubscribe()
+      }
+    })
+
+    test("cross-directory: reply from different directory resolves 'reject'", async () => {
+      await using agentDir = await tmpdir({ git: true })
+      await using tuiDir = await tmpdir({ git: true })
+
+      const bridge = await Instance.provide({
+        directory: agentDir.path,
+        fn: () => createCanUseToolBridge({ sessionID: sid }),
+      })
+
+      const unsubscribe = await Instance.provide({
+        directory: agentDir.path,
+        fn: () => {
+          return Bus.subscribe(Permission.Event.Asked, (event) => {
+            Instance.provide({
+              directory: tuiDir.path,
+              fn: () =>
+                Permission.reply({
+                  requestID: event.properties.id,
+                  reply: "reject",
+                }),
+            })
+          })
+        },
+      })
+
+      try {
+        const result = await Instance.provide({
+          directory: agentDir.path,
+          fn: () => bridge("Write", { file_path: "/etc/passwd", content: "bad" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross" }),
+        })
+        expect(result.behavior).toBe("deny")
+        if (result.behavior === "deny") {
+          expect(result.message).toBe("User rejected permission")
+        }
+      } finally {
+        unsubscribe()
+      }
+    })
+
     test("request contains tool metadata", async () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid })
