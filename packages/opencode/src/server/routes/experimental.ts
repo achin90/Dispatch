@@ -4,6 +4,7 @@ import z from "zod"
 import os from "os"
 import fs from "fs/promises"
 import path from "path"
+import { execFile } from "child_process"
 import { ProviderID, ModelID } from "../../provider/schema"
 import { ToolRegistry } from "../../tool/registry"
 import { Worktree } from "../../worktree"
@@ -282,6 +283,56 @@ export const ExperimentalRoutes = lazy(() =>
         const body = c.req.valid("json")
         await Worktree.reset(body)
         return c.json(true)
+      },
+    )
+    .get(
+      "/worktree/diffstat",
+      describeRoute({
+        summary: "Get worktree diff stats",
+        description:
+          "Return line-level diff statistics (additions, deletions, file count) for uncommitted changes in the current directory.",
+        operationId: "worktree.diffstat",
+        responses: {
+          200: {
+            description: "Diff statistics",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z
+                    .object({
+                      additions: z.number(),
+                      deletions: z.number(),
+                      files: z.number(),
+                    })
+                    .meta({ ref: "DiffStat" }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        const dir = Instance.directory
+        function numstat(args: string[]): Promise<string> {
+          return new Promise((resolve) => {
+            execFile("git", args, { cwd: dir, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+              resolve(err ? "" : stdout)
+            })
+          })
+        }
+        const [unstaged, staged] = await Promise.all([
+          numstat(["diff", "--numstat"]),
+          numstat(["diff", "--cached", "--numstat"]),
+        ])
+        const lines = [unstaged, staged]
+          .flatMap((raw) => raw.split("\n"))
+          .map((line) => line.split("\t"))
+          .filter((p): p is [string, string, string] => p.length >= 3)
+          .filter((p) => !isNaN(parseInt(p[0], 10)) && !isNaN(parseInt(p[1], 10)))
+        const additions = lines.reduce((sum, p) => sum + parseInt(p[0], 10), 0)
+        const deletions = lines.reduce((sum, p) => sum + parseInt(p[1], 10), 0)
+        const files = new Set(lines.map((p) => p[2])).size
+        return c.json({ additions, deletions, files })
       },
     )
     .get(

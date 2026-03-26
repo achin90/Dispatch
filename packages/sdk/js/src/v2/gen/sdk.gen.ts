@@ -188,6 +188,7 @@ import type {
   WorktreeResetErrors,
   WorktreeResetInput,
   WorktreeResetResponses,
+  WorktreeDiffstatResponses,
 } from "./types.gen.js"
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<
@@ -1335,6 +1336,36 @@ export class Worktree extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Get worktree diff stats
+   *
+   * Return line-level diff statistics (additions, deletions, file count) for uncommitted changes in the current directory.
+   */
+  public diffstat<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorktreeDiffstatResponses, unknown, ThrowOnError>({
+      url: "/experimental/worktree/diffstat",
+      ...options,
+      ...params,
     })
   }
 }
