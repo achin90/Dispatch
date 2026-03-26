@@ -137,13 +137,18 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 
   const input = createMemo(() => {
     const tool = props.request.tool
-    if (!tool) return {}
-    const parts = sync.data.part[tool.messageID] ?? []
-    for (const part of parts) {
-      if (part.type === "tool" && part.callID === tool.callID && part.state.status !== "pending") {
-        return part.state.input ?? {}
+    if (tool) {
+      const parts = sync.data.part[tool.messageID] ?? []
+      for (const part of parts) {
+        if (part.type === "tool" && part.callID === tool.callID && part.state.status !== "pending") {
+          return part.state.input ?? {}
+        }
       }
     }
+    // Fall back to metadata.input (set by the SDK permission bridge for subagent tools
+    // where the tool part lives in a child session that may not be synced in the TUI)
+    const metaInput = props.request.metadata?.input
+    if (metaInput && typeof metaInput === "object") return metaInput as Record<string, unknown>
     return {}
   })
 
