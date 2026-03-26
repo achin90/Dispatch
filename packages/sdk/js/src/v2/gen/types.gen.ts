@@ -2787,6 +2787,31 @@ export type WorktreeResetResponses = {
 
 export type WorktreeResetResponse = WorktreeResetResponses[keyof WorktreeResetResponses]
 
+export type DiffStat = {
+  additions: number
+  deletions: number
+  files: number
+}
+
+export type WorktreeDiffstatData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/diffstat"
+}
+
+export type WorktreeDiffstatResponses = {
+  /**
+   * Diff statistics
+   */
+  200: DiffStat
+}
+
+export type WorktreeDiffstatResponse = WorktreeDiffstatResponses[keyof WorktreeDiffstatResponses]
+
 export type ExperimentalSessionListData = {
   body?: never
   path?: never

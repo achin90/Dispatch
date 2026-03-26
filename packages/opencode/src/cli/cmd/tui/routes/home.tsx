@@ -1,4 +1,5 @@
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Match, on, Show, Switch } from "solid-js"
+import type { DiffStat } from "@opencode-ai/sdk/v2"
 import { useTheme, selectedForeground } from "@tui/context/theme"
 import { useSync } from "../context/sync"
 import { useDirectory } from "../context/directory"
@@ -91,6 +92,19 @@ export function Home() {
   })
 
   const flat = createMemo(() => grouped().flatMap((g) => g.agents))
+
+  const [diffStats, setDiffStats] = createSignal<Record<string, DiffStat>>({})
+
+  function fetchDiffStats() {
+    for (const group of grouped()) {
+      sdk.client.worktree.diffstat({ directory: group.dir }).then((res) => {
+        if (!res.data) return
+        setDiffStats((prev) => ({ ...prev, [group.dir]: res.data! }))
+      })
+    }
+  }
+
+  createEffect(on(grouped, () => fetchDiffStats()))
 
   // Restore selection to the last-entered agent
   if (lastEnteredSessionID) {
@@ -298,14 +312,9 @@ export function Home() {
               Name
             </text>
           </box>
-          <box width={18}>
-            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
-              Status
-            </text>
-          </box>
           <box flexGrow={1}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
-              Activity
+              Status
             </text>
           </box>
         </box>
@@ -327,10 +336,24 @@ export function Home() {
             <For each={grouped()}>
               {(group) => (
                 <>
-                  <box paddingTop={1} paddingBottom={0}>
+                  <box paddingTop={1} paddingBottom={0} flexDirection="row">
                     <text fg={theme.accent} attributes={TextAttributes.BOLD} overflow="hidden" wrapMode="none">
                       {group.label}
                     </text>
+                    <Show when={diffStats()[group.dir]}>
+                      {(stats) => (
+                        <text>
+                          {"  "}
+                          <span style={{ fg: theme.success }}>+{stats().additions}</span>
+                          {" "}
+                          <span style={{ fg: theme.error }}>-{stats().deletions}</span>
+                          {" "}
+                          <span style={{ fg: theme.textMuted }}>
+                            {stats().files} {Locale.pluralize(stats().files, "file", "files")}
+                          </span>
+                        </text>
+                      )}
+                    </Show>
                   </box>
                   <For each={group.agents}>
                     {(agent) => {
@@ -355,7 +378,7 @@ export function Home() {
                               {agent.name}
                             </text>
                           </box>
-                          <box width={18}>
+                          <box flexGrow={1}>
                             <Switch>
                               <Match when={agent.status?.type === "busy"}>
                                 <Spinner color={isSelected() ? fg : undefined}>Working</Spinner>
@@ -367,19 +390,6 @@ export function Home() {
                                 <text fg={isSelected() ? fg : theme.textMuted}>Waiting for user</text>
                               </Match>
                             </Switch>
-                          </box>
-                          <box flexGrow={1}>
-                            <Show
-                              when={agent.session?.summary}
-                              fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
-                            >
-                              {(summary) => (
-                                <text fg={isSelected() ? fg : theme.textMuted}>
-                                  +{summary().additions} -{summary().deletions} {summary().files}{" "}
-                                  {Locale.pluralize(summary().files, "file", "files")}
-                                </text>
-                              )}
-                            </Show>
                           </box>
                         </box>
                       )
