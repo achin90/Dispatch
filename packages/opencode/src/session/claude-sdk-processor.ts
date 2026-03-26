@@ -281,6 +281,16 @@ async function processAssistantMessage(
 }
 
 /**
+ * Resolve the agent name from a tool part's input.
+ * The SDK sends subagentType as PascalCase (e.g., "Explore") but opencode
+ * agents use lowercase names (e.g., "explore") for color/display matching.
+ */
+function resolveAgentName(toolPart: MessageV2.ToolPart | undefined, fallback?: string): string {
+  const raw = (toolPart?.state.input?.subagentType as string | undefined) ?? fallback
+  return raw?.toLowerCase() ?? "default"
+}
+
+/**
  * Create a child session for a subagent and wire it up to the parent Agent ToolPart.
  * Creates a user message (with the prompt) and an assistant message, mirroring
  * the structure the old task tool creates via SessionPrompt.prompt().
@@ -298,11 +308,7 @@ async function createChildSession(
   )
   const description = agentPart?.state.input?.description as string | undefined
   const prompt = agentPart?.state.input?.prompt as string | undefined
-  // subagentType from tool input is the agent name (e.g., "Explore", "general-purpose")
-  // Lowercase to match opencode's agent names (e.g., "explore" not "Explore")
-  const rawAgentName = (agentPart?.state.input?.subagentType as string | undefined)
-    ?? overrideAgentName
-  const agentName = rawAgentName?.toLowerCase() ?? "default"
+  const agentName = resolveAgentName(agentPart, overrideAgentName)
 
   const childSession = await Session.create({
     parentID: sessionID,
@@ -396,20 +402,25 @@ async function handleTaskStarted(
   const toolUseId = msg.tool_use_id
   if (!toolUseId) return
 
-  // task_type is the authoritative agent name (e.g., "Explore", "general-purpose")
   // task_type is a generic classification (e.g., "local_agent"), not the agent name.
   // The actual agent name comes from the tool input's subagentType field.
   // We pass task_type as a fallback for createChildSession.
-  const agentName = msg.task_type ?? "default"
+  const taskTypeFallback = msg.task_type ?? "default"
 
   let ctx = subagentMap.get(toolUseId)
   if (!ctx) {
-    // Eagerly create the child session with the correct agent name from task_type
-    ctx = await createChildSession(sessionID, assistantMessage, toolUseId, agentName)
+    ctx = await createChildSession(sessionID, assistantMessage, toolUseId, taskTypeFallback)
     subagentMap.set(toolUseId, ctx)
   }
 
-  // Update the child session title with the description and agent name
+  // Resolve the correct agent name for the title
+  const parentParts = await MessageV2.parts(assistantMessage.id)
+  const agentPart = parentParts.find(
+    (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
+  )
+  const agentName = resolveAgentName(agentPart, taskTypeFallback)
+
+  // Update the child session title with the description and correct agent name
   if (msg.description) {
     await Session.setTitle({
       sessionID: ctx.childSessionID,
@@ -418,10 +429,6 @@ async function handleTaskStarted(
   }
 
   // Update the Agent ToolPart's title
-  const parentParts = await MessageV2.parts(assistantMessage.id)
-  const agentPart = parentParts.find(
-    (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
-  )
   if (agentPart && agentPart.state.status === "running") {
     await Session.updatePart({
       ...agentPart,

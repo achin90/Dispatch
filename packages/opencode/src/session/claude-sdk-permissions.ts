@@ -115,8 +115,11 @@ async function generateEditDiff(
     if (toolName === "Edit") {
       const oldString = typeof input.old_string === "string" ? input.old_string : ""
       const newString = typeof input.new_string === "string" ? input.new_string : ""
+      const replaceAll = input.replace_all === true
       const contentOld = (await Filesystem.exists(filePath)) ? await Filesystem.readText(filePath) : ""
-      const contentNew = contentOld.replace(oldString, newString)
+      const contentNew = replaceAll
+        ? contentOld.replaceAll(oldString, newString)
+        : contentOld.replace(oldString, newString)
       const diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
       return { filepath: filePath, diff }
     }
@@ -173,6 +176,30 @@ async function markToolDenied(messageID: MessageID, callID: string, error: strin
   }
 }
 
+/**
+ * Update a tool part's state.metadata with additional fields (e.g., diff for edits).
+ * Best-effort — if the part can't be found, the tool still works without the metadata.
+ */
+async function updateToolMetadata(messageID: MessageID, callID: string, meta: Record<string, unknown>) {
+  try {
+    const parts = await MessageV2.parts(messageID)
+    const part = parts.find((p) => p.type === "tool" && p.callID === callID)
+    if (!part || part.type !== "tool" || part.state.status !== "running") return
+    await Session.updatePart({
+      ...part,
+      state: {
+        ...part.state,
+        metadata: {
+          ...(part.state.metadata ?? {}),
+          ...meta,
+        },
+      },
+    })
+  } catch {
+    // Best-effort
+  }
+}
+
 export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUseTool {
   // Bind the callback to the current Instance ALS context.
   // The Agent SDK spawns a subprocess and calls canUseTool from a stream
@@ -202,6 +229,12 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       metadata.filepath = diffInfo.filepath
       metadata.diff = diffInfo.diff
     }
+    // Store tool input in metadata so the TUI permission prompt can display
+    // details (e.g., bash command) even when the tool part isn't synced
+    // (which happens for subagent tools in child sessions).
+    metadata.input = input
+
+    const toolMessageID = options.messageID
 
     try {
       // Use Permission.ask() which registers in the pending map,
@@ -217,11 +250,23 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
           metadata,
           always: patterns,
           ruleset: options.ruleset ?? [],
+          tool: {
+            messageID: toolMessageID,
+            callID: callOptions.toolUseID,
+          },
         }),
         new Promise<never>((_, reject) => {
           signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
         }),
       ])
+      // After permission is approved, store the diff in the tool part's metadata
+      // so the TUI Edit component can display it (it reads props.metadata.diff).
+      if (diffInfo) {
+        await updateToolMetadata(toolMessageID, callOptions.toolUseID, {
+          diff: diffInfo.diff,
+          filepath: diffInfo.filepath,
+        })
+      }
       return { behavior: "allow", updatedInput: input }
     } catch (error) {
       const msg =
@@ -234,7 +279,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
               : "Permission denied"
 
       // Update the tool part to error state so the TUI shows strikethrough
-      await markToolDenied(options.messageID, callOptions.toolUseID, msg)
+      await markToolDenied(toolMessageID, callOptions.toolUseID, msg)
 
       return { behavior: "deny", message: msg }
     }
