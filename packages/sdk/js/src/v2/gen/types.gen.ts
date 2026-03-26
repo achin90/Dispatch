@@ -1628,6 +1628,8 @@ export type Provider = {
   }
 }
 
+export type GitRepoPaths = Array<string>
+
 export type ToolIds = Array<string>
 
 export type ToolListItem = {
@@ -2474,6 +2476,42 @@ export type ConfigProvidersResponses = {
 }
 
 export type ConfigProvidersResponse = ConfigProvidersResponses[keyof ConfigProvidersResponses]
+
+export type GitReposListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+    /**
+     * Root directory to scan (defaults to home)
+     */
+    root?: string
+    /**
+     * Filter repo names (case-insensitive substring)
+     */
+    query?: string
+  }
+  url: "/experimental/git-repos"
+}
+
+export type GitReposListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GitReposListError = GitReposListErrors[keyof GitReposListErrors]
+
+export type GitReposListResponses = {
+  /**
+   * Git repository paths
+   */
+  200: GitRepoPaths
+}
+
+export type GitReposListResponse = GitReposListResponses[keyof GitReposListResponses]
 
 export type ToolIdsData = {
   body?: never

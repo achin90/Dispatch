@@ -8,6 +8,7 @@ import { useSDK } from "../context/sdk"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { DialogDirectorySelect } from "@tui/component/dialog-directory-select"
+import { DialogGitRepoSelect } from "@tui/component/dialog-git-repo-select"
 import { Installation } from "@/installation"
 import { Locale } from "@/util/locale"
 import { Spinner } from "@tui/component/spinner"
@@ -22,6 +23,11 @@ interface AgentEntry {
   sessionID: string
   createdAt: number
   directory?: string
+  worktree?: {
+    branch: string
+    directory: string
+    sourceRepo: string
+  }
 }
 
 export function Home() {
@@ -45,7 +51,7 @@ export function Home() {
   })
 
   const [selectedIndex, setSelectedIndex] = createSignal(0)
-  const [toDelete, setToDelete] = createSignal<string>()
+  const [toDelete, setToDelete] = createSignal<{ id: string; mode: "d" | "x" }>()
   const [dialogOpen, setDialogOpen] = createSignal(false)
 
   const agents = createMemo(() => {
@@ -91,16 +97,16 @@ export function Home() {
       return
     }
     if (dialogOpen()) return
-    if (agents().length === 0 && evt.name !== "a") return
+    if (agents().length === 0 && evt.name !== "a" && evt.name !== "w") return
 
     if (evt.name === "j" || evt.name === "down") {
       setSelectedIndex((i) => clampIndex(i + 1))
-      setToDelete(undefined)
+      setToDelete()
       scrollToSelected()
     }
     if (evt.name === "k" || evt.name === "up") {
       setSelectedIndex((i) => clampIndex(i - 1))
-      setToDelete(undefined)
+      setToDelete()
       scrollToSelected()
     }
     if (evt.name === "return") {
@@ -142,19 +148,80 @@ export function Home() {
         setSelectedIndex(current.length)
       })()
     }
+    if (evt.name === "w") {
+      ;(async () => {
+        setDialogOpen(true)
+        const repoDir = await DialogGitRepoSelect.show(dialog, "Select Git Repository", sync.data.path.directory)
+        if (!repoDir) {
+          dialog.clear()
+          setDialogOpen(false)
+          return
+        }
+        const name = await DialogPrompt.show(dialog, "New Worktree Agent", {
+          placeholder: "Agent name (used as branch)",
+        })
+        dialog.clear()
+        setDialogOpen(false)
+        if (!name) return
+        const worktree = (await sdk.client.worktree.create({
+          directory: repoDir,
+          worktreeCreateInput: { name },
+        })).data
+        if (!worktree) return
+        const session = (await sdk.client.session.create({
+          directory: worktree.directory,
+        })).data
+        if (!session) return
+        const current: AgentEntry[] = kv.get("agents", [])
+        const entry: AgentEntry = {
+          id: crypto.randomUUID(),
+          name,
+          sessionID: session.id,
+          createdAt: Date.now(),
+          directory: worktree.directory,
+          worktree: {
+            branch: worktree.branch,
+            directory: worktree.directory,
+            sourceRepo: repoDir,
+          },
+        }
+        kv.set("agents", [...current, entry])
+        setSelectedIndex(current.length)
+      })()
+    }
     if (evt.name === "d") {
       const agent = agents()[selectedIndex()]
       if (!agent) return
-      if (toDelete() === agent.id) {
+      if (toDelete()?.id === agent.id && toDelete()?.mode === "d") {
         const current: AgentEntry[] = kv.get("agents", [])
         kv.set(
           "agents",
           current.filter((a) => a.id !== agent.id),
         )
-        setToDelete(undefined)
-        setSelectedIndex((i) => Math.min(i, agents().length - 2))
+        setToDelete()
+        setSelectedIndex((i) => Math.min(i, agents().length - 1))
       } else {
-        setToDelete(agent.id)
+        setToDelete({ id: agent.id, mode: "d" })
+      }
+    }
+    if (evt.name === "x") {
+      const agent = agents()[selectedIndex()]
+      if (!agent?.worktree) return
+      if (toDelete()?.id === agent.id && toDelete()?.mode === "x") {
+        const dir = agent.worktree.directory
+        const current: AgentEntry[] = kv.get("agents", [])
+        kv.set(
+          "agents",
+          current.filter((a) => a.worktree?.directory !== dir),
+        )
+        sdk.client.worktree.remove({
+          directory: agent.worktree.sourceRepo,
+          worktreeRemoveInput: { directory: dir },
+        })
+        setToDelete()
+        setSelectedIndex((i) => Math.min(i, agents().length - 1))
+      } else {
+        setToDelete({ id: agent.id, mode: "x" })
       }
     }
   })
@@ -191,7 +258,7 @@ export function Home() {
           when={agents().length > 0}
           fallback={
             <box flexGrow={1} alignItems="center" justifyContent="center">
-              <text fg={theme.textMuted}>No agents yet. Press 'a' to create one.</text>
+              <text fg={theme.textMuted}>No agents yet. Press 'a' to create or 'w' for worktree.</text>
             </box>
           }
         >
@@ -203,7 +270,7 @@ export function Home() {
             <For each={agents()}>
               {(agent, index) => {
                 const isSelected = createMemo(() => index() === selectedIndex())
-                const isDeleting = createMemo(() => toDelete() === agent.id)
+                const isDeleting = createMemo(() => toDelete()?.id === agent.id)
                 return (
                   <box
                     flexDirection="row"
@@ -219,7 +286,11 @@ export function Home() {
                         overflow="hidden"
                         wrapMode="none"
                       >
-                        {isDeleting() ? "Press 'd' again to remove" : agent.name}
+                        {isDeleting()
+                          ? toDelete()?.mode === "x"
+                            ? "Press 'x' again to delete worktree + all agents"
+                            : "Press 'd' again to remove agent"
+                          : agent.name}
                       </text>
                     </box>
                     <box width={20}>

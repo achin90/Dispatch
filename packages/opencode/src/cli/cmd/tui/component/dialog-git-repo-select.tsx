@@ -1,27 +1,20 @@
 import { createResource, createMemo } from "solid-js"
-import { createStore } from "solid-js/store"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
 import { type DialogContext } from "@tui/ui/dialog"
 import { useSDK } from "@tui/context/sdk"
+import path from "path"
 
-export function DialogDirectorySelect(props: {
+export function DialogGitRepoSelect(props: {
   title: string
+  defaultRoot: string
   onSelect?: (value: string) => void
   onCancel?: () => void
 }) {
   const sdk = useSDK()
 
-  const [store, setStore] = createStore({
-    filter: "",
-  })
-
-  const [directories] = createResource(
-    () => [store.filter],
+  const [repos] = createResource(
     async () => {
-      const result = await sdk.client.find.files({
-        query: store.filter,
-        type: "directory",
-      })
+      const result = await sdk.client.gitRepos.list({ root: props.defaultRoot })
       if (result.error) return []
       return result.data ?? []
     },
@@ -29,27 +22,19 @@ export function DialogDirectorySelect(props: {
   )
 
   const options = createMemo<DialogSelectOption<string>[]>(() => {
-    const dirs = directories() ?? []
-    const dotOption: DialogSelectOption<string> = {
-      value: ".",
-      title: ".",
-      description: "current directory",
-    }
-    const hidden = (d: string) => d.split("/").some((seg) => seg.startsWith("."))
-    return [
-      dotOption,
-      ...dirs
-        .filter((d) => d !== "." && !hidden(d))
-        .map((dir) => ({ value: dir, title: dir })),
-    ]
+    const items = repos() ?? []
+    return items.map((repoPath: string) => ({
+      value: repoPath,
+      title: path.basename(repoPath),
+      description: repoPath,
+    }))
   })
 
   return (
     <DialogSelect
       title={props.title}
+      placeholder="Filter repositories"
       options={options()}
-      skipFilter
-      onFilter={(query) => setStore("filter", query)}
       onSelect={(option) => {
         props.onSelect?.(option.value)
       }}
@@ -57,12 +42,13 @@ export function DialogDirectorySelect(props: {
   )
 }
 
-DialogDirectorySelect.show = (dialog: DialogContext, title: string) => {
+DialogGitRepoSelect.show = (dialog: DialogContext, title: string, defaultRoot: string) => {
   return new Promise<string | null>((resolve) => {
     dialog.replace(
       () => (
-        <DialogDirectorySelect
+        <DialogGitRepoSelect
           title={title}
+          defaultRoot={defaultRoot}
           onSelect={(value) => resolve(value)}
           onCancel={() => resolve(null)}
         />

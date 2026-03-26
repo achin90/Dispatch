@@ -40,6 +40,8 @@ import type {
   FindSymbolsResponses,
   FindTextResponses,
   FormatterStatusResponses,
+  GitReposListErrors,
+  GitReposListResponses,
   GlobalConfigGetResponses,
   GlobalConfigUpdateErrors,
   GlobalConfigUpdateResponses,
@@ -847,6 +849,42 @@ export class Config2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<ConfigProvidersResponses, unknown, ThrowOnError>({
       url: "/config/providers",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class GitRepos extends HeyApiClient {
+  /**
+   * List git repositories
+   *
+   * Scan immediate children of a root directory and return those that are git repositories.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      root?: string
+      query?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "root" },
+            { in: "query", key: "query" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GitReposListResponses, GitReposListErrors, ThrowOnError>({
+      url: "/experimental/git-repos",
       ...options,
       ...params,
     })
@@ -3955,6 +3993,11 @@ export class OpencodeClient extends HeyApiClient {
   private _config?: Config2
   get config(): Config2 {
     return (this._config ??= new Config2({ client: this.client }))
+  }
+
+  private _gitRepos?: GitRepos
+  get gitRepos(): GitRepos {
+    return (this._gitRepos ??= new GitRepos({ client: this.client }))
   }
 
   private _tool?: Tool
