@@ -10,6 +10,7 @@ import { Skill } from "../skill"
 import { Log } from "../util/log"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
+import PROMPT_MERGE from "./template/merge.txt"
 
 export namespace Command {
   const log = Log.create({ service: "command" })
@@ -63,6 +64,7 @@ export namespace Command {
   export const Default = {
     INIT: "init",
     REVIEW: "review",
+    MERGE: "merge",
   } as const
 
   export interface Interface {
@@ -90,13 +92,21 @@ export namespace Command {
         }
         commands[Default.REVIEW] = {
           name: Default.REVIEW,
-          description: "review changes [commit|branch|pr], defaults to uncommitted",
+          description: "multi-agent code review for bugs and CLAUDE.md/AGENTS.md compliance",
           source: "command",
           get template() {
             return PROMPT_REVIEW.replace("${path}", ctx.worktree)
           },
-          subtask: true,
           hints: hints(PROMPT_REVIEW),
+        }
+        commands[Default.MERGE] = {
+          name: Default.MERGE,
+          description: "rebase and merge current worktree branch into parent",
+          source: "command",
+          get template() {
+            return PROMPT_MERGE.replace("${path}", ctx.worktree)
+          },
+          hints: hints(PROMPT_MERGE),
         }
 
         for (const [name, command] of Object.entries(cfg.command ?? {})) {

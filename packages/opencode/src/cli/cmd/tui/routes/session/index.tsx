@@ -84,6 +84,8 @@ import { useTuiConfig } from "../../context/tui-config"
 
 addDefaultParsers(parsers.parsers)
 
+const drafts = new Map<string, PromptInfo>()
+
 class CustomSpeedScroll implements ScrollAcceleration {
   constructor(private speed: number) {}
 
@@ -263,6 +265,11 @@ export function Session() {
 
   useKeyboard((evt) => {
     if (keybind.match("dashboard", evt)) {
+      if (prompt) {
+        const info = prompt.current
+        if (info.input || info.parts.length) drafts.set(route.sessionID, info)
+        else drafts.delete(route.sessionID)
+      }
       navigate({ type: "home" })
       return
     }
@@ -1186,10 +1193,21 @@ export function Session() {
                   // Apply initial prompt when prompt component mounts (e.g., from fork)
                   if (route.initialPrompt) {
                     r.set(route.initialPrompt)
+                  } else {
+                    const draft = drafts.get(route.sessionID)
+                    if (draft) {
+                      // Defer to next frame so the Enter key from dashboard navigation
+                      // doesn't immediately submit the restored draft
+                      setTimeout(() => {
+                        r.set(draft)
+                        drafts.delete(route.sessionID)
+                      }, 0)
+                    }
                   }
                 }}
                 disabled={permissions().length > 0 || questions().length > 0}
                 onSubmit={() => {
+                  drafts.delete(route.sessionID)
                   toBottom()
                 }}
                 sessionID={route.sessionID}

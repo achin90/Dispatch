@@ -320,12 +320,9 @@ export const ExperimentalRoutes = lazy(() =>
             })
           })
         }
-        const [unstaged, staged] = await Promise.all([
-          numstat(["diff", "--numstat"]),
-          numstat(["diff", "--cached", "--numstat"]),
-        ])
-        const lines = [unstaged, staged]
-          .flatMap((raw) => raw.split("\n"))
+        const raw = await numstat(["diff", "HEAD", "--numstat"])
+        const lines = raw
+          .split("\n")
           .map((line) => line.split("\t"))
           .filter((p): p is [string, string, string] => p.length >= 3)
           .filter((p) => !isNaN(parseInt(p[0], 10)) && !isNaN(parseInt(p[1], 10)))
