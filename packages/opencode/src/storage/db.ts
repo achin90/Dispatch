@@ -112,6 +112,7 @@ export namespace Database {
   })
 
   export function close() {
+    if (!Client.isLoaded()) return
     Client().$client.close()
     Client.reset()
   }

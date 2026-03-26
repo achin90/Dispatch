@@ -19,5 +19,7 @@ export function lazy<T>(fn: () => T) {
     value = undefined
   }
 
+  result.isLoaded = () => loaded
+
   return result
 }
