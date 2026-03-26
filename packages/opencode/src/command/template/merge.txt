@@ -1,0 +1,79 @@
+# Merge Worktree Branch
+
+You are merging the current worktree branch back into the branch it was created from.
+
+## Step 1: Identify the parent branch
+
+Determine which branch this worktree was branched off from:
+
+```sh
+# Get the current branch
+CURRENT_BRANCH=$(git branch --show-current)
+
+# Find the parent branch by checking which common branch shares the most recent ancestor
+# Try upstream tracking first
+PARENT_BRANCH=$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null | sed 's|origin/||')
+
+# If no upstream, find the nearest parent among local branches
+if [ -z "$PARENT_BRANCH" ]; then
+  PARENT_BRANCH=""
+  BEST_COUNT=0
+  for branch in $(git for-each-ref --format='%(refname:short)' refs/heads/ | grep -v "^${CURRENT_BRANCH}$"); do
+    COUNT=$(git rev-list --count "$branch..$CURRENT_BRANCH" 2>/dev/null || echo 999999)
+    MERGE_BASE=$(git merge-base "$branch" HEAD 2>/dev/null)
+    if [ -n "$MERGE_BASE" ]; then
+      if [ -z "$PARENT_BRANCH" ] || [ "$COUNT" -lt "$BEST_COUNT" ]; then
+        BEST_COUNT=$COUNT
+        PARENT_BRANCH=$branch
+      fi
+    fi
+  done
+fi
+
+echo "Current branch: $CURRENT_BRANCH"
+echo "Parent branch: $PARENT_BRANCH"
+```
+
+Tell the user which parent branch you detected and confirm before proceeding.
+
+## Step 2: Commit outstanding changes
+
+Check for uncommitted work:
+
+```sh
+git status
+git diff HEAD
+```
+
+If there are any staged, unstaged, or untracked files, commit them all. Stage everything with `git add -A`, then commit. Follow any conventions from CLAUDE.md for commit messages. If the working tree is clean, skip to the next step.
+
+## Step 3: Rebase onto the parent branch
+
+Always rebase before merging. Never merge without rebasing first.
+
+```sh
+git rebase $PARENT_BRANCH
+```
+
+Resolve any conflicts if they arise. If conflicts are too complex to resolve confidently, stop and ask the user for help.
+
+## Step 4: Merge into the parent branch
+
+Find the main worktree for the parent branch and merge using `git -C`:
+
+```sh
+# Find the worktree directory where the parent branch is checked out
+PARENT_WORKTREE=$(git worktree list | grep "\[$PARENT_BRANCH\]" | awk '{print $1}')
+
+if [ -n "$PARENT_WORKTREE" ]; then
+  git -C "$PARENT_WORKTREE" merge "$CURRENT_BRANCH"
+else
+  echo "Parent branch $PARENT_BRANCH is not checked out in any worktree"
+fi
+```
+
+If the parent branch is not checked out in any worktree, tell the user and ask how they'd like to proceed.
+
+## Step 5: Confirm
+
+Report the result to the user: which branch was merged, into which parent, and whether it was a fast-forward or merge commit.
