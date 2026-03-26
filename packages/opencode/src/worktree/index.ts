@@ -1,6 +1,5 @@
 import z from "zod"
 import { NamedError } from "@opencode-ai/util/error"
-import { Global } from "../global"
 import { Instance } from "../project/instance"
 import { InstanceBootstrap } from "../project/bootstrap"
 import { Project } from "../project/project"
@@ -217,11 +216,11 @@ export namespace Worktree {
           throw new NotGitError({ message: "Worktrees are only supported for git projects" })
         }
 
-        const root = pathSvc.join(Global.Path.data, "worktree", Instance.project.id)
-        yield* fsys.makeDirectory(root, { recursive: true }).pipe(Effect.orDie)
-
-        const base = name ? slugify(name) : ""
-        return yield* candidate(root, base || undefined)
+        const repo = pathSvc.basename(Instance.worktree)
+        const root = pathSvc.dirname(Instance.worktree)
+        const slug = name ? slugify(name) : ""
+        const base = slug ? `${repo}-${slug}` : `${repo}-${Slug.create()}`
+        return yield* candidate(root, base)
       })
 
       const setup = Effect.fnUntraced(function* (info: Info) {

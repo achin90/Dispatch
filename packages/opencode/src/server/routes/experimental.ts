@@ -1,6 +1,9 @@
 import { Hono } from "hono"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import z from "zod"
+import os from "os"
+import fs from "fs/promises"
+import path from "path"
 import { ProviderID, ModelID } from "../../provider/schema"
 import { ToolRegistry } from "../../tool/registry"
 import { Worktree } from "../../worktree"
@@ -15,6 +18,59 @@ import { WorkspaceRoutes } from "./workspace"
 
 export const ExperimentalRoutes = lazy(() =>
   new Hono()
+    .get(
+      "/git-repos",
+      describeRoute({
+        summary: "List git repositories",
+        description:
+          "Scan immediate children of a root directory and return those that are git repositories.",
+        operationId: "gitRepos.list",
+        responses: {
+          200: {
+            description: "Git repository paths",
+            content: {
+              "application/json": {
+                schema: resolver(z.array(z.string()).meta({ ref: "GitRepoPaths" })),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "query",
+        z.object({
+          root: z.string().optional().meta({ description: "Root directory to scan (defaults to home)" }),
+          query: z.string().optional().meta({ description: "Filter repo names (case-insensitive substring)" }),
+        }),
+      ),
+      async (c) => {
+        const { root, query } = c.req.valid("query")
+        const rootDir = root || os.homedir()
+        const repos: string[] = []
+        const needle = query?.toLowerCase()
+
+        async function walk(dir: string) {
+          const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => null)
+          if (!entries) return
+          if (entries.some((e) => e.name === ".git")) {
+            if (!needle || path.basename(dir).toLowerCase().includes(needle)) {
+              repos.push(dir)
+            }
+            return
+          }
+          await Promise.all(
+            entries
+              .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+              .map((e) => walk(path.join(dir, e.name))),
+          )
+        }
+
+        await walk(rootDir)
+        repos.sort()
+        return c.json(repos)
+      },
+    )
     .get(
       "/tool/ids",
       describeRoute({
