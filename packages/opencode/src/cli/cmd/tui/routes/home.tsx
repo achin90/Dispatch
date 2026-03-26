@@ -93,6 +93,23 @@ export function Home() {
 
   const flat = createMemo(() => grouped().flatMap((g) => g.agents))
 
+  const children = createMemo(() => {
+    const map = new Map<string, string[]>()
+    sync.data.session.forEach((s) => {
+      if (!s.parentID) return
+      const list = map.get(s.parentID)
+      if (list) list.push(s.id)
+      else map.set(s.parentID, [s.id])
+    })
+    return map
+  })
+
+  function hasPending(sessionID: string): boolean {
+    if ((sync.data.permission[sessionID]?.length ?? 0) > 0) return true
+    if ((sync.data.question[sessionID]?.length ?? 0) > 0) return true
+    return children().get(sessionID)?.some((id) => hasPending(id)) ?? false
+  }
+
   const [diffStats, setDiffStats] = createSignal<Record<string, DiffStat>>({})
 
   function fetchDiffStats() {
@@ -385,14 +402,17 @@ export function Home() {
                           </box>
                           <box width={18}>
                             <Switch>
+                              <Match when={hasPending(agent.sessionID)}>
+                                <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
+                              </Match>
                               <Match when={agent.status?.type === "busy"}>
-                                <Spinner color={isSelected() ? fg : undefined}>Working</Spinner>
+                                <Spinner color={isSelected() ? fg : theme.success}>Working</Spinner>
                               </Match>
                               <Match when={agent.status?.type === "retry"}>
-                                <text fg={isSelected() ? fg : theme.warning}>Retrying</text>
+                                <text fg={isSelected() ? fg : theme.error}>Retrying</text>
                               </Match>
                               <Match when={true}>
-                                <text fg={isSelected() ? fg : theme.textMuted}>Waiting for user</text>
+                                <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
                               </Match>
                             </Switch>
                           </box>
