@@ -1,7 +1,7 @@
 import { describe, test, expect, spyOn } from "bun:test"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
-import { MessageID, SessionID, PartID } from "../../src/session/schema"
+import { MessageID, SessionID } from "../../src/session/schema"
 import { Instance } from "../../src/project/instance"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { tmpdir } from "../fixture/fixture"
@@ -10,6 +10,9 @@ import {
   thinkingBlock,
   toolUseBlock,
   assistantMessage as sdkAssistantMessage,
+  subagentAssistantMessage,
+  taskStartedMessage,
+  taskNotificationMessage,
   resultSuccess,
   resultError,
   systemMessage,
@@ -483,6 +486,259 @@ describe("claude-sdk session loop", () => {
           expect(part.sessionID).toBe(session.id)
           expect(part.messageID).toBe(assistantMsg.id)
         }
+      })
+    })
+  })
+
+  describe("subagent routing", () => {
+    test("subagent assistant message creates child session and routes parts", async () => {
+      await withInstance(async () => {
+        const session = await Session.create({})
+        const assistantMsg = makeAssistantMessage(session.id)
+        await Session.updateMessage(assistantMsg)
+
+        const agentToolBlock = toolUseBlock("Agent", {
+          prompt: "explore the codebase",
+          description: "Explore codebase",
+          subagent_type: "Explore",
+        })
+
+        const stream = messageSequence(
+          systemMessage(),
+          // Parent message with Agent tool_use
+          sdkAssistantMessage([agentToolBlock]),
+          // Subagent message (has parent_tool_use_id)
+          subagentAssistantMessage([textBlock("Found 3 files")], agentToolBlock.id),
+          resultSuccess(),
+        )
+
+        const result = await processClaudeSdkStream(stream, {
+          assistantMessage: assistantMsg,
+          sessionID: session.id,
+          abort: new AbortController().signal,
+        })
+
+        expect(result.outcome).toBe("stop")
+
+        // Parent message should have the Agent ToolPart
+        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
+        expect(agentPart).toBeDefined()
+
+        // Agent ToolPart metadata should have sessionId pointing to child session
+        if (agentPart?.type === "tool" && agentPart.state.status !== "pending") {
+          const metadata = agentPart.state.metadata ?? {}
+          expect(metadata.sessionId).toBeDefined()
+
+          // Child session should have a text part from the subagent
+          const childSessions = await Session.children(session.id)
+          expect(childSessions.length).toBe(1)
+        }
+      })
+    })
+
+    test("parent Agent ToolPart metadata gets sessionId", async () => {
+      await withInstance(async () => {
+        const session = await Session.create({})
+        const assistantMsg = makeAssistantMessage(session.id)
+        await Session.updateMessage(assistantMsg)
+
+        const agentToolBlock = toolUseBlock("Agent", {
+          prompt: "do something",
+          description: "Do something",
+          subagent_type: "general-purpose",
+        })
+
+        const stream = messageSequence(
+          systemMessage(),
+          sdkAssistantMessage([agentToolBlock]),
+          subagentAssistantMessage([textBlock("Done")], agentToolBlock.id),
+          resultSuccess(),
+        )
+
+        await processClaudeSdkStream(stream, {
+          assistantMessage: assistantMsg,
+          sessionID: session.id,
+          abort: new AbortController().signal,
+        })
+
+        // Read back the Agent ToolPart from DB
+        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
+        expect(agentPart).toBeDefined()
+
+        // It should have metadata.sessionId set
+        if (agentPart?.type === "tool" && agentPart.state.status !== "pending") {
+          expect(agentPart.state.metadata?.sessionId).toBeDefined()
+
+          // And the child session should exist with that ID
+          const childSession = await Session.get(agentPart.state.metadata!.sessionId as SessionID)
+          expect(childSession).toBeDefined()
+          expect(childSession.parentID).toBe(session.id)
+        }
+      })
+    })
+
+    test("task_started creates child session and updates Agent ToolPart title", async () => {
+      await withInstance(async () => {
+        const session = await Session.create({})
+        const assistantMsg = makeAssistantMessage(session.id)
+        await Session.updateMessage(assistantMsg)
+
+        const agentToolBlock = toolUseBlock("Agent", {
+          prompt: "explore",
+          description: "Explore",
+          subagent_type: "Explore",
+        })
+
+        const stream = messageSequence(
+          systemMessage(),
+          sdkAssistantMessage([agentToolBlock]),
+          taskStartedMessage(agentToolBlock.id, "Exploring the codebase"),
+          subagentAssistantMessage([textBlock("Found files")], agentToolBlock.id),
+          resultSuccess(),
+        )
+
+        await processClaudeSdkStream(stream, {
+          assistantMessage: assistantMsg,
+          sessionID: session.id,
+          abort: new AbortController().signal,
+        })
+
+        // Agent ToolPart should have title from task_started
+        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
+        expect(agentPart).toBeDefined()
+
+        // Check the child session was created with the description as title
+        const childSessions = await Session.children(session.id)
+        expect(childSessions.length).toBe(1)
+        expect(childSessions[0]!.title).toContain("Exploring the codebase")
+      })
+    })
+
+    test("task_notification completed finalizes Agent ToolPart", async () => {
+      await withInstance(async () => {
+        const session = await Session.create({})
+        const assistantMsg = makeAssistantMessage(session.id)
+        await Session.updateMessage(assistantMsg)
+
+        const agentToolBlock = toolUseBlock("Agent", {
+          prompt: "do work",
+          description: "Do work",
+          subagent_type: "general-purpose",
+        })
+
+        const stream = messageSequence(
+          systemMessage(),
+          sdkAssistantMessage([agentToolBlock]),
+          taskStartedMessage(agentToolBlock.id, "Doing work"),
+          subagentAssistantMessage([textBlock("Work done")], agentToolBlock.id),
+          taskNotificationMessage(agentToolBlock.id, "completed", "Successfully completed the work"),
+          resultSuccess(),
+        )
+
+        await processClaudeSdkStream(stream, {
+          assistantMessage: assistantMsg,
+          sessionID: session.id,
+          abort: new AbortController().signal,
+        })
+
+        // Agent ToolPart should be completed with the summary as output
+        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
+        expect(agentPart).toBeDefined()
+        if (agentPart?.type === "tool") {
+          expect(agentPart.state.status).toBe("completed")
+          if (agentPart.state.status === "completed") {
+            expect(agentPart.state.output).toBe("Successfully completed the work")
+          }
+        }
+      })
+    })
+
+    test("multiple subagents get separate child sessions", async () => {
+      await withInstance(async () => {
+        const session = await Session.create({})
+        const assistantMsg = makeAssistantMessage(session.id)
+        await Session.updateMessage(assistantMsg)
+
+        const agent1Block = toolUseBlock("Agent", {
+          prompt: "explore",
+          description: "Agent 1",
+          subagent_type: "Explore",
+        })
+        const agent2Block = toolUseBlock("Agent", {
+          prompt: "build",
+          description: "Agent 2",
+          subagent_type: "general-purpose",
+        })
+
+        const stream = messageSequence(
+          systemMessage(),
+          // Parent message with two Agent tool_use blocks
+          sdkAssistantMessage([agent1Block, agent2Block]),
+          // Each subagent sends a message
+          subagentAssistantMessage([textBlock("Agent 1 output")], agent1Block.id),
+          subagentAssistantMessage([textBlock("Agent 2 output")], agent2Block.id),
+          resultSuccess(),
+        )
+
+        await processClaudeSdkStream(stream, {
+          assistantMessage: assistantMsg,
+          sessionID: session.id,
+          abort: new AbortController().signal,
+        })
+
+        // Two child sessions should have been created
+        const childSessions = await Session.children(session.id)
+        expect(childSessions.length).toBe(2)
+
+        // Each child session should have different IDs
+        const sessionIds = new Set(childSessions.map((s) => s.id))
+        expect(sessionIds.size).toBe(2)
+      })
+    })
+
+    test("abort finalizes child session tools", async () => {
+      await withInstance(async () => {
+        const session = await Session.create({})
+        const assistantMsg = makeAssistantMessage(session.id)
+        await Session.updateMessage(assistantMsg)
+
+        const agentToolBlock = toolUseBlock("Agent", {
+          prompt: "do work",
+          description: "Do work",
+          subagent_type: "general-purpose",
+        })
+
+        const controller = new AbortController()
+
+        async function* abortingStream() {
+          yield systemMessage()
+          yield sdkAssistantMessage([agentToolBlock])
+          // Subagent sends a tool call
+          yield subagentAssistantMessage(
+            [toolUseBlock("Read", { file_path: "/test.ts" })],
+            agentToolBlock.id,
+          )
+          // Abort before completion
+          controller.abort()
+          yield resultSuccess()
+        }
+
+        const result = await processClaudeSdkStream(abortingStream(), {
+          assistantMessage: assistantMsg,
+          sessionID: session.id,
+          abort: controller.signal,
+        })
+
+        expect(result.outcome).toBe("error")
+        expect(assistantMsg.error).toBeDefined()
+
+        // The child session should have been created
+        const childSessions = await Session.children(session.id)
+        expect(childSessions.length).toBe(1)
       })
     })
   })

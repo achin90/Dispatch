@@ -1367,7 +1367,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           )
         }}
       </For>
-      <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
+      <Show when={props.parts.some((x) => x.type === "tool" && (x.tool === "task" || x.tool === "agent"))}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
@@ -1577,6 +1577,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
           <Edit {...toolprops} />
         </Match>
         <Match when={normalizedTool() === "task"}>
+          <Task {...toolprops} />
+        </Match>
+        <Match when={normalizedTool() === "agent"}>
           <Task {...toolprops} />
         </Match>
         <Match when={normalizedTool() === "apply_patch"}>

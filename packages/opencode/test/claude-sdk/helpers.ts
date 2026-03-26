@@ -301,3 +301,90 @@ export function errorResponse(
     resultError(errorSubtype, errors, { session_id: s }),
   )
 }
+
+// ---------------------------------------------------------------------------
+// Subagent message factories
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates an assistant message with parent_tool_use_id set (subagent message).
+ */
+export function subagentAssistantMessage(
+  content: BetaContentBlock[],
+  parentToolUseId: string,
+  overrides?: Partial<SDKAssistantMessage>,
+): SDKAssistantMessage {
+  return assistantMessage(content, {
+    parent_tool_use_id: parentToolUseId,
+    ...overrides,
+  })
+}
+
+/**
+ * Creates a task_started system message.
+ */
+export function taskStartedMessage(
+  toolUseId: string,
+  description: string,
+  overrides?: Record<string, unknown>,
+): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_started",
+    task_id: `task_${crypto.randomUUID().slice(0, 12)}`,
+    tool_use_id: toolUseId,
+    description,
+    uuid: uuid(),
+    session_id: sessionId(),
+    ...overrides,
+  } as unknown as SDKMessage
+}
+
+/**
+ * Creates a task_progress system message.
+ */
+export function taskProgressMessage(
+  toolUseId: string,
+  description: string,
+  toolUses: number,
+  overrides?: Record<string, unknown>,
+): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_progress",
+    task_id: `task_${crypto.randomUUID().slice(0, 12)}`,
+    tool_use_id: toolUseId,
+    description,
+    usage: {
+      total_tokens: toolUses * 100,
+      tool_uses: toolUses,
+      duration_ms: toolUses * 500,
+    },
+    uuid: uuid(),
+    session_id: sessionId(),
+    ...overrides,
+  } as unknown as SDKMessage
+}
+
+/**
+ * Creates a task_notification system message.
+ */
+export function taskNotificationMessage(
+  toolUseId: string,
+  status: "completed" | "failed" | "stopped",
+  summary: string,
+  overrides?: Record<string, unknown>,
+): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_notification",
+    task_id: `task_${crypto.randomUUID().slice(0, 12)}`,
+    tool_use_id: toolUseId,
+    status,
+    output_file: "",
+    summary,
+    uuid: uuid(),
+    session_id: sessionId(),
+    ...overrides,
+  } as unknown as SDKMessage
+}
