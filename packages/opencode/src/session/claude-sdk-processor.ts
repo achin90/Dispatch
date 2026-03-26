@@ -38,9 +38,8 @@ function formatActivity(part: MessageV2.ToolPart): string {
     (input.prompt as string) ??
     (input.description as string)
   if (!detail) return name
-  // Shorten to basename for file paths, truncate long strings
   const short = detail.includes("/") ? detail.split("/").pop()! : detail
-  return short.length > 40 ? `${name} ${short.slice(0, 37)}...` : `${name} ${short}`
+  return `${name} ${short}`
 }
 
 // ---------------------------------------------------------------------------
