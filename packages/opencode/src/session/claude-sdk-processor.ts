@@ -21,6 +21,27 @@ import {
   type CompletionMetadata,
 } from "./claude-sdk-adapter"
 import { setSdkSessionID } from "./claude-sdk-session-map"
+import { SessionStatus } from "./status"
+
+// ---------------------------------------------------------------------------
+// Activity formatting
+// ---------------------------------------------------------------------------
+
+function formatActivity(part: MessageV2.ToolPart): string {
+  const name = part.tool.charAt(0).toUpperCase() + part.tool.slice(1)
+  const input = part.state.input as Record<string, unknown> | undefined
+  if (!input) return name
+  const detail =
+    (input.filePath as string) ??
+    (input.command as string) ??
+    (input.pattern as string) ??
+    (input.prompt as string) ??
+    (input.description as string)
+  if (!detail) return name
+  // Shorten to basename for file paths, truncate long strings
+  const short = detail.includes("/") ? detail.split("/").pop()! : detail
+  return short.length > 40 ? `${name} ${short.slice(0, 37)}...` : `${name} ${short}`
+}
 
 // ---------------------------------------------------------------------------
 // SDK task system message types
@@ -258,6 +279,10 @@ async function processAssistantMessage(
     for (const part of parts) {
       await Session.updatePart(part)
     }
+    // Update activity based on the last meaningful part
+    const tool = parts.findLast((p) => p.type === "tool")
+    const activity = tool ? formatActivity(tool) : "Thinking..."
+    await SessionStatus.set(sessionID, { type: "busy", activity })
     return
   }
 
