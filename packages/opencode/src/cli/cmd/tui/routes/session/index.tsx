@@ -1505,12 +1505,27 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     return true
   })
 
+  // Normalize tool name: SDK sends PascalCase ("Read"), TUI expects lowercase ("read").
+  // Also handles old persisted data that may have PascalCase names.
+  const normalizedTool = createMemo(() => props.part.tool.toLowerCase())
+
+  // Normalize input keys: SDK sends snake_case (file_path), TUI expects camelCase (filePath).
+  // Also handles old persisted data that may have snake_case keys.
+  const normalizedInput = createMemo(() => {
+    const raw = props.part.state.input ?? {}
+    const result: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(raw)) {
+      result[key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = value
+    }
+    return result
+  })
+
   const toolprops = {
     get metadata() {
       return props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {})
     },
     get input() {
-      return props.part.state.input ?? {}
+      return normalizedInput()
     },
     get output() {
       return props.part.state.status === "completed" ? props.part.state.output : undefined
@@ -1521,7 +1536,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
       return permissions[permissionIndex]
     },
     get tool() {
-      return props.part.tool
+      return normalizedTool()
     },
     get part() {
       return props.part
@@ -1531,49 +1546,49 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   return (
     <Show when={!shouldHide()}>
       <Switch>
-        <Match when={props.part.tool === "bash"}>
+        <Match when={normalizedTool() === "bash"}>
           <Bash {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "glob"}>
+        <Match when={normalizedTool() === "glob"}>
           <Glob {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "read"}>
+        <Match when={normalizedTool() === "read"}>
           <Read {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "grep"}>
+        <Match when={normalizedTool() === "grep"}>
           <Grep {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "list"}>
+        <Match when={normalizedTool() === "list"}>
           <List {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "webfetch"}>
+        <Match when={normalizedTool() === "webfetch"}>
           <WebFetch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "codesearch"}>
+        <Match when={normalizedTool() === "codesearch"}>
           <CodeSearch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "websearch"}>
+        <Match when={normalizedTool() === "websearch"}>
           <WebSearch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "write"}>
+        <Match when={normalizedTool() === "write"}>
           <Write {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "edit"}>
+        <Match when={normalizedTool() === "edit"}>
           <Edit {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "task"}>
+        <Match when={normalizedTool() === "task"}>
           <Task {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "apply_patch"}>
+        <Match when={normalizedTool() === "apply_patch"}>
           <ApplyPatch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "todowrite"}>
+        <Match when={normalizedTool() === "todowrite"}>
           <TodoWrite {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "question"}>
+        <Match when={normalizedTool() === "question"}>
           <Question {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "skill"}>
+        <Match when={normalizedTool() === "skill"}>
           <Skill {...toolprops} />
         </Match>
         <Match when={true}>

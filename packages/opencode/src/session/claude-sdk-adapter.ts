@@ -74,19 +74,85 @@ export function thinkingBlockToPart(
   }
 }
 
+// Map SDK PascalCase tool names to the lowercase names the TUI expects
+function normalizeTool(name: string): string {
+  switch (name) {
+    case "Read":
+      return "read"
+    case "Write":
+      return "write"
+    case "Edit":
+      return "edit"
+    case "Bash":
+      return "bash"
+    case "Glob":
+      return "glob"
+    case "Grep":
+      return "grep"
+    case "WebFetch":
+      return "webfetch"
+    case "WebSearch":
+      return "websearch"
+    case "CodeSearch":
+      return "codesearch"
+    case "NotebookEdit":
+      return "notebook_edit"
+    case "TodoWrite":
+      return "todowrite"
+    case "Task":
+      return "task"
+    case "Agent":
+      return "agent"
+    default:
+      return name.toLowerCase()
+  }
+}
+
+// Convert snake_case keys to camelCase so TUI components can access them
+// e.g. file_path → filePath, old_string → oldString, replace_all → replaceAll
+function snakeToCamel(str: string): string {
+  return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+}
+
+// The SDK sends all parameters the model specified, but the TUI tool
+// components only display the primary field (e.g. filePath for Read/Edit)
+// and use the input() helper to show "remaining" params as [key=value].
+// In the original OpenCode flow, optional params like limit/offset/replaceAll
+// aren't stored in the input object at all, so they never appear in brackets.
+// We strip them here to match that behavior.
+const TOOL_OMIT_KEYS: Record<string, string[]> = {
+  read: ["limit", "offset"],
+  edit: ["oldString", "newString", "replaceAll"],
+  write: ["content"],
+  bash: ["timeout", "description"],
+  grep: ["include"],
+}
+
+function normalizeInput(tool: string, raw: Record<string, unknown>): Record<string, unknown> {
+  const omit = TOOL_OMIT_KEYS[tool] ?? []
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    const camel = snakeToCamel(key)
+    if (omit.includes(camel)) continue
+    result[camel] = value
+  }
+  return result
+}
+
 export function toolUseBlockToPart(
   block: BetaToolUseBlock,
   sessionID: SessionID,
   messageID: MessageID,
 ): MessageV2.ToolPart {
-  const input = (block.input ?? {}) as Record<string, unknown>
+  const tool = normalizeTool(block.name)
+  const input = normalizeInput(tool, (block.input ?? {}) as Record<string, unknown>)
   return {
     id: PartID.ascending(),
     sessionID,
     messageID,
     type: "tool",
     callID: block.id,
-    tool: block.name,
+    tool,
     state: {
       status: "running",
       input,

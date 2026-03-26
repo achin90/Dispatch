@@ -84,10 +84,10 @@ describe("claude-sdk message mapping", () => {
       const part = toolUseBlockToPart(block, sid, mid)
 
       expect(part.type).toBe("tool")
-      expect(part.tool).toBe("Read")
+      expect(part.tool).toBe("read")
       expect(part.callID).toBe(block.id)
       expect(part.state.status).toBe("running")
-      expect(part.state.input).toEqual({ file_path: "/tmp/test.ts" })
+      expect(part.state.input).toEqual({ filePath: "/tmp/test.ts" })
       expect(part.sessionID).toBe(sid)
       expect(part.messageID).toBe(mid)
     })

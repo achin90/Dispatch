@@ -14,7 +14,9 @@ import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Filesystem } from "@/util/filesystem"
 import { Instance } from "@/project/instance"
-import { SessionID } from "@/session/schema"
+import { Session } from "@/session/index"
+import { MessageV2 } from "@/session/message-v2"
+import { SessionID, MessageID } from "@/session/schema"
 
 // ---------------------------------------------------------------------------
 // Pattern extraction — maps tool name + input to permission patterns
@@ -138,7 +140,37 @@ async function generateEditDiff(
 
 export interface CanUseToolBridgeOptions {
   sessionID: SessionID
+  messageID: MessageID
   ruleset?: Permission.Ruleset
+}
+
+/**
+ * When the SDK's canUseTool returns deny, the SDK handles the denial
+ * internally — it never tells us to update the tool part. We need to
+ * mark the part as error ourselves so the TUI shows strikethrough.
+ */
+async function markToolDenied(messageID: MessageID, callID: string, error: string) {
+  try {
+    const parts = await MessageV2.parts(messageID)
+    const part = parts.find((p) => p.type === "tool" && p.callID === callID)
+    if (!part || part.type !== "tool") return
+    if (part.state.status !== "running") return
+    await Session.updatePart({
+      ...part,
+      state: {
+        status: "error",
+        input: part.state.input,
+        error,
+        time: {
+          start: part.state.time.start,
+          end: Date.now(),
+        },
+      },
+    })
+  } catch {
+    // Best-effort: if we can't find or update the part, the denial
+    // still works — the tool just won't show strikethrough styling.
+  }
 }
 
 export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUseTool {
@@ -192,14 +224,19 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       ])
       return { behavior: "allow", updatedInput: input }
     } catch (error) {
-      if (error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError) {
-        return { behavior: "deny", message: "User rejected permission" }
-      }
-      if (error instanceof Permission.DeniedError) {
-        return { behavior: "deny", message: "Permission denied by ruleset" }
-      }
-      // Abort or unexpected error
-      return { behavior: "deny", message: error instanceof Error ? error.message : "Permission denied" }
+      const msg =
+        error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
+          ? "User rejected permission"
+          : error instanceof Permission.DeniedError
+            ? "Permission denied by ruleset: specified a rule"
+            : error instanceof Error
+              ? error.message
+              : "Permission denied"
+
+      // Update the tool part to error state so the TUI shows strikethrough
+      await markToolDenied(options.messageID, callOptions.toolUseID, msg)
+
+      return { behavior: "deny", message: msg }
     }
   })
 }

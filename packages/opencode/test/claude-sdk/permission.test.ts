@@ -7,10 +7,11 @@ import {
 import { Bus } from "../../src/bus"
 import { Permission } from "../../src/permission"
 import { Instance } from "../../src/project/instance"
-import { SessionID } from "../../src/session/schema"
+import { SessionID, MessageID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
 
 const sid = SessionID.make("ses_test-perms")
+const mid = MessageID.make("msg_test-perms")
 
 describe("claude-sdk permissions", () => {
   describe("extractPatterns", () => {
@@ -131,7 +132,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves allow on 'once' reply via Permission.reply()", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
         let capturedPermission: string | undefined
         let capturedPatterns: string[] | undefined
         let capturedSessionID: unknown
@@ -161,7 +162,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves allow on 'always' reply via Permission.reply()", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
           Permission.reply({
@@ -181,7 +182,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves deny on 'reject' reply via Permission.reply()", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
           Permission.reply({
@@ -204,7 +205,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves deny when signal is already aborted", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
 
         const result = await bridge(
           "Read",
@@ -221,7 +222,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves deny when signal aborts while waiting", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
         const controller = new AbortController()
 
         const resultPromise = bridge(
@@ -366,7 +367,7 @@ describe("claude-sdk permissions", () => {
 
     test("request contains tool metadata", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
         let capturedRequest: Permission.Request | undefined
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {

@@ -648,6 +648,7 @@ export namespace SessionPrompt {
       const sdkQuery = await createClaudeSdkQuery({
         prompt: userPromptText,
         sessionID,
+        messageID: assistantMessage.id,
         model: model.id,
         systemPrompt,
         cwd: Instance.directory,
