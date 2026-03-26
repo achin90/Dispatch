@@ -20,6 +20,7 @@ export namespace SessionStatus {
       }),
       z.object({
         type: z.literal("busy"),
+        activity: z.string().optional(),
       }),
     ])
     .meta({

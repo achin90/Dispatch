@@ -312,9 +312,14 @@ export function Home() {
               Name
             </text>
           </box>
-          <box flexGrow={1}>
+          <box width={18}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Status
+            </text>
+          </box>
+          <box flexGrow={1}>
+            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
+              Activity
             </text>
           </box>
         </box>
@@ -378,7 +383,7 @@ export function Home() {
                               {agent.name}
                             </text>
                           </box>
-                          <box flexGrow={1}>
+                          <box width={18}>
                             <Switch>
                               <Match when={agent.status?.type === "busy"}>
                                 <Spinner color={isSelected() ? fg : undefined}>Working</Spinner>
@@ -390,6 +395,22 @@ export function Home() {
                                 <text fg={isSelected() ? fg : theme.textMuted}>Waiting for user</text>
                               </Match>
                             </Switch>
+                          </box>
+                          <box flexGrow={1}>
+                            <Show
+                              when={agent.status?.type === "busy" && agent.status.activity}
+                              fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
+                            >
+                              {(activity) => (
+                                <text
+                                  fg={isSelected() ? fg : theme.textMuted}
+                                  overflow="hidden"
+                                  wrapMode="none"
+                                >
+                                  {activity()}
+                                </text>
+                              )}
+                            </Show>
                           </box>
                         </box>
                       )
