@@ -30,7 +30,7 @@ export function DialogConfirm(props: DialogConfirmProps) {
       dialog.clear()
     }
 
-    if (evt.name === "left" || evt.name === "right") {
+    if (evt.name === "left" || evt.name === "right" || evt.name === "h" || evt.name === "l") {
       setStore("active", store.active === "confirm" ? "cancel" : "confirm")
     }
   })
