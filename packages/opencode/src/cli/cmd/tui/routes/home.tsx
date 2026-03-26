@@ -7,9 +7,11 @@ import { useRoute } from "@tui/context/route"
 import { useSDK } from "../context/sdk"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogPrompt } from "@tui/ui/dialog-prompt"
+import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogDirectorySelect } from "@tui/component/dialog-directory-select"
 import { DialogGitRepoSelect } from "@tui/component/dialog-git-repo-select"
 import { Installation } from "@/installation"
+import { Global } from "@/global"
 import { Locale } from "@/util/locale"
 import { Spinner } from "@tui/component/spinner"
 import { useKeyboard } from "@opentui/solid"
@@ -51,28 +53,67 @@ export function Home() {
   })
 
   const [selectedIndex, setSelectedIndex] = createSignal(0)
-  const [toDelete, setToDelete] = createSignal<{ id: string; mode: "d" | "x" }>()
   const [dialogOpen, setDialogOpen] = createSignal(false)
 
-  const agents = createMemo(() => {
+  function resolveDir(agent: AgentEntry) {
+    const dir = agent.worktree
+      ? agent.worktree.directory
+      : !agent.directory || agent.directory === "."
+        ? sync.data.path.directory
+        : sync.data.path.directory + "/" + agent.directory
+    return dir.replace(/\/+$/, "")
+  }
+
+  function shortDir(dir: string) {
+    return dir.replace(Global.Path.home, "~")
+  }
+
+  type EnrichedAgent = AgentEntry & {
+    session: (typeof sync.data.session)[0] | undefined
+    status: (typeof sync.data.session_status)[string] | undefined
+  }
+
+  const grouped = createMemo(() => {
     const entries: AgentEntry[] = kv.get("agents", [])
-    return entries.map((entry) => {
-      const session = sync.data.session.find((s) => s.id === entry.sessionID)
-      const status = sync.data.session_status[entry.sessionID]
-      return {
+    const map = new Map<string, { dir: string; label: string; agents: EnrichedAgent[] }>()
+    entries.forEach((entry) => {
+      const dir = resolveDir(entry)
+      if (!map.has(dir)) map.set(dir, { dir, label: shortDir(dir), agents: [] })
+      map.get(dir)!.agents.push({
         ...entry,
-        session,
-        status,
-      }
+        session: sync.data.session.find((s) => s.id === entry.sessionID),
+        status: sync.data.session_status[entry.sessionID],
+      })
     })
+    return [...map.values()]
   })
 
-  function clampIndex(index: number) {
-    const len = agents().length
-    if (len === 0) return 0
-    if (index < 0) return len - 1
-    if (index >= len) return 0
-    return index
+  const flat = createMemo(() => grouped().flatMap((g) => g.agents))
+
+  function move(direction: number) {
+    const len = flat().length
+    if (len === 0) return
+    setSelectedIndex((i) => {
+      const next = i + direction
+      if (next < 0) return len - 1
+      if (next >= len) return 0
+      return next
+    })
+  }
+
+  function selected() {
+    return flat()[selectedIndex()]
+  }
+
+  function insertAgent(entry: AgentEntry) {
+    const current: AgentEntry[] = kv.get("agents", [])
+    const dir = resolveDir(entry)
+    // Insert after the last agent in the same directory group
+    const last = current.reduce((acc, a, i) => (resolveDir(a) === dir ? i : acc), -1)
+    const idx = last === -1 ? current.length : last + 1
+    const next = [...current.slice(0, idx), entry, ...current.slice(idx)]
+    kv.set("agents", next)
+    setSelectedIndex(flat().length - 1)
   }
 
   let scroll: ScrollBoxRenderable | undefined
@@ -80,7 +121,8 @@ export function Home() {
   function scrollToSelected() {
     if (!scroll) return
     const children = scroll.getChildren()
-    const target = children[selectedIndex()]
+    // Find the child with matching id since headers are interleaved
+    const target = children.find((c) => c.id === String(selectedIndex()))
     if (!target) return
     const y = target.y - scroll.y
     if (y >= scroll.height) {
@@ -97,20 +139,18 @@ export function Home() {
       return
     }
     if (dialogOpen()) return
-    if (agents().length === 0 && evt.name !== "a" && evt.name !== "w") return
+    if (flat().length === 0 && evt.name !== "a" && evt.name !== "w") return
 
     if (evt.name === "j" || evt.name === "down") {
-      setSelectedIndex((i) => clampIndex(i + 1))
-      setToDelete()
+      move(1)
       scrollToSelected()
     }
     if (evt.name === "k" || evt.name === "up") {
-      setSelectedIndex((i) => clampIndex(i - 1))
-      setToDelete()
+      move(-1)
       scrollToSelected()
     }
     if (evt.name === "return") {
-      const agent = agents()[selectedIndex()]
+      const agent = selected()
       if (agent) {
         route.navigate({ type: "session", sessionID: agent.sessionID })
       }
@@ -136,16 +176,17 @@ export function Home() {
           directory: absoluteDir,
         })
         if (!result.data) return
-        const current: AgentEntry[] = kv.get("agents", [])
-        const entry: AgentEntry = {
+        const wt = (await sdk.client.worktree.info({ directory: absoluteDir })).data
+        insertAgent({
           id: crypto.randomUUID(),
           name,
           sessionID: result.data.id,
           createdAt: Date.now(),
           directory: dir,
-        }
-        kv.set("agents", [...current, entry])
-        setSelectedIndex(current.length)
+          worktree: wt
+            ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo }
+            : undefined,
+        })
       })()
     }
     if (evt.name === "w") {
@@ -172,8 +213,7 @@ export function Home() {
           directory: worktree.directory,
         })).data
         if (!session) return
-        const current: AgentEntry[] = kv.get("agents", [])
-        const entry: AgentEntry = {
+        insertAgent({
           id: crypto.randomUUID(),
           name,
           sessionID: session.id,
@@ -184,45 +224,53 @@ export function Home() {
             directory: worktree.directory,
             sourceRepo: repoDir,
           },
-        }
-        kv.set("agents", [...current, entry])
-        setSelectedIndex(current.length)
+        })
       })()
     }
     if (evt.name === "d") {
-      const agent = agents()[selectedIndex()]
+      const agent = selected()
       if (!agent) return
-      if (toDelete()?.id === agent.id && toDelete()?.mode === "d") {
+      ;(async () => {
+        setDialogOpen(true)
+        const ok = await DialogConfirm.show(dialog, "Remove Agent", `Remove "${agent.name}" from the dashboard?`)
+        dialog.clear()
+        setDialogOpen(false)
+        if (!ok) return
         const current: AgentEntry[] = kv.get("agents", [])
         kv.set(
           "agents",
           current.filter((a) => a.id !== agent.id),
         )
-        setToDelete()
-        setSelectedIndex((i) => Math.min(i, agents().length - 1))
-      } else {
-        setToDelete({ id: agent.id, mode: "d" })
-      }
+        setSelectedIndex((i) => Math.min(i, flat().length - 1))
+      })()
     }
     if (evt.name === "x") {
-      const agent = agents()[selectedIndex()]
-      if (!agent?.worktree) return
-      if (toDelete()?.id === agent.id && toDelete()?.mode === "x") {
-        const dir = agent.worktree.directory
+      const agent = selected()
+      if (!agent) return
+      const dir = resolveDir(agent)
+      ;(async () => {
+        const wt = (await sdk.client.worktree.info({ directory: dir })).data
+        if (!wt) return
+        setDialogOpen(true)
+        const ok = await DialogConfirm.show(
+          dialog,
+          "Delete Worktree",
+          `Delete worktree and all agents in ${shortDir(dir)}?`,
+        )
+        dialog.clear()
+        setDialogOpen(false)
+        if (!ok) return
         const current: AgentEntry[] = kv.get("agents", [])
         kv.set(
           "agents",
-          current.filter((a) => a.worktree?.directory !== dir),
+          current.filter((a) => resolveDir(a) !== dir),
         )
         sdk.client.worktree.remove({
-          directory: agent.worktree.sourceRepo,
+          directory: dir,
           worktreeRemoveInput: { directory: dir },
         })
-        setToDelete()
-        setSelectedIndex((i) => Math.min(i, agents().length - 1))
-      } else {
-        setToDelete({ id: agent.id, mode: "x" })
-      }
+        setSelectedIndex((i) => Math.min(i, flat().length - 1))
+      })()
     }
   })
 
@@ -236,17 +284,17 @@ export function Home() {
               #
             </text>
           </box>
-          <box flexGrow={1}>
+          <box width="45%">
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Name
             </text>
           </box>
-          <box width={20}>
+          <box width={18}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Status
             </text>
           </box>
-          <box width={25}>
+          <box flexGrow={1}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Activity
             </text>
@@ -255,7 +303,7 @@ export function Home() {
 
         {/* Agent rows */}
         <Show
-          when={agents().length > 0}
+          when={flat().length > 0}
           fallback={
             <box flexGrow={1} alignItems="center" justifyContent="center">
               <text fg={theme.textMuted}>No agents yet. Press 'a' to create or 'w' for worktree.</text>
@@ -267,86 +315,118 @@ export function Home() {
             scrollbarOptions={{ visible: false }}
             ref={(r: ScrollBoxRenderable) => (scroll = r)}
           >
-            <For each={agents()}>
-              {(agent, index) => {
-                const isSelected = createMemo(() => index() === selectedIndex())
-                const isDeleting = createMemo(() => toDelete()?.id === agent.id)
-                return (
-                  <box
-                    flexDirection="row"
-                    backgroundColor={isDeleting() ? theme.error : isSelected() ? theme.primary : undefined}
-                  >
-                    <box width={4}>
-                      <text fg={isSelected() || isDeleting() ? fg : theme.textMuted}>{index() + 1}</text>
-                    </box>
-                    <box flexGrow={1}>
-                      <text
-                        fg={isSelected() || isDeleting() ? fg : theme.text}
-                        attributes={isSelected() ? TextAttributes.BOLD : undefined}
-                        overflow="hidden"
-                        wrapMode="none"
-                      >
-                        {isDeleting()
-                          ? toDelete()?.mode === "x"
-                            ? "Press 'x' again to delete worktree + all agents"
-                            : "Press 'd' again to remove agent"
-                          : agent.name}
-                      </text>
-                    </box>
-                    <box width={20}>
-                      <Switch>
-                        <Match when={agent.status?.type === "busy"}>
-                          <Spinner color={isSelected() ? fg : undefined}>Working</Spinner>
-                        </Match>
-                        <Match when={agent.status?.type === "retry"}>
-                          <text fg={isSelected() ? fg : theme.warning}>Retrying</text>
-                        </Match>
-                        <Match when={true}>
-                          <text fg={isSelected() ? fg : theme.textMuted}>Waiting for user</text>
-                        </Match>
-                      </Switch>
-                    </box>
-                    <box width={25}>
-                      <Show
-                        when={agent.session?.summary}
-                        fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
-                      >
-                        {(summary) => (
-                          <text fg={isSelected() ? fg : theme.textMuted}>
-                            +{summary().additions} -{summary().deletions} {summary().files}{" "}
-                            {Locale.pluralize(summary().files, "file", "files")}
-                          </text>
-                        )}
-                      </Show>
-                    </box>
+            <For each={grouped()}>
+              {(group) => (
+                <>
+                  <box paddingTop={1} paddingBottom={0}>
+                    <text fg={theme.accent} attributes={TextAttributes.BOLD} overflow="hidden" wrapMode="none">
+                      {group.label}
+                    </text>
                   </box>
-                )
-              }}
+                  <For each={group.agents}>
+                    {(agent) => {
+                      const idx = createMemo(() => flat().indexOf(agent))
+                      const isSelected = createMemo(() => idx() === selectedIndex())
+                      return (
+                        <box
+                          id={String(idx())}
+                          flexDirection="row"
+                          backgroundColor={isSelected() ? theme.primary : undefined}
+                        >
+                          <box width={4}>
+                            <text fg={isSelected() ? fg : theme.textMuted}>{idx() + 1}</text>
+                          </box>
+                          <box width="45%">
+                            <text
+                              fg={isSelected() ? fg : theme.text}
+                              attributes={isSelected() ? TextAttributes.BOLD : undefined}
+                              overflow="hidden"
+                              wrapMode="none"
+                            >
+                              {agent.name}
+                            </text>
+                          </box>
+                          <box width={18}>
+                            <Switch>
+                              <Match when={agent.status?.type === "busy"}>
+                                <Spinner color={isSelected() ? fg : undefined}>Working</Spinner>
+                              </Match>
+                              <Match when={agent.status?.type === "retry"}>
+                                <text fg={isSelected() ? fg : theme.warning}>Retrying</text>
+                              </Match>
+                              <Match when={true}>
+                                <text fg={isSelected() ? fg : theme.textMuted}>Waiting for user</text>
+                              </Match>
+                            </Switch>
+                          </box>
+                          <box flexGrow={1}>
+                            <Show
+                              when={agent.session?.summary}
+                              fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
+                            >
+                              {(summary) => (
+                                <text fg={isSelected() ? fg : theme.textMuted}>
+                                  +{summary().additions} -{summary().deletions} {summary().files}{" "}
+                                  {Locale.pluralize(summary().files, "file", "files")}
+                                </text>
+                              )}
+                            </Show>
+                          </box>
+                        </box>
+                      )
+                    }}
+                  </For>
+                </>
+              )}
             </For>
           </scrollbox>
         </Show>
       </box>
-      <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="row" flexShrink={0} gap={2}>
-        <text fg={theme.textMuted}>{directory()}</text>
-        <box gap={1} flexDirection="row" flexShrink={0}>
-          <Show when={mcp()}>
-            <text fg={theme.text}>
-              <Switch>
-                <Match when={mcpError()}>
-                  <span style={{ fg: theme.error }}>⊙ </span>
-                </Match>
-                <Match when={true}>
-                  <span style={{ fg: connectedMcpCount() > 0 ? theme.success : theme.textMuted }}>⊙ </span>
-                </Match>
-              </Switch>
-              {connectedMcpCount()} MCP
-            </text>
-            <text fg={theme.textMuted}>/status</text>
-          </Show>
+      <box paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" flexShrink={0} gap={0}>
+        <box flexDirection="row" gap={3} flexShrink={0}>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>a</span>
+            <span style={{ fg: theme.textMuted }}> new agent</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>w</span>
+            <span style={{ fg: theme.textMuted }}> new worktree</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>d</span>
+            <span style={{ fg: theme.textMuted }}> remove agent</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>x</span>
+            <span style={{ fg: theme.textMuted }}> delete worktree</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>enter</span>
+            <span style={{ fg: theme.textMuted }}> open</span>
+          </text>
         </box>
-        <box flexGrow={1} />
-        <box flexShrink={0}>
-          <text fg={theme.textMuted}>{Installation.VERSION}</text>
+        <box flexDirection="row" paddingTop={1} gap={2}>
+          <text fg={theme.textMuted}>{directory()}</text>
+          <box gap={1} flexDirection="row" flexShrink={0}>
+            <Show when={mcp()}>
+              <text fg={theme.text}>
+                <Switch>
+                  <Match when={mcpError()}>
+                    <span style={{ fg: theme.error }}>⊙ </span>
+                  </Match>
+                  <Match when={true}>
+                    <span style={{ fg: connectedMcpCount() > 0 ? theme.success : theme.textMuted }}>⊙ </span>
+                  </Match>
+                </Switch>
+                {connectedMcpCount()} MCP
+              </text>
+              <text fg={theme.textMuted}>/status</text>
+            </Show>
+          </box>
+          <box flexGrow={1} />
+          <box flexShrink={0}>
+            <text fg={theme.textMuted}>{Installation.VERSION}</text>
+          </box>
         </box>
       </box>
     </>
