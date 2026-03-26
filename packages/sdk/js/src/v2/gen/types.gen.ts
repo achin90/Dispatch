@@ -1664,6 +1664,13 @@ export type WorktreeCreateInput = {
   startCommand?: string
 }
 
+export type WorktreeDetectInfo = {
+  name: string
+  branch: string
+  directory: string
+  sourceRepo: string
+} | null
+
 export type WorktreeRemoveInput = {
   directory: string
 }
@@ -2732,6 +2739,25 @@ export type WorktreeCreateResponses = {
 }
 
 export type WorktreeCreateResponse = WorktreeCreateResponses[keyof WorktreeCreateResponses]
+
+export type WorktreeInfoData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/info"
+}
+
+export type WorktreeInfoResponses = {
+  /**
+   * Worktree info or null
+   */
+  200: WorktreeDetectInfo
+}
+
+export type WorktreeInfoResponse = WorktreeInfoResponses[keyof WorktreeInfoResponses]
 
 export type WorktreeResetData = {
   body?: WorktreeResetInput

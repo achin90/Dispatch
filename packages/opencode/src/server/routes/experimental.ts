@@ -193,6 +193,46 @@ export const ExperimentalRoutes = lazy(() =>
         return c.json(sandboxes)
       },
     )
+    .get(
+      "/worktree/info",
+      describeRoute({
+        summary: "Get worktree info",
+        description:
+          "Check if the current directory is a git worktree and return its info. Returns null if not a worktree.",
+        operationId: "worktree.info",
+        responses: {
+          200: {
+            description: "Worktree info or null",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  Worktree.Info.extend({ sourceRepo: z.string() }).nullable().meta({ ref: "WorktreeDetectInfo" }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        const dir = Instance.directory.replace(/\/+$/, "")
+        const gitpath = path.join(dir, ".git")
+        const content = await fs.readFile(gitpath, "utf-8").catch(() => null)
+        if (!content?.startsWith("gitdir:")) return c.json(null)
+        const gitdir = content.replace("gitdir:", "").trim()
+        const resolved = path.isAbsolute(gitdir) ? gitdir : path.resolve(dir, gitdir)
+        const head = await fs.readFile(path.join(resolved, "HEAD"), "utf-8").catch(() => "")
+        const branch = head.startsWith("ref:") ? head.replace("ref:", "").trim().replace(/^refs\/heads\//, "") : path.basename(dir)
+        // Derive source repo: gitdir is like /path/to/main/.git/worktrees/name
+        const match = resolved.match(/^(.+)\/\.git\/worktrees\//)
+        const source = match ? match[1] : path.dirname(resolved)
+        return c.json({
+          name: path.basename(dir),
+          branch,
+          directory: dir,
+          sourceRepo: source,
+        })
+      },
+    )
     .delete(
       "/worktree",
       describeRoute({
