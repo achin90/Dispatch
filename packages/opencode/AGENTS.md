@@ -61,3 +61,40 @@ const cb = Instance.bind((err, evts) => {
 })
 nativeAddon.subscribe(dir, cb)
 ```
+
+## Cross-directory agents — Bus, InstanceState, and global state
+
+Agent sessions can run in a different working directory than the TUI (e.g. worktree agents, agents launched via the directory picker). This creates a split where code that **creates** state runs under the agent's `Instance.directory` but code that **resolves** it runs under the TUI's directory (from the `x-opencode-directory` HTTP header).
+
+### What is per-directory
+
+`Instance.state()` and `InstanceState` are keyed by `Instance.directory`. `Bus.subscribe` / `Bus.publish` use `Instance.state()` internally, so Bus subscriptions are also per-directory. The SSE event route bridges this gap by subscribing to both the local `Bus` and `GlobalBus` for cross-directory events.
+
+### What must NOT be per-directory
+
+Any state that is written in the agent's directory context but read/resolved from the TUI's directory context must be **global** (module-level), not stored in `InstanceState`. The key example is the `Permission` pending map:
+
+- `Permission.ask()` runs in the agent's directory (inside the Claude Agent SDK's subprocess callback).
+- `Permission.reply()` runs in the TUI's directory (from the HTTP route handler).
+- If the pending map were per-directory, `reply()` would look in the TUI's empty map and silently fail.
+
+### Pattern: capture at ask-time, use at reply-time
+
+When global state needs per-directory data (e.g. the `approved` ruleset), capture it at creation time and store it alongside the global entry:
+
+```typescript
+// ask() — runs in agent's directory
+const { approved } = yield* InstanceState.get(state)
+globalPending.set(id, { info, deferred, approved })
+
+// reply() — runs in TUI's directory, uses captured reference
+const approved = existing.approved
+approved.push({ permission, pattern, action: "allow" })
+```
+
+### Checklist for new cross-directory features
+
+1. **Will this state be written in one directory and read in another?** → Use a global map, not `InstanceState`.
+2. **Does a callback from the Agent SDK need `Instance.directory`?** → Wrap with `Instance.bind()` at bridge creation time.
+3. **Does a Bus event need to reach listeners in a different directory?** → It already works via `GlobalBus` in the SSE event route. No extra wiring needed.
+4. **Does a finalizer clean up global state?** → Don't. Global entries should be self-cleaning (e.g. `Effect.ensuring` on the deferred, abort signal handlers). A per-directory finalizer that touches global state will destroy other directories' entries.
