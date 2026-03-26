@@ -1,3 +1,49 @@
+# Claude Agent SDK Bridge Architecture
+
+This project uses the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) instead of Vercel AI SDK. The SDK owns the tool loop and tool execution — the app consumes output via an async generator and bridges it into the existing TUI.
+
+## Data Flow
+
+```
+User prompt → SessionPrompt.loop() → createClaudeSdkQuery() → query()
+  → SDKMessage async stream
+  → processClaudeSdkStream() consumes each message
+  → claude-sdk-adapter.ts maps SDKMessage → MessageV2 parts
+  → Parts persisted to DB → TUI renders from MessageV2 parts
+```
+
+## Bridge Files (packages/opencode/src/session/)
+
+| File | Purpose |
+|------|---------|
+| `claude-sdk-adapter.ts` | Pure mapping: `SDKMessage` → `MessageV2` parts (TextPart, ToolPart, ReasoningPart). Stateless. |
+| `claude-sdk-permissions.ts` | `canUseTool` callback that bridges SDK permission requests → `Permission.Event.Asked` → TUI permission dock → user reply → `PermissionResult` back to SDK. |
+| `claude-sdk-processor.ts` | Consumes `query()` async generator, calls adapter for each message, persists parts to DB. |
+| `claude-sdk-query.ts` | Resolves auth (API key or subscription), assembles `query()` options (model, tools, MCP servers, maxTurns). |
+| `claude-sdk-session-map.ts` | Maps session history for multi-turn conversations. |
+
+## What the SDK Owns vs What the App Owns
+
+- **SDK owns**: Tool loop, tool execution (Read, Write, Edit, Bash, Glob, Grep), retry logic, context management
+- **App owns**: TUI rendering, permission UI, message persistence (MessageV2), session management, MCP server config, auth resolution
+
+## Adding New Features
+
+When adding features that interact with Claude responses:
+1. **Adapter layer first**: Fix data mismatches (naming, formatting, filtering) in the bridge files (`claude-sdk-adapter.ts`, `claude-sdk-permissions.ts`, etc.) rather than modifying the original OpenCode TUI rendering code. The adapter is our translation layer — keep the upstream TUI code untouched when possible so we can pull updates cleanly.
+2. The SDK streams `SDKMessage` objects — don't try to intercept or modify the tool loop
+3. New display features go in the TUI layer (`cli/cmd/tui/routes/session/index.tsx`) by handling `MessageV2` parts
+4. Tool rendering uses `PART_MAPPING` and tool-specific components (e.g., `Read`, `Edit`, `Bash`) in session/index.tsx
+5. Permission changes go through `claude-sdk-permissions.ts` which bridges to the existing `Permission.ask()` system
+6. Tests live in `test/claude-sdk/` — use the helpers in `test/claude-sdk/helpers.ts` for mocking SDK responses
+
+## TUI Tool Rendering
+
+Tool use from the SDK becomes `MessageV2.ToolPart` (via adapter). The TUI renders each tool type with a dedicated component in `session/index.tsx`:
+- Each tool component receives `input`, `output`, `metadata`, `part`, `tool`, `permission` props
+- The `input()` helper formats remaining params as `[key=value, ...]`
+- The `InlineTool` component handles the spinner/icon/status display pattern
+
 # opencode database guide
 
 ## Database

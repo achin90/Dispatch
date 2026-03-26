@@ -9,13 +9,14 @@
 
 import { query, type Options, type Query } from "@anthropic-ai/claude-agent-sdk"
 import { Auth } from "@/auth"
-import { SessionID } from "@/session/schema"
+import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge } from "./claude-sdk-permissions"
 import { getSdkSessionID } from "./claude-sdk-session-map"
 
 export interface ClaudeSdkQueryInput {
   prompt: string
   sessionID: SessionID
+  messageID: MessageID
   model?: string
   systemPrompt?: string
   cwd?: string
@@ -82,7 +83,7 @@ export async function createClaudeSdkQuery(
     permissionMode: input.permissionMode ?? "default",
     allowedTools: input.allowedTools,
     disallowedTools: input.disallowedTools,
-    canUseTool: createCanUseToolBridge({ sessionID: input.sessionID }),
+    canUseTool: createCanUseToolBridge({ sessionID: input.sessionID, messageID: input.messageID }),
     abortController: input.abortController,
     maxTurns: input.maxTurns,
     ...(sdkSessionID ? { resume: sdkSessionID } : {}),

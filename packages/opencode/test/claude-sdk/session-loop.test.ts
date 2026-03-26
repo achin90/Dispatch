@@ -147,9 +147,9 @@ describe("claude-sdk session loop", () => {
         expect(parts).toHaveLength(2)
         expect(parts[0]!.type).toBe("tool")
         if (parts[0]!.type === "tool") {
-          expect(parts[0]!.tool).toBe("Read")
+          expect(parts[0]!.tool).toBe("read")
           expect(parts[0]!.state.status).toBe("running")
-          expect(parts[0]!.state.input).toEqual({ file_path: "/tmp/test.ts" })
+          expect(parts[0]!.state.input).toEqual({ filePath: "/tmp/test.ts" })
         }
         expect(parts[1]!.type).toBe("text")
       })
@@ -333,11 +333,11 @@ describe("claude-sdk session loop", () => {
         expect(parts).toHaveLength(3)
         expect(parts[0]!.type).toBe("tool")
         if (parts[0]!.type === "tool") {
-          expect(parts[0]!.tool).toBe("Read")
+          expect(parts[0]!.tool).toBe("read")
         }
         expect(parts[1]!.type).toBe("tool")
         if (parts[1]!.type === "tool") {
-          expect(parts[1]!.tool).toBe("Edit")
+          expect(parts[1]!.tool).toBe("edit")
         }
         expect(parts[2]!.type).toBe("text")
       })
