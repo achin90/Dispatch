@@ -53,19 +53,25 @@ describe("Worktree", () => {
 
     test("uses provided name as base", async () => {
       await using tmp = await tmpdir({ git: true })
+      const repoBasename = path.basename(tmp.path)
 
       const info = await withInstance(tmp.path, () => Worktree.makeWorktreeInfo("my-feature"))
 
-      expect(info.name).toBe("my-feature")
-      expect(info.branch).toBe("opencode/my-feature")
+      const expectedName = `${repoBasename}-my-feature`
+      expect(info.name).toBe(expectedName)
+      expect(info.name).toEndWith("-my-feature")
+      expect(info.branch).toBe(`opencode/${expectedName}`)
     })
 
     test("slugifies the provided name", async () => {
       await using tmp = await tmpdir({ git: true })
+      const repoBasename = path.basename(tmp.path)
 
       const info = await withInstance(tmp.path, () => Worktree.makeWorktreeInfo("My Feature Branch!"))
 
-      expect(info.name).toBe("my-feature-branch")
+      const expectedName = `${repoBasename}-my-feature-branch`
+      expect(info.name).toBe(expectedName)
+      expect(info.name).toEndWith("-my-feature-branch")
     })
 
     test("throws NotGitError for non-git directories", async () => {
@@ -119,12 +125,15 @@ describe("Worktree", () => {
 
     test("create with custom name", async () => {
       await using tmp = await tmpdir({ git: true })
+      const repoBasename = path.basename(tmp.path)
       const ready = waitReady()
 
       const info = await withInstance(tmp.path, () => Worktree.create({ name: "test-workspace" }))
 
-      expect(info.name).toBe("test-workspace")
-      expect(info.branch).toBe("opencode/test-workspace")
+      const expectedName = `${repoBasename}-test-workspace`
+      expect(info.name).toBe(expectedName)
+      expect(info.name).toEndWith("-test-workspace")
+      expect(info.branch).toBe(`opencode/${expectedName}`)
 
       // Cleanup
       await ready
