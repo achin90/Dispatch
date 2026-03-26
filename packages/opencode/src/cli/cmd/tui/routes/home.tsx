@@ -324,7 +324,7 @@ export function Home() {
               #
             </text>
           </box>
-          <box width="45%">
+          <box width="30%">
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Name
             </text>
@@ -390,7 +390,7 @@ export function Home() {
                           <box width={4}>
                             <text fg={isSelected() ? fg : theme.textMuted}>{idx() + 1}</text>
                           </box>
-                          <box width="45%">
+                          <box width="30%">
                             <text
                               fg={isSelected() ? fg : theme.text}
                               attributes={isSelected() ? TextAttributes.BOLD : undefined}
@@ -416,7 +416,7 @@ export function Home() {
                               </Match>
                             </Switch>
                           </box>
-                          <box flexGrow={1}>
+                          <box flexGrow={1} flexShrink={1} minWidth={0}>
                             <Show
                               when={agent.status?.type === "busy" && agent.status.activity}
                               fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
