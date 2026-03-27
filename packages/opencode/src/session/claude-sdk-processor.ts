@@ -25,6 +25,24 @@ import { setSdkSessionID } from "./claude-sdk-session-map"
 import { SessionStatus } from "./status"
 
 // ---------------------------------------------------------------------------
+// Error message extraction
+// ---------------------------------------------------------------------------
+
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    // Check for HTTP status in common SDK error shapes
+    const status = (error as Record<string, unknown>).status ?? (error as Record<string, unknown>).statusCode
+    if (status === 500 || String(status) === "500")
+      return "Claude internal server error"
+    if (typeof status === "number" && status >= 500)
+      return `Claude server error (${status})`
+    return error.message || "Unknown error"
+  }
+  if (typeof error === "string") return error
+  return "Unknown error"
+}
+
+// ---------------------------------------------------------------------------
 // Activity formatting
 // ---------------------------------------------------------------------------
 
@@ -195,7 +213,22 @@ export async function processClaudeSdkStream(
   } catch (error) {
     // The SDK throws when the abort signal fires (e.g. user presses Esc).
     // This is expected — treat it as a clean abort, not an unhandled error.
-    if (!input.abort.aborted) throw error
+    if (!input.abort.aborted) {
+      // Handle API errors (e.g. 500 Internal Server Error) gracefully
+      // instead of letting them bubble up as unhandled exceptions.
+      await abortRunningTools(assistantMessage.id)
+      for (const ctx of Array.from(subagentMap.values())) {
+        await abortRunningTools(ctx.childMessageID)
+      }
+      const msg = extractErrorMessage(error)
+      assistantMessage.time.completed = Date.now()
+      assistantMessage.error = {
+        name: "APIError",
+        data: { message: msg, isRetryable: true },
+      } as MessageV2.Assistant["error"]
+      await Session.updateMessage(assistantMessage)
+      return { outcome: "error" }
+    }
   }
 
   // If we exited without a result message (e.g. abort), mark pending tools as errors
