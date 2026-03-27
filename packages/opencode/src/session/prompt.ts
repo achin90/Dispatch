@@ -655,6 +655,7 @@ export namespace SessionPrompt {
         abortController: controller,
         maxTurns: isLastStep ? 1 : undefined,
         ruleset: Permission.merge(agent.permission, session.permission ?? []),
+        effort: lastUser.variant as "low" | "medium" | "high" | "max" | undefined,
       })
 
       const result = await processClaudeSdkStream(sdkQuery, {

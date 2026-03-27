@@ -1268,7 +1268,9 @@ export namespace Provider {
 
     // Build models from the static SDK model list
     for (const [alias, info] of Object.entries(SDK_MODELS)) {
-      models[alias] = buildSdkModel(alias, info, info.name)
+      const m = buildSdkModel(alias, info, info.name)
+      m.variants = mapValues(ProviderTransform.variants(m), (v) => v)
+      models[alias] = m
     }
 
     const provider: Info = {
