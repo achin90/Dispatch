@@ -1,5 +1,3 @@
-// hello
-
 /**
  * Permission bridge between the Claude Agent SDK's canUseTool callback
  * and the existing Permission system.
