@@ -117,7 +117,7 @@ function trimDiff(diff: string): string {
       !line.startsWith("+++"),
   )
   if (contentLines.length === 0) return diff
-  return diff
+  return contentLines.join("\n")
 }
 
 async function generateEditDiff(
