@@ -72,6 +72,18 @@ export namespace Config {
     if (target.instructions && source.instructions) {
       merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
     }
+    // When a lower-precedence config has a string permission (e.g. edit: "ask")
+    // and a higher-precedence config has an object with specific patterns
+    // (e.g. edit: { "migration/*": "deny" }), mergeDeep replaces the string
+    // entirely. Preserve the string as a { "*": string } default so it isn't lost.
+    if (target.permission && source.permission) {
+      for (const key of Object.keys(source.permission)) {
+        const prev = target.permission[key]
+        const next = source.permission[key]
+        if (typeof prev !== "string" || typeof next !== "object") continue
+        merged.permission![key] = { "*": prev, ...next }
+      }
+    }
     return merged
   }
 
