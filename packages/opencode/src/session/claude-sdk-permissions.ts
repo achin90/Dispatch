@@ -108,16 +108,18 @@ export function derivePermissionName(toolName: string): string {
 // Diff generation for edit/write tools
 // ---------------------------------------------------------------------------
 
-function trimDiff(diff: string): string {
-  const lines = diff.split("\n")
-  const contentLines = lines.filter(
+// Returns the full unified diff when actual +/- content lines exist, or ""
+// when the diff is header-only (no real changes). The <diff> TUI component
+// needs intact @@ hunk markers and ---/+++ headers to render correctly —
+// stripping them breaks the renderer and produces a blank diff view.
+export function trimDiff(diff: string): string {
+  const hasContent = diff.split("\n").some(
     (line) =>
-      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
+      (line.startsWith("+") || line.startsWith("-")) &&
       !line.startsWith("---") &&
       !line.startsWith("+++"),
   )
-  if (contentLines.length === 0) return diff
-  return contentLines.join("\n")
+  return hasContent ? diff : ""
 }
 
 async function generateEditDiff(
