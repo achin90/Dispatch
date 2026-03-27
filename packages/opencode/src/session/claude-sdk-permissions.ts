@@ -19,6 +19,22 @@ import { MessageV2 } from "@/session/message-v2"
 import { SessionID, MessageID } from "@/session/schema"
 
 // ---------------------------------------------------------------------------
+// Pending metadata — diffs generated before tool parts may exist
+// ---------------------------------------------------------------------------
+
+// The SDK calls canUseTool() concurrently with yielding the assistant message.
+// Our stream processor may not have created the ToolPart yet when
+// canUseTool finishes. Store diffs here keyed by toolUseID so
+// finalizeRunningTools can merge them when transitioning to "completed".
+const pending = new Map<string, Record<string, unknown>>()
+
+export function popPendingMeta(callID: string): Record<string, unknown> | undefined {
+  const meta = pending.get(callID)
+  if (meta) pending.delete(callID)
+  return meta
+}
+
+// ---------------------------------------------------------------------------
 // Pattern extraction — maps tool name + input to permission patterns
 // ---------------------------------------------------------------------------
 
@@ -178,7 +194,8 @@ async function markToolDenied(messageID: MessageID, callID: string, error: strin
 
 /**
  * Update a tool part's state.metadata with additional fields (e.g., diff for edits).
- * Best-effort — if the part can't be found, the tool still works without the metadata.
+ * Best-effort — if the part can't be found (race condition), the pending map
+ * in finalizeRunningTools handles it.
  */
 async function updateToolMetadata(messageID: MessageID, callID: string, meta: Record<string, unknown>) {
   try {
@@ -259,13 +276,14 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
           signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
         }),
       ])
-      // After permission is approved, store the diff in the tool part's metadata
-      // so the TUI Edit component can display it (it reads props.metadata.diff).
+      // Store diff metadata so the TUI can display it.
+      // The tool part may not exist yet (race between stream processing and
+      // canUseTool callback), so we both try to update the part directly AND
+      // stash in the pending map for finalizeRunningTools to pick up.
       if (diffInfo) {
-        await updateToolMetadata(toolMessageID, callOptions.toolUseID, {
-          diff: diffInfo.diff,
-          filepath: diffInfo.filepath,
-        })
+        const meta = { diff: diffInfo.diff, filepath: diffInfo.filepath }
+        pending.set(callOptions.toolUseID, meta)
+        await updateToolMetadata(toolMessageID, callOptions.toolUseID, meta)
       }
       return { behavior: "allow", updatedInput: input }
     } catch (error) {
