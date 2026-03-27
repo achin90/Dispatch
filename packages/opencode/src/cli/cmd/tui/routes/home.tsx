@@ -318,15 +318,15 @@ export function Home() {
         dialog.clear()
         setDialogOpen(false)
         if (!ok) return
+        await sdk.client.worktree.remove({
+          directory: dir,
+          worktreeRemoveInput: { directory: dir },
+        })
         const current: AgentEntry[] = kv.get("agents", [])
         kv.set(
           "agents",
           current.filter((a) => resolveDir(a) !== dir),
         )
-        sdk.client.worktree.remove({
-          directory: dir,
-          worktreeRemoveInput: { directory: dir },
-        })
         setSelectedIndex((i) => Math.min(i, flat().length - 1))
       })()
     }
