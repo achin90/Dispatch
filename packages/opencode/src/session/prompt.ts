@@ -633,8 +633,12 @@ export namespace SessionPrompt {
         .join("\n") ?? ""
 
       // Build system prompt
+      // Always include the provider prompt (e.g. anthropic.txt) as the base identity,
+      // then append the agent-specific prompt if set
       const skills = await SystemPrompt.skills(agent)
       const systemParts = [
+        ...SystemPrompt.provider(model),
+        ...(agent.prompt ? [agent.prompt] : []),
         ...(await SystemPrompt.environment(model)),
         ...(skills ? [skills] : []),
         ...(await InstructionPrompt.system()),

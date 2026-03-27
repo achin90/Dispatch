@@ -1,3 +1,5 @@
+// hello
+
 /**
  * Permission bridge between the Claude Agent SDK's canUseTool callback
  * and the existing Permission system.
@@ -289,14 +291,25 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       }
       return { behavior: "allow", updatedInput: input }
     } catch (error) {
-      const msg =
-        error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
-          ? "User rejected permission"
-          : error instanceof Permission.DeniedError
-            ? "Permission denied by ruleset: specified a rule"
-            : error instanceof Error
-              ? error.message
-              : "Permission denied"
+      // If the error is NOT from the Permission system (i.e. it came from the
+      // abort signal winning Promise.race), the Effect fiber backing
+      // Deferred.await is still alive and the globalPending entry was never
+      // cleaned up.  Reject it so Effect.ensuring fires and deletes the entry.
+      const fromPermission =
+        error instanceof Permission.RejectedError ||
+        error instanceof Permission.CorrectedError ||
+        error instanceof Permission.DeniedError
+      if (!fromPermission) {
+        Permission.reply({ requestID, reply: "reject" }).catch(() => {})
+      }
+
+      const msg = error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
+        ? "User rejected permission"
+        : error instanceof Permission.DeniedError
+          ? "Permission denied by ruleset: specified a rule"
+          : error instanceof Error
+            ? error.message
+            : "Permission denied"
 
       // Update the tool part to error state so the TUI shows strikethrough
       await markToolDenied(toolMessageID, callOptions.toolUseID, msg)
