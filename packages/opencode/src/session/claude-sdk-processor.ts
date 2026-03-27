@@ -132,20 +132,30 @@ export async function processClaudeSdkStream(
   const { assistantMessage, sessionID } = input
   let completionMeta: CompletionMetadata | undefined
   const subagentMap = new Map<string, SubagentContext>()
+  // Track the last top-level assistant message's per-turn usage so we can
+  // report accurate context-window size (the SDK result reports *cumulative*
+  // tokens across all turns, which overstates actual context usage).
+  let lastTurnUsage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null } | undefined
 
   try {
     for await (const msg of messages) {
       if (input.abort.aborted) break
 
       switch (msg.type) {
-        case "assistant":
+        case "assistant": {
+          const assistant = msg as SDKAssistantMessage
+          // Only track top-level messages (not subagent) for context size
+          if (assistant.parent_tool_use_id === null) {
+            lastTurnUsage = assistant.message.usage
+          }
           await processAssistantMessage(
-            msg as SDKAssistantMessage,
+            assistant,
             sessionID,
             assistantMessage,
             subagentMap,
           )
           break
+        }
 
         case "result":
           // All tools must be complete before the result — finalize stragglers.
@@ -153,6 +163,7 @@ export async function processClaudeSdkStream(
           completionMeta = processResultMessage(
             msg as SDKResultMessage,
             assistantMessage,
+            lastTurnUsage,
           )
           await Session.updateMessage(assistantMessage)
           break
@@ -184,11 +195,7 @@ export async function processClaudeSdkStream(
   } catch (error) {
     // The SDK throws when the abort signal fires (e.g. user presses Esc).
     // This is expected — treat it as a clean abort, not an unhandled error.
-    if (input.abort.aborted) {
-      // Fall through to the abort handling below
-    } else {
-      throw error
-    }
+    if (!input.abort.aborted) throw error
   }
 
   // If we exited without a result message (e.g. abort), mark pending tools as errors
@@ -564,16 +571,33 @@ async function handleTaskNotification(
 /**
  * Extracts completion metadata from SDKResultMessage and updates the assistant message.
  * Mutates the assistantMessage in place (same pattern as existing processor).
+ *
+ * The SDK result reports *cumulative* token counts across all turns (API calls).
+ * For context-window display and overflow detection we need the *last turn's*
+ * usage, which represents the actual prompt size sent to the API.  We store
+ * that in `tokens.total` so isOverflow() and the TUI can use it.
  */
 function processResultMessage(
   msg: SDKResultMessage,
   assistantMessage: MessageV2.Assistant,
+  lastTurnUsage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null },
 ): CompletionMetadata {
   const meta = resultMessageToMetadata(msg)
+
+  // Compute context-window size from the last turn's usage.
+  // input_tokens excludes cached tokens, so add cache read + write to get
+  // the full prompt size that counts against the context limit.
+  const context = lastTurnUsage
+    ? lastTurnUsage.input_tokens +
+      (lastTurnUsage.cache_read_input_tokens ?? 0) +
+      (lastTurnUsage.cache_creation_input_tokens ?? 0) +
+      (lastTurnUsage.output_tokens ?? 0)
+    : undefined
 
   assistantMessage.time.completed = Date.now()
   assistantMessage.cost = meta.total_cost_usd
   assistantMessage.tokens = {
+    ...(context !== undefined ? { total: context } : {}),
     input: meta.tokens.input,
     output: meta.tokens.output,
     reasoning: 0,

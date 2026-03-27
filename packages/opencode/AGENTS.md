@@ -18,7 +18,7 @@ User prompt → SessionPrompt.loop() → createClaudeSdkQuery() → query()
 |------|---------|
 | `claude-sdk-adapter.ts` | Pure mapping: `SDKMessage` → `MessageV2` parts (TextPart, ToolPart, ReasoningPart). Stateless. |
 | `claude-sdk-permissions.ts` | `canUseTool` callback that bridges SDK permission requests → `Permission.Event.Asked` → TUI permission dock → user reply → `PermissionResult` back to SDK. |
-| `claude-sdk-processor.ts` | Consumes `query()` async generator, calls adapter for each message, persists parts to DB. |
+| `claude-sdk-processor.ts` | Consumes `query()` async generator, calls adapter for each message, persists parts to DB. Tracks last-turn usage for accurate context-window size (SDK result reports cumulative tokens). |
 | `claude-sdk-query.ts` | Resolves auth (API key or subscription), assembles `query()` options (model, tools, MCP servers, maxTurns). |
 | `claude-sdk-session-map.ts` | Maps session history for multi-turn conversations. |
 

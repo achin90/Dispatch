@@ -64,7 +64,7 @@ export const EventRoutes = lazy(() =>
 
         // Also listen to events from other directories (e.g. agent sessions
         // running in a different working directory).
-        const globalHandler = ({ directory, payload }: { directory?: string; payload: any }) => {
+        const globalHandler = ({ directory, payload }: { directory?: string; payload: Record<string, unknown> }) => {
           if (directory === currentDirectory) return
           q.push(JSON.stringify(payload))
         }

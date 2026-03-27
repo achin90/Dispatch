@@ -1529,14 +1529,14 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
 
   // Normalize input keys: SDK sends snake_case (file_path), TUI expects camelCase (filePath).
   // Also handles old persisted data that may have snake_case keys.
-  const normalizedInput = createMemo(() => {
-    const raw = props.part.state.input ?? {}
-    const result: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(raw)) {
-      result[key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = value
-    }
-    return result
-  })
+  const normalizedInput = createMemo(() =>
+    Object.fromEntries(
+      Object.entries(props.part.state.input ?? {}).map(([key, val]) => [
+        key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()),
+        val,
+      ]),
+    ),
+  )
 
   const toolprops = {
     get metadata() {
