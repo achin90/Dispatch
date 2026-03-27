@@ -29,8 +29,12 @@ export namespace Editor {
       const content = await Filesystem.readText(filepath)
       return content || undefined
     } finally {
-      opts.renderer.currentRenderBuffer.clear()
       opts.renderer.resume()
+      // Clear currentRenderBuffer AFTER resume so every cell differs from the
+      // next render frame, forcing a full repaint. resume() internally clears
+      // with backgroundColor which makes background-only cells look unchanged
+      // to the diff engine, leaving the terminal's default background visible.
+      opts.renderer.currentRenderBuffer.clear()
       opts.renderer.requestRender()
     }
   }
