@@ -111,9 +111,15 @@ export function Home() {
   }
 
   const [diffStats, setDiffStats] = createSignal<Record<string, DiffStat>>({})
+  // Worktrees whose background checkout (--no-checkout + forked boot)
+  // hasn't finished yet.  Keyed by branch so we can match the
+  // server-emitted worktree.ready event (which only carries branch).
+  const pending = new Map<string, string>() // branch → dir
 
   function fetchDiffStats() {
+    const dirs = new Set(pending.values())
     for (const group of grouped()) {
+      if (dirs.has(group.dir)) continue
       sdk.client.worktree.diffstat({ directory: group.dir }).then((res) => {
         if (!res.data) return
         setDiffStats((prev) => ({ ...prev, [group.dir]: res.data! }))
@@ -122,6 +128,10 @@ export function Home() {
   }
 
   createEffect(on(grouped, () => fetchDiffStats()))
+
+  sdk.event.on("worktree.ready", (evt) => {
+    if (pending.delete(evt.properties.branch)) fetchDiffStats()
+  })
 
   // Restore selection to the last-entered agent
   if (lastEnteredSessionID) {
@@ -249,6 +259,14 @@ export function Home() {
           worktreeCreateInput: { name },
         })).data
         if (!worktree) return
+        // Pre-seed zero diff stats so the effect doesn't race the
+        // background worktree checkout (--no-checkout + forked boot).
+        const dir = worktree.directory.replace(/\/+$/, "")
+        pending.set(worktree.branch, dir)
+        setDiffStats((prev) => ({
+          ...prev,
+          [dir]: { additions: 0, deletions: 0, files: 0 },
+        }))
         const session = (await sdk.client.session.create({
           directory: worktree.directory,
         })).data
