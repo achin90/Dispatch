@@ -319,17 +319,17 @@ export function Home() {
       <box flexGrow={1} flexDirection="column" paddingLeft={2} paddingRight={2} paddingTop={1}>
         {/* Header */}
         <box flexDirection="row" flexShrink={0}>
-          <box width={4}>
+          <box width={4} flexShrink={0}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               #
             </text>
           </box>
-          <box width="30%">
+          <box width="30%" flexShrink={0}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Name
             </text>
           </box>
-          <box width={18}>
+          <box width={18} flexShrink={0}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Status
             </text>
@@ -387,10 +387,10 @@ export function Home() {
                           flexDirection="row"
                           backgroundColor={isSelected() ? theme.primary : undefined}
                         >
-                          <box width={4}>
+                          <box width={4} flexShrink={0}>
                             <text fg={isSelected() ? fg : theme.textMuted}>{idx() + 1}</text>
                           </box>
-                          <box width="30%">
+                          <box width="30%" flexShrink={0}>
                             <text
                               fg={isSelected() ? fg : theme.text}
                               attributes={isSelected() ? TextAttributes.BOLD : undefined}
@@ -400,7 +400,7 @@ export function Home() {
                               {agent.name}
                             </text>
                           </box>
-                          <box width={18}>
+                          <box width={18} flexShrink={0}>
                             <Switch>
                               <Match when={hasPending(agent.sessionID)}>
                                 <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
