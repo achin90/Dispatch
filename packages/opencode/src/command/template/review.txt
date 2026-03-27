@@ -7,11 +7,11 @@ Launch a haiku agent to return a list of file paths (not their contents) for all
 - The root CLAUDE.md file, if it exists
 - Any CLAUDE.md files in directories containing files modified by the diff
 
-Determine the target branch and get the diff. Use these as separate commands (do not combine with `$()` substitution):
+Determine the diff of uncommitted changes. Use these as separate commands (do not combine with `$()` substitution):
 
-1. `git rev-parse --abbrev-ref @{upstream}` — if this succeeds, strip the `origin/` prefix to get the target branch. If it fails, default to `main`.
-2. `git merge-base <target_branch> HEAD` — save this hash as the merge base.
-3. `git diff <merge_base> HEAD --stat` — get the diff stat.
+1. `git diff --stat` — get the diff stat for unstaged changes.
+2. `git diff --cached --stat` — get the diff stat for staged changes.
+3. `git ls-files --others --exclude-standard` — list untracked files.
 
 If this branch has an associated PR, read the title and description using `gh pr view` (but not the changes). This will be helpful context.
 
@@ -19,12 +19,11 @@ If this branch has an associated PR, read the title and description using `gh pr
 
 In parallel with step 1, launch a sonnet agent to view the changes and return a summary. The agent should run these as separate commands (not combined with `$()` substitution):
 
-1. `git rev-parse --abbrev-ref @{upstream}` — to find the target branch (default to `main` if this fails).
-2. `git merge-base <target_branch> HEAD` — to find the merge base.
-3. `git diff <merge_base> HEAD` — committed changes relative to target branch.
-4. `git diff HEAD` — any uncommitted work in progress.
+1. `git diff` — unstaged changes.
+2. `git diff --cached` — staged changes.
+3. `git ls-files --others --exclude-standard` — list untracked files. Then read each untracked file to see its contents.
 
-Review the combination of both diff outputs: the first shows all committed changes on this branch relative to the target, and the second shows any uncommitted work in progress.
+Review the combination of all outputs: staged changes, unstaged changes, and new untracked files. These are the working changes that have not yet been committed.
 
 ## Step 3: Review with parallel agents
 
@@ -39,7 +38,7 @@ Scan for obvious bugs. Focus only on the diff itself without reading extra conte
 **Agent 4: Opus bug agent**
 Look for problems that exist in the introduced code. This could be security issues, incorrect logic, etc. Only look for issues that fall within the changed code.
 
-In addition to the above, each subagent should be told the PR title and description. This will help provide context regarding the author's intent.
+In addition to the above, each subagent should be told the PR title and description (if available). This will help provide context regarding the author's intent.
 
 ## Step 4: Signal filtering
 
@@ -67,7 +66,7 @@ Use this list when evaluating issues (these are false positives, do NOT flag):
 
 ## Step 5: Validate issues
 
-For each issue found in Step 3, launch parallel subagents to validate the issue. These subagents should get the PR title and description along with a description of the issue. The agent's job is to review the issue to validate that the stated issue is truly an issue with high confidence. For example, if an issue such as "variable is not defined" was flagged, the subagent's job would be to validate that is actually true in the code. Another example would be CLAUDE.md issues. The agent should validate that the CLAUDE.md rule that was violated is scoped for this file and is actually violated. Use Opus subagents for bugs and logic issues, and sonnet agents for CLAUDE.md violations.
+For each issue found in Step 3, launch parallel subagents to validate the issue. These subagents should get the PR title and description (if available) along with a description of the issue. The agent's job is to review the issue to validate that the stated issue is truly an issue with high confidence. For example, if an issue such as "variable is not defined" was flagged, the subagent's job would be to validate that is actually true in the code. Another example would be CLAUDE.md issues. The agent should validate that the CLAUDE.md rule that was violated is scoped for this file and is actually violated. Use Opus subagents for bugs and logic issues, and sonnet agents for CLAUDE.md violations.
 
 ## Step 6: Filter and report
 
