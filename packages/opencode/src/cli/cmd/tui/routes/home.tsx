@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Match, on, Show, Switch } from "solid-js"
-import type { DiffStat } from "@opencode-ai/sdk/v2"
+import type { DiffStat, PermissionRequest } from "@opencode-ai/sdk/v2"
 import { useTheme, selectedForeground } from "@tui/context/theme"
 import { useSync } from "../context/sync"
 import { useDirectory } from "../context/directory"
@@ -19,6 +19,8 @@ import { useKeyboard } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeybind } from "@tui/context/keybind"
 import { useExit } from "../context/exit"
+import path from "path"
+import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 
 interface AgentEntry {
   id: string
@@ -33,7 +35,86 @@ interface AgentEntry {
   }
 }
 
+// Track which session the user last navigated into so we can restore cursor position
 let lastEnteredSessionID: string | undefined
+
+function filetype(filepath?: string) {
+  if (!filepath) return "none"
+  const ext = path.extname(filepath)
+  const lang = LANGUAGE_EXTENSIONS[ext]
+  if (["typescriptreact", "javascriptreact", "javascript"].includes(lang)) return "typescript"
+  return lang ?? "none"
+}
+
+function PermissionDetail(props: { request: PermissionRequest; selected: boolean }) {
+  const themeState = useTheme()
+  const theme = themeState.theme
+  const syntax = themeState.syntax
+  const fg = selectedForeground(theme)
+
+  const input = createMemo(() => {
+    const raw = props.request.metadata?.input
+    if (raw && typeof raw === "object") return raw as Record<string, unknown>
+    return {} as Record<string, unknown>
+  })
+
+  const diff = createMemo(() => {
+    const raw = props.request.metadata?.diff
+    return typeof raw === "string" ? raw : ""
+  })
+
+  const filepath = createMemo(() => {
+    const raw = props.request.metadata?.filepath
+    return typeof raw === "string" ? raw : ""
+  })
+
+  const color = () => (props.selected ? fg : theme.textMuted)
+
+  return (
+    <box paddingLeft={4} maxHeight={10}>
+      <Switch>
+        <Match when={props.request.permission === "bash"}>
+          <text fg={color()} wrapMode="word">
+            {"$ " + (typeof input().command === "string" ? input().command : props.request.patterns[0] ?? "")}
+          </text>
+        </Match>
+        <Match when={(props.request.permission === "edit" || props.request.permission === "write") && diff()}>
+          <scrollbox maxHeight={8} scrollbarOptions={{ visible: false }}>
+            <diff
+              diff={diff()}
+              view="unified"
+              filetype={filetype(filepath())}
+              syntaxStyle={syntax()}
+              showLineNumbers={true}
+              width="100%"
+              wrapMode="word"
+              fg={theme.text}
+              addedBg={theme.diffAddedBg}
+              removedBg={theme.diffRemovedBg}
+              contextBg={theme.diffContextBg}
+              addedSignColor={theme.diffHighlightAdded}
+              removedSignColor={theme.diffHighlightRemoved}
+              lineNumberFg={theme.diffLineNumber}
+              lineNumberBg={theme.diffContextBg}
+              addedLineNumberBg={theme.diffAddedLineNumberBg}
+              removedLineNumberBg={theme.diffRemovedLineNumberBg}
+            />
+          </scrollbox>
+        </Match>
+        <Match when={props.request.permission === "edit" || props.request.permission === "write"}>
+          <text fg={color()} overflow="hidden" wrapMode="none">
+            {(props.request.permission === "edit" ? "Edit " : "Write ") + (filepath() || (props.request.patterns[0] ?? ""))}
+          </text>
+        </Match>
+        <Match when={true}>
+          <text fg={color()} overflow="hidden" wrapMode="none">
+            {props.request.permission + " " + (props.request.patterns[0] ?? "")}
+          </text>
+        </Match>
+      </Switch>
+    </box>
+  )
+}
 
 export function Home() {
   const sync = useSync()
@@ -110,6 +191,23 @@ export function Home() {
     return children().get(sessionID)?.some((id) => hasPending(id)) ?? false
   }
 
+  function hasPermission(sessionID: string): boolean {
+    if ((sync.data.permission[sessionID]?.length ?? 0) > 0) return true
+    return children().get(sessionID)?.some((id) => hasPermission(id)) ?? false
+  }
+
+  function approval(sessionID: string): PermissionRequest | undefined {
+    const perms = sync.data.permission[sessionID]
+    if (perms && perms.length > 0) return perms[0]
+    const kids = children().get(sessionID)
+    if (!kids) return undefined
+    for (const id of kids) {
+      const p = approval(id)
+      if (p) return p
+    }
+    return undefined
+  }
+
   const [diffStats, setDiffStats] = createSignal<Record<string, DiffStat>>({})
   // Worktrees whose background checkout (--no-checkout + forked boot)
   // hasn't finished yet.  Keyed by branch so we can match the
@@ -162,7 +260,7 @@ export function Home() {
     const idx = last === -1 ? current.length : last + 1
     const next = [...current.slice(0, idx), entry, ...current.slice(idx)]
     kv.set("agents", next)
-    setSelectedIndex(flat().length - 1)
+    setSelectedIndex(idx)
   }
 
   let scroll: ScrollBoxRenderable | undefined
@@ -330,6 +428,26 @@ export function Home() {
         setSelectedIndex((i) => Math.min(i, flat().length - 1))
       })()
     }
+    if (evt.name === "y") {
+      const agent = selected()
+      if (!agent) return
+      const perm = approval(agent.sessionID)
+      if (!perm) return
+      sdk.client.permission.reply({
+        reply: "once",
+        requestID: perm.id,
+      })
+    }
+    if (evt.name === "n") {
+      const agent = selected()
+      if (!agent) return
+      const perm = approval(agent.sessionID)
+      if (!perm) return
+      sdk.client.permission.reply({
+        reply: "reject",
+        requestID: perm.id,
+      })
+    }
   })
 
   return (
@@ -400,8 +518,8 @@ export function Home() {
                       const idx = createMemo(() => flat().indexOf(agent))
                       const isSelected = createMemo(() => idx() === selectedIndex())
                       return (
+                        <box id={String(idx())} flexDirection="column">
                         <box
-                          id={String(idx())}
                           flexDirection="row"
                           backgroundColor={isSelected() ? theme.primary : undefined}
                         >
@@ -420,6 +538,9 @@ export function Home() {
                           </box>
                           <box width={18} flexShrink={0}>
                             <Switch>
+                              <Match when={hasPermission(agent.sessionID)}>
+                                <text fg={isSelected() ? fg : theme.warning}>Approve (y/n)</text>
+                              </Match>
                               <Match when={hasPending(agent.sessionID)}>
                                 <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
                               </Match>
@@ -450,6 +571,12 @@ export function Home() {
                               )}
                             </Show>
                           </box>
+                        </box>
+                        <Show when={approval(agent.sessionID)}>
+                          {(perm) => (
+                            <PermissionDetail request={perm()} selected={isSelected()} />
+                          )}
+                        </Show>
                         </box>
                       )
                     }}

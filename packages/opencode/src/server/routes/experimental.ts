@@ -62,7 +62,7 @@ export const ExperimentalRoutes = lazy(() =>
           }
           await Promise.all(
             entries
-              .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+              .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !e.isSymbolicLink() && e.name !== "node_modules")
               .map((e) => walk(path.join(dir, e.name))),
           )
         }
