@@ -27,6 +27,7 @@ export interface ClaudeSdkQueryInput {
   abortController?: AbortController
   maxTurns?: number
   ruleset?: Permission.Ruleset
+  effort?: Options["effort"]
 }
 
 /**
@@ -88,6 +89,7 @@ export async function createClaudeSdkQuery(
     canUseTool: createCanUseToolBridge({ sessionID: input.sessionID, messageID: input.messageID, ruleset: input.ruleset }),
     abortController: input.abortController,
     maxTurns: input.maxTurns,
+    ...(input.effort ? { effort: input.effort } : {}),
     ...(sdkSessionID ? { resume: sdkSessionID } : {}),
   }
 
