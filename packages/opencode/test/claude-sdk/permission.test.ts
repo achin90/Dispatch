@@ -3,6 +3,7 @@ import {
   extractPatterns,
   derivePermissionName,
   createCanUseToolBridge,
+  trimDiff,
 } from "../../src/session/claude-sdk-permissions"
 import { Bus } from "../../src/bus"
 import { Permission } from "../../src/permission"
@@ -119,6 +120,40 @@ describe("claude-sdk permissions", () => {
 
     test("passes MCP tools through lowercased", () => {
       expect(derivePermissionName("mcp__github__list_issues")).toBe("mcp__github__list_issues")
+    })
+  })
+
+  describe("trimDiff", () => {
+    const unified = [
+      "--- a/file.ts",
+      "+++ b/file.ts",
+      "@@ -1,3 +1,4 @@",
+      "+// new comment",
+      " import { foo } from 'bar'",
+      " ",
+      " export default foo",
+    ].join("\n")
+
+    test("returns full diff when content lines exist", () => {
+      const result = trimDiff(unified)
+      expect(result).toBe(unified)
+      expect(result).toContain("@@")
+      expect(result).toContain("---")
+      expect(result).toContain("+++")
+    })
+
+    test("returns empty string for header-only diff", () => {
+      const empty = ["--- a/file.ts", "+++ b/file.ts", "@@ -1,3 +1,3 @@"].join("\n")
+      expect(trimDiff(empty)).toBe("")
+    })
+
+    test("returns empty string for empty input", () => {
+      expect(trimDiff("")).toBe("")
+    })
+
+    test("detects removal lines as content", () => {
+      const removal = ["--- a/file.ts", "+++ b/file.ts", "@@ -1,2 +1 @@", "-removed line", " kept"].join("\n")
+      expect(trimDiff(removal)).toBe(removal)
     })
   })
 
