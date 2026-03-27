@@ -654,6 +654,7 @@ export namespace SessionPrompt {
         cwd: Instance.directory,
         abortController: controller,
         maxTurns: isLastStep ? 1 : undefined,
+        ruleset: Permission.merge(agent.permission, session.permission ?? []),
       })
 
       const result = await processClaudeSdkStream(sdkQuery, {
