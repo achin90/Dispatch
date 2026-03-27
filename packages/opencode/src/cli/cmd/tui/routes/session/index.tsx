@@ -1622,7 +1622,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
 
 type ToolProps<T extends Tool.Info> = {
   input: Partial<Tool.InferParameters<T>>
-  metadata: Partial<Tool.InferMetadata<T>>
+  metadata: Partial<Tool.InferMetadata<T>> & Record<string, unknown>
   permission: Record<string, any>
   tool: string
   output?: string
@@ -1884,7 +1884,18 @@ function Bash(props: ToolProps<typeof BashTool>) {
 }
 
 function Write(props: ToolProps<typeof WriteTool>) {
+  const ctx = use()
   const { theme, syntax } = useTheme()
+
+  const view = createMemo(() => {
+    const diffStyle = ctx.tui.diff_style
+    if (diffStyle === "stacked") return "unified"
+    return ctx.width > 120 ? "split" : "unified"
+  })
+
+  const ft = createMemo(() => filetype(props.input.filePath))
+  const diffContent = createMemo(() => props.metadata.diff)
+
   const code = createMemo(() => {
     if (!props.input.content) return ""
     return props.input.content
@@ -1892,6 +1903,32 @@ function Write(props: ToolProps<typeof WriteTool>) {
 
   return (
     <Switch>
+      <Match when={props.metadata.diff !== undefined}>
+        <BlockTool title={"← Wrote " + normalizePath(props.input.filePath!)} part={props.part}>
+          <box paddingLeft={1}>
+            <diff
+              diff={diffContent()}
+              view={view()}
+              filetype={ft()}
+              syntaxStyle={syntax()}
+              showLineNumbers={true}
+              width="100%"
+              wrapMode={ctx.diffWrapMode()}
+              fg={theme.text}
+              addedBg={theme.diffAddedBg}
+              removedBg={theme.diffRemovedBg}
+              contextBg={theme.diffContextBg}
+              addedSignColor={theme.diffHighlightAdded}
+              removedSignColor={theme.diffHighlightRemoved}
+              lineNumberFg={theme.diffLineNumber}
+              lineNumberBg={theme.diffContextBg}
+              addedLineNumberBg={theme.diffAddedLineNumberBg}
+              removedLineNumberBg={theme.diffRemovedLineNumberBg}
+            />
+          </box>
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
+        </BlockTool>
+      </Match>
       <Match when={props.metadata.diagnostics !== undefined}>
         <BlockTool title={"# Wrote " + normalizePath(props.input.filePath!)} part={props.part}>
           <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>

@@ -15,6 +15,7 @@ import type {
 import { Session } from "./index"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
+import { popPendingMeta } from "./claude-sdk-permissions"
 import {
   assistantMessageToParts,
   resultMessageToMetadata,
@@ -221,6 +222,13 @@ async function finalizeRunningTools(messageID: MessageID): Promise<void> {
   const parts = await MessageV2.parts(messageID)
   for (const part of parts) {
     if (part.type !== "tool" || part.state.status !== "running") continue
+    // Merge any pending metadata stashed by canUseTool (e.g. diffs for
+    // edit/write tools). The pending map handles the race where canUseTool
+    // runs before processAssistantMessage creates the ToolPart.
+    const merged = {
+      ...(part.state.metadata ?? {}),
+      ...popPendingMeta(part.callID),
+    }
     await Session.updatePart({
       ...part,
       state: {
@@ -228,7 +236,7 @@ async function finalizeRunningTools(messageID: MessageID): Promise<void> {
         input: part.state.input,
         output: "",
         title: part.state.title ?? "",
-        metadata: part.state.metadata ?? {},
+        metadata: merged,
         time: {
           start: part.state.time.start,
           end: Date.now(),
