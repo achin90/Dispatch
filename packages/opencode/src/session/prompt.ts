@@ -664,7 +664,7 @@ export namespace SessionPrompt {
         abort,
       })
 
-      if (result.outcome === "error" || result.outcome === "stop") break
+      if (result.outcome === "error") break
       continue
     }
     SessionCompaction.prune({ sessionID })
