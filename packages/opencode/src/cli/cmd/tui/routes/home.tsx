@@ -19,6 +19,7 @@ import { useKeyboard } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeybind } from "@tui/context/keybind"
 import { useExit } from "../context/exit"
+import { useToast } from "@tui/ui/toast"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 
@@ -124,6 +125,7 @@ export function Home() {
   const sdk = useSDK()
   const directory = useDirectory()
   const dialog = useDialog()
+  const toast = useToast()
   const keybind = useKeybind()
   const exit = useExit()
   const fg = selectedForeground(theme)
@@ -340,7 +342,12 @@ export function Home() {
     if (evt.name === "w") {
       ;(async () => {
         setDialogOpen(true)
-        const repoDir = await DialogGitRepoSelect.show(dialog, "Select Git Repository", sync.data.path.directory)
+        const repoDir = await DialogGitRepoSelect.show(
+          dialog,
+          "Select Source Repository",
+          sync.data.path.directory,
+          "Choose the repository to create a new worktree from",
+        )
         if (!repoDir) {
           dialog.clear()
           setDialogOpen(false)
@@ -413,18 +420,32 @@ export function Home() {
           "Delete Worktree",
           `Delete worktree and all agents in ${shortDir(dir)}?`,
         )
-        dialog.clear()
-        setDialogOpen(false)
-        if (!ok) return
-        await sdk.client.worktree.remove({
-          directory: dir,
-          worktreeRemoveInput: { directory: dir },
-        })
-        const current: AgentEntry[] = kv.get("agents", [])
-        kv.set(
-          "agents",
-          current.filter((a) => resolveDir(a) !== dir),
-        )
+        if (!ok) {
+          dialog.clear()
+          setDialogOpen(false)
+          return
+        }
+        dialog.replace(() => (
+          <box paddingBottom={1} paddingLeft={4} paddingRight={4}>
+            <Spinner>Deleting worktree…</Spinner>
+          </box>
+        ))
+        try {
+          await sdk.client.worktree.remove({
+            directory: dir,
+            worktreeRemoveInput: { directory: dir },
+          })
+          const current: AgentEntry[] = kv.get("agents", [])
+          kv.set(
+            "agents",
+            current.filter((a) => resolveDir(a) !== dir),
+          )
+        } catch {
+          toast.show({ message: "Failed to delete worktree", variant: "error" })
+        } finally {
+          dialog.clear()
+          setDialogOpen(false)
+        }
         setSelectedIndex((i) => Math.min(i, flat().length - 1))
       })()
     }
@@ -608,6 +629,10 @@ export function Home() {
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>enter</span>
             <span style={{ fg: theme.textMuted }}> open</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{keybind.print("command_list")}</span>
+            <span style={{ fg: theme.textMuted }}> commands</span>
           </text>
         </box>
         <box flexDirection="row" paddingTop={1} gap={2}>

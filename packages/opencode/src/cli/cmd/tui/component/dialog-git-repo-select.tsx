@@ -6,6 +6,7 @@ import path from "path"
 
 export function DialogGitRepoSelect(props: {
   title: string
+  description?: string
   defaultRoot: string
   onSelect?: (value: string) => void
   onCancel?: () => void
@@ -33,6 +34,7 @@ export function DialogGitRepoSelect(props: {
   return (
     <DialogSelect
       title={props.title}
+      description={props.description}
       placeholder="Filter repositories"
       options={options()}
       onSelect={(option) => {
@@ -42,12 +44,18 @@ export function DialogGitRepoSelect(props: {
   )
 }
 
-DialogGitRepoSelect.show = (dialog: DialogContext, title: string, defaultRoot: string) => {
+DialogGitRepoSelect.show = (
+  dialog: DialogContext,
+  title: string,
+  defaultRoot: string,
+  description?: string,
+) => {
   return new Promise<string | null>((resolve) => {
     dialog.replace(
       () => (
         <DialogGitRepoSelect
           title={title}
+          description={description}
           defaultRoot={defaultRoot}
           onSelect={(value) => resolve(value)}
           onCancel={() => resolve(null)}

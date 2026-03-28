@@ -416,6 +416,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
+      title: "Agent dashboard",
+      value: "dashboard",
+      keybind: "dashboard",
+      category: "Session",
+      enabled: route.data.type === "session",
+      onSelect: () => {
+        route.navigate({ type: "home" })
+        dialog.clear()
+      },
+    },
+    {
       title: "Switch model",
       value: "model.list",
       keybind: "model_list",
