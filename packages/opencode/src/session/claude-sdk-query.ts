@@ -7,7 +7,8 @@
  * 5. Returns the message stream for processClaudeSdkStream()
  */
 
-import { query, type Options, type Query } from "@anthropic-ai/claude-agent-sdk"
+import { query, type Options, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
+import type { MessageParam } from "@anthropic-ai/sdk/resources"
 import { Auth } from "@/auth"
 import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
@@ -15,7 +16,7 @@ import { createCanUseToolBridge } from "./claude-sdk-permissions"
 import { getSdkSessionID } from "./claude-sdk-session-map"
 
 export interface ClaudeSdkQueryInput {
-  prompt: string
+  prompt: string | MessageParam
   sessionID: SessionID
   messageID: MessageID
   model?: string
@@ -93,8 +94,23 @@ export async function createClaudeSdkQuery(
     ...(sdkSessionID ? { resume: sdkSessionID } : {}),
   }
 
+  // When prompt contains image/media content blocks, wrap it as an
+  // SDKUserMessage so the SDK receives the full MessageParam with images.
+  // Plain strings are passed through directly.
+  const prompt: string | AsyncIterable<SDKUserMessage> =
+    typeof input.prompt === "string"
+      ? input.prompt
+      : (async function* () {
+          yield {
+            type: "user" as const,
+            message: input.prompt as MessageParam,
+            parent_tool_use_id: null,
+            session_id: sdkSessionID ?? "",
+          }
+        })()
+
   return query({
-    prompt: input.prompt,
+    prompt,
     options,
   })
 }

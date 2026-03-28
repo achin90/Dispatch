@@ -625,12 +625,42 @@ export namespace SessionPrompt {
         })
       }
 
-      // Extract user prompt text from message parts
+      // Extract user prompt from message parts, including any images/media
       const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
-      const userPromptText = lastUserMsg?.parts
+      const texts = lastUserMsg?.parts
         .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
-        .map((p) => p.text)
-        .join("\n") ?? ""
+        .map((p) => p.text) ?? []
+      const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
+      const media = lastUserMsg?.parts
+        .filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime))
+        ?? []
+      // When media is attached, build a MessageParam with content blocks so
+      // the Claude SDK receives images alongside text. Otherwise pass a plain string.
+      const prompt: string | import("@anthropic-ai/sdk/resources").MessageParam =
+        media.length === 0
+          ? texts.join("\n")
+          : {
+              role: "user" as const,
+              content: [
+                ...media.map((p) => {
+                  const data = p.url.slice(p.url.indexOf(",") + 1)
+                  if (p.mime === "application/pdf")
+                    return {
+                      type: "document" as const,
+                      source: { type: "base64" as const, media_type: "application/pdf" as const, data },
+                    }
+                  return {
+                    type: "image" as const,
+                    source: {
+                      type: "base64" as const,
+                      media_type: p.mime as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+                      data,
+                    },
+                  }
+                }),
+                ...texts.map((t) => ({ type: "text" as const, text: t })),
+              ],
+            }
 
       // Build system prompt
       // Always include the provider prompt (e.g. anthropic.txt) as the base identity,
@@ -650,7 +680,7 @@ export namespace SessionPrompt {
 
       // Call Claude Agent SDK
       const sdkQuery = await createClaudeSdkQuery({
-        prompt: userPromptText,
+        prompt,
         sessionID,
         messageID: assistantMessage.id,
         model: model.id,
