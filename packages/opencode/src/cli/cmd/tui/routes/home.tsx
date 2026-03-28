@@ -74,11 +74,9 @@ function PermissionDetail(props: { request: PermissionRequest; selected: boolean
     <box paddingLeft={4} maxHeight={10}>
       <Switch>
         <Match when={props.request.permission === "bash"}>
-          <scrollbox maxHeight={8} scrollbarOptions={{ visible: false }}>
-            <text fg={theme.text} wrapMode="word">
-              {"$ " + (typeof input().command === "string" ? input().command : props.request.patterns[0] ?? "")}
-            </text>
-          </scrollbox>
+          <text fg={theme.text} wrapMode="word" overflow="hidden">
+            {"$ " + (typeof input().command === "string" ? input().command : props.request.patterns[0] ?? "")}
+          </text>
         </Match>
         <Match when={(props.request.permission === "edit" || props.request.permission === "write") && diff()}>
           <scrollbox maxHeight={8} scrollbarOptions={{ visible: false }}>
