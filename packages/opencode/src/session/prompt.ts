@@ -590,33 +590,169 @@ export namespace SessionPrompt {
         session,
       })
 
-      // Create the assistant message before processing
-      const assistantMessage = (await Session.updateMessage({
-        id: MessageID.ascending(),
-        parentID: lastUser.id,
-        role: "assistant",
-        mode: agent.name,
-        agent: agent.name,
-        variant: lastUser.variant,
-        path: {
+      // Route: anthropic provider → Claude Agent SDK, all others → AI SDK
+      if (model.providerID === "anthropic") {
+        // ── Claude Agent SDK path ──────────────────────────────────────
+        const assistantMessage = (await Session.updateMessage({
+          id: MessageID.ascending(),
+          parentID: lastUser.id,
+          role: "assistant",
+          mode: agent.name,
+          agent: agent.name,
+          variant: lastUser.variant,
+          path: {
+            cwd: Instance.directory,
+            root: Instance.worktree,
+          },
+          cost: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          modelID: model.id,
+          providerID: model.providerID,
+          time: {
+            created: Date.now(),
+          },
+          sessionID,
+        })) as MessageV2.Assistant
+        using _ = defer(() => InstructionPrompt.clear(assistantMessage.id))
+
+        if (step === 1) {
+          SessionSummary.summarize({
+            sessionID: sessionID,
+            messageID: lastUser.id,
+          })
+        }
+
+        // Extract user prompt from message parts, including any images/media
+        const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+        const texts = lastUserMsg?.parts
+          .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
+          .map((p) => p.text) ?? []
+        const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
+        const media = lastUserMsg?.parts
+          .filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime))
+          ?? []
+        // When media is attached, build a MessageParam with content blocks so
+        // the Claude SDK receives images alongside text. Otherwise pass a plain string.
+        const prompt: string | import("@anthropic-ai/sdk/resources").MessageParam =
+          media.length === 0
+            ? texts.join("\n")
+            : {
+                role: "user" as const,
+                content: [
+                  ...media.map((p) => {
+                    const data = p.url.slice(p.url.indexOf(",") + 1)
+                    if (p.mime === "application/pdf")
+                      return {
+                        type: "document" as const,
+                        source: { type: "base64" as const, media_type: "application/pdf" as const, data },
+                      }
+                    return {
+                      type: "image" as const,
+                      source: {
+                        type: "base64" as const,
+                        media_type: p.mime as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+                        data,
+                      },
+                    }
+                  }),
+                  ...texts.map((t) => ({ type: "text" as const, text: t })),
+                ],
+              }
+
+        const skills = await SystemPrompt.skills(agent)
+        const systemParts = [
+          ...SystemPrompt.provider(model),
+          ...(agent.prompt ? [agent.prompt] : []),
+          ...(await SystemPrompt.environment(model)),
+          ...(skills ? [skills] : []),
+          ...(await InstructionPrompt.system()),
+        ]
+        const systemPrompt = systemParts.join("\n\n")
+
+        const controller = state()[sessionID]?.abort
+
+        const sdkQuery = await createClaudeSdkQuery({
+          prompt,
+          sessionID,
+          messageID: assistantMessage.id,
+          model: model.api.id,
+          systemPrompt,
           cwd: Instance.directory,
-          root: Instance.worktree,
-        },
-        cost: 0,
-        tokens: {
-          input: 0,
-          output: 0,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-        modelID: model.id,
-        providerID: model.providerID,
-        time: {
-          created: Date.now(),
-        },
-        sessionID,
-      })) as MessageV2.Assistant
-      using _ = defer(() => InstructionPrompt.clear(assistantMessage.id))
+          abortController: controller,
+          maxTurns: isLastStep ? 1 : undefined,
+          ruleset: Permission.merge(agent.permission, session.permission ?? []),
+          effort: lastUser.variant as "low" | "medium" | "high" | "max" | undefined,
+        })
+
+        const result = await processClaudeSdkStream(sdkQuery, {
+          assistantMessage,
+          sessionID,
+          abort,
+        })
+
+        if (result.outcome === "error") break
+        continue
+      }
+
+      // ── AI SDK path (all non-anthropic providers) ──────────────────
+      const processor = SessionProcessor.create({
+        assistantMessage: (await Session.updateMessage({
+          id: MessageID.ascending(),
+          parentID: lastUser.id,
+          role: "assistant",
+          mode: agent.name,
+          agent: agent.name,
+          variant: lastUser.variant,
+          path: {
+            cwd: Instance.directory,
+            root: Instance.worktree,
+          },
+          cost: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          modelID: model.id,
+          providerID: model.providerID,
+          time: {
+            created: Date.now(),
+          },
+          sessionID,
+        })) as MessageV2.Assistant,
+        sessionID: sessionID,
+        model,
+        abort,
+      })
+      using _proc = defer(() => InstructionPrompt.clear(processor.message.id))
+
+      const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+      const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
+
+      const tools = await resolveTools({
+        agent,
+        session,
+        model,
+        tools: lastUser.tools,
+        processor,
+        bypassAgentCheck,
+        messages: msgs,
+      })
+
+      if (lastUser.format?.type === "json_schema") {
+        tools["StructuredOutput"] = createStructuredOutputTool({
+          schema: lastUser.format.schema,
+          onSuccess(output) {
+            structuredOutput = output
+          },
+        })
+      }
 
       if (step === 1) {
         SessionSummary.summarize({
@@ -625,80 +761,90 @@ export namespace SessionPrompt {
         })
       }
 
-      // Extract user prompt from message parts, including any images/media
-      const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
-      const texts = lastUserMsg?.parts
-        .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
-        .map((p) => p.text) ?? []
-      const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
-      const media = lastUserMsg?.parts
-        .filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime))
-        ?? []
-      // When media is attached, build a MessageParam with content blocks so
-      // the Claude SDK receives images alongside text. Otherwise pass a plain string.
-      const prompt: string | import("@anthropic-ai/sdk/resources").MessageParam =
-        media.length === 0
-          ? texts.join("\n")
-          : {
-              role: "user" as const,
-              content: [
-                ...media.map((p) => {
-                  const data = p.url.slice(p.url.indexOf(",") + 1)
-                  if (p.mime === "application/pdf")
-                    return {
-                      type: "document" as const,
-                      source: { type: "base64" as const, media_type: "application/pdf" as const, data },
-                    }
-                  return {
-                    type: "image" as const,
-                    source: {
-                      type: "base64" as const,
-                      media_type: p.mime as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
-                      data,
-                    },
-                  }
-                }),
-                ...texts.map((t) => ({ type: "text" as const, text: t })),
-              ],
-            }
+      if (step > 1 && lastFinished) {
+        for (const msg of msgs) {
+          if (msg.info.role !== "user" || msg.info.id <= lastFinished.id) continue
+          for (const part of msg.parts) {
+            if (part.type !== "text" || part.ignored || part.synthetic) continue
+            if (!part.text.trim()) continue
+            part.text = [
+              "<system-reminder>",
+              "The user sent the following message:",
+              part.text,
+              "",
+              "Please address this message and continue with your tasks.",
+              "</system-reminder>",
+            ].join("\n")
+          }
+        }
+      }
 
-      // Build system prompt
-      // Always include the provider prompt (e.g. anthropic.txt) as the base identity,
-      // then append the agent-specific prompt if set
+      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+
       const skills = await SystemPrompt.skills(agent)
-      const systemParts = [
-        ...SystemPrompt.provider(model),
-        ...(agent.prompt ? [agent.prompt] : []),
+      const system = [
         ...(await SystemPrompt.environment(model)),
         ...(skills ? [skills] : []),
         ...(await InstructionPrompt.system()),
       ]
-      const systemPrompt = systemParts.join("\n\n")
+      const format = lastUser.format ?? { type: "text" }
+      if (format.type === "json_schema") {
+        system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+      }
 
-      // Get AbortController from session state
-      const controller = state()[sessionID]?.abort
-
-      // Call Claude Agent SDK
-      const sdkQuery = await createClaudeSdkQuery({
-        prompt,
-        sessionID,
-        messageID: assistantMessage.id,
-        model: model.id,
-        systemPrompt,
-        cwd: Instance.directory,
-        abortController: controller,
-        maxTurns: isLastStep ? 1 : undefined,
-        ruleset: Permission.merge(agent.permission, session.permission ?? []),
-        effort: lastUser.variant as "low" | "medium" | "high" | "max" | undefined,
-      })
-
-      const result = await processClaudeSdkStream(sdkQuery, {
-        assistantMessage,
-        sessionID,
+      const result = await processor.process({
+        user: lastUser,
+        agent,
+        permission: session.permission,
         abort,
+        sessionID,
+        system,
+        messages: [
+          ...MessageV2.toModelMessages(msgs, model),
+          ...(isLastStep
+            ? [
+                {
+                  role: "assistant" as const,
+                  content: MAX_STEPS,
+                },
+              ]
+            : []),
+        ],
+        tools,
+        model,
+        toolChoice: format.type === "json_schema" ? "required" : undefined,
       })
 
-      if (result.outcome === "error") break
+      if (structuredOutput !== undefined) {
+        processor.message.structured = structuredOutput
+        processor.message.finish = processor.message.finish ?? "stop"
+        await Session.updateMessage(processor.message)
+        break
+      }
+
+      const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)
+
+      if (modelFinished && !processor.message.error) {
+        if (format.type === "json_schema") {
+          processor.message.error = new MessageV2.StructuredOutputError({
+            message: "Model did not produce structured output",
+            retries: 0,
+          }).toObject()
+          await Session.updateMessage(processor.message)
+          break
+        }
+      }
+
+      if (result === "stop") break
+      if (result === "compact") {
+        await SessionCompaction.create({
+          sessionID,
+          agent: lastUser.agent,
+          model: lastUser.model,
+          auto: true,
+          overflow: !processor.message.finish,
+        })
+      }
       continue
     }
     SessionCompaction.prune({ sessionID })
