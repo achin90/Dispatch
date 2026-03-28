@@ -1181,15 +1181,18 @@ export namespace Provider {
 
   // Claude Agent SDK model metadata — maps SDK model aliases to concrete info.
   // This is the source of truth for models, replacing models.dev for the Claude SDK path.
-  const SDK_MODELS: Record<string, {
-    resolves: string
-    name: string
-    context: number
-    output: number
-    description: string
-    reasoning: boolean
-  }> = {
-    "default": {
+  const SDK_MODELS: Record<
+    string,
+    {
+      resolves: string
+      name: string
+      context: number
+      output: number
+      description: string
+      reasoning: boolean
+    }
+  > = {
+    default: {
       resolves: "claude-opus-4-6[1m]",
       name: "Opus 4.6 (1M context)",
       context: 1_000_000,
@@ -1197,7 +1200,7 @@ export namespace Provider {
       description: "Most capable for complex work",
       reasoning: true,
     },
-    "sonnet": {
+    sonnet: {
       resolves: "claude-sonnet-4-6",
       name: "Sonnet 4.6",
       context: 200_000,
@@ -1213,7 +1216,7 @@ export namespace Provider {
       description: "Extra usage · $3/$15 per Mtok",
       reasoning: true,
     },
-    "haiku": {
+    haiku: {
       resolves: "claude-haiku-4-5-20251001",
       name: "Haiku 4.5",
       context: 200_000,
@@ -1223,7 +1226,7 @@ export namespace Provider {
     },
   }
 
-  function buildSdkModel(alias: string, info: typeof SDK_MODELS[string], displayName: string): Model {
+  function buildSdkModel(alias: string, info: (typeof SDK_MODELS)[string], displayName: string): Model {
     return {
       id: ModelID.make(alias),
       providerID: ProviderID.make("anthropic"),
@@ -1261,28 +1264,44 @@ export namespace Provider {
     }
   }
 
-  export async function list() {
-    // Build provider from Claude Agent SDK supported models
-    const anthropicID = ProviderID.make("anthropic")
+  /**
+   * Returns the static Anthropic SDK models provider. Synchronous — never
+   * waits on models.dev or any network call.
+   */
+  function sdkProvider(): Info {
     const models: Record<string, Model> = {}
-
-    // Build models from the static SDK model list
     for (const [alias, info] of Object.entries(SDK_MODELS)) {
       const m = buildSdkModel(alias, info, info.name)
       m.variants = mapValues(ProviderTransform.variants(m), (v) => v)
       models[alias] = m
     }
-
-    const provider: Info = {
-      id: anthropicID,
+    return {
+      id: ProviderID.make("anthropic"),
       name: "Anthropic",
       source: "env",
       env: ["ANTHROPIC_API_KEY"],
       options: {},
       models,
     }
+  }
 
-    return { [anthropicID]: provider } as Record<ProviderID, Info>
+  export async function list() {
+    const providers = await state().then((s) => s.providers)
+
+    // Ensure the "anthropic" provider always has SDK_MODELS merged in.
+    // The Claude Agent SDK uses these aliases (default, sonnet, etc.) and they
+    // must be present regardless of whether models.dev returned them.
+    const id = ProviderID.make("anthropic")
+    const sdk = sdkProvider()
+    if (!providers[id]) {
+      providers[id] = sdk
+      return providers
+    }
+    for (const [alias, model] of Object.entries(sdk.models)) {
+      if (!providers[id].models[alias])
+        providers[id].models[alias] = model
+    }
+    return providers
   }
 
   async function getSDK(model: Model) {
@@ -1423,29 +1442,27 @@ export namespace Provider {
   }
 
   export async function getModel(providerID: ProviderID, modelID: ModelID) {
-    // Check SDK models first (from list()), then fall back to state()
-    const sdkProviders = await list()
-    const sdkProvider = sdkProviders[providerID]
-    if (sdkProvider) {
-      const sdkModel = sdkProvider.models[modelID]
-      if (sdkModel) return sdkModel
+    // Fast path: check SDK models synchronously so anthropic lookups never
+    // block on models.dev / state() initialisation.
+    const sdk = sdkProvider()
+    if (providerID === sdk.id) {
+      const hit = sdk.models[modelID]
+      if (hit) return hit
     }
 
-    const s = await state()
-    const provider = s.providers[providerID]
+    const providers = await list()
+    const provider = providers[providerID]
     if (!provider) {
-      const availableProviders = Object.keys(s.providers)
-      const matches = fuzzysort.go(providerID, availableProviders, { limit: 3, threshold: -10000 })
-      const suggestions = matches.map((m) => m.target)
-      throw new ModelNotFoundError({ providerID, modelID, suggestions })
+      const available = Object.keys(providers)
+      const matches = fuzzysort.go(providerID, available, { limit: 3, threshold: -10000 })
+      throw new ModelNotFoundError({ providerID, modelID, suggestions: matches.map((m) => m.target) })
     }
 
     const info = provider.models[modelID]
     if (!info) {
-      const availableModels = Object.keys(provider.models)
-      const matches = fuzzysort.go(modelID, availableModels, { limit: 3, threshold: -10000 })
-      const suggestions = matches.map((m) => m.target)
-      throw new ModelNotFoundError({ providerID, modelID, suggestions })
+      const available = Object.keys(provider.models)
+      const matches = fuzzysort.go(modelID, available, { limit: 3, threshold: -10000 })
+      throw new ModelNotFoundError({ providerID, modelID, suggestions: matches.map((m) => m.target) })
     }
     return info
   }
