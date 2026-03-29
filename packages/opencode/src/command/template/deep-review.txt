@@ -1,0 +1,105 @@
+# Code Review Instructions
+
+## Step 1: Gather context
+
+Launch a haiku agent to return a list of file paths (not their contents) for all relevant CLAUDE.md files including:
+
+- The root CLAUDE.md file, if it exists
+- Any CLAUDE.md files in directories containing files modified by the diff
+
+Determine the diff of uncommitted changes. Use these as separate commands (do not combine with `$()` substitution):
+
+1. `git diff --stat` — get the diff stat for unstaged changes.
+2. `git diff --cached --stat` — get the diff stat for staged changes.
+3. `git ls-files --others --exclude-standard` — list untracked files.
+
+If this branch has an associated PR, read the title and description using `gh pr view` (but not the changes). This will be helpful context.
+
+## Step 2: Summarize changes
+
+In parallel with step 1, launch a sonnet agent to view the changes and return a summary. The agent should run these as separate commands (not combined with `$()` substitution):
+
+1. `git diff` — unstaged changes.
+2. `git diff --cached` — staged changes.
+3. `git ls-files --others --exclude-standard` — list untracked files. Then read each untracked file to see its contents.
+
+Review the combination of all outputs: staged changes, unstaged changes, and new untracked files. These are the working changes that have not yet been committed.
+
+## Step 3: Review with parallel agents
+
+Launch 4 agents in parallel to independently review the changes. Each agent should return the list of issues, where each issue includes a description and the reason it was flagged (e.g. "CLAUDE.md adherence", "bug"). The agents should use the same sequence of separate git commands from Step 2 to get the diff (do not combine with `$()` substitution).
+
+**Agents 1 + 2: CLAUDE.md or AGENTS.md compliance sonnet agents**
+Audit changes for CLAUDE.md or AGENTS.md compliance in parallel. Note: When evaluating CLAUDE.md or AGENTS.md compliance for a file, you should only consider CLAUDE.md or AGENTS.md files that share a file path with the file or parents.
+
+**Agent 3: Opus bug agent**
+Scan for obvious bugs. Focus only on the diff itself without reading extra context. Flag only significant bugs; ignore nitpicks and likely false positives. Do not flag issues that you cannot validate without looking at context outside of the git diff.
+
+**Agent 4: Opus bug agent**
+Look for problems that exist in the introduced code. This could be security issues, incorrect logic, etc. Only look for issues that fall within the changed code.
+
+In addition to the above, each subagent should be told the PR title and description (if available). This will help provide context regarding the author's intent.
+
+## Step 4: Signal filtering
+
+**CRITICAL: We only want HIGH SIGNAL issues.** This means:
+
+We want:
+- Objective bugs that will cause incorrect behavior at runtime
+- Clear, unambiguous CLAUDE.md violations where you can quote the exact rule being broken
+
+We do NOT want:
+- Subjective concerns or "suggestions"
+- Style preferences not explicitly required by CLAUDE.md
+- Potential issues that "might" be problems
+- Anything requiring interpretation or judgment calls
+
+If you are not certain an issue is real, do not flag it. False positives erode trust and waste reviewer time.
+
+Use this list when evaluating issues (these are false positives, do NOT flag):
+- Pre-existing issues
+- Something that appears to be a bug but is actually correct
+- Pedantic nitpicks that a senior engineer would not flag
+- Issues that a linter will catch (do not run the linter to verify)
+- General code quality concerns (e.g., lack of test coverage, general security issues) unless explicitly required in CLAUDE.md or AGENTS.md
+- Issues mentioned in CLAUDE.md or AGENTS.md but explicitly silenced in the code (e.g., via a lint ignore comment)
+
+## Step 5: Validate issues
+
+For each issue found in Step 3, launch parallel subagents to validate the issue. These subagents should get the PR title and description (if available) along with a description of the issue. The agent's job is to review the issue to validate that the stated issue is truly an issue with high confidence. For example, if an issue such as "variable is not defined" was flagged, the subagent's job would be to validate that is actually true in the code. Another example would be CLAUDE.md issues. The agent should validate that the CLAUDE.md rule that was violated is scoped for this file and is actually violated. Use Opus subagents for bugs and logic issues, and sonnet agents for CLAUDE.md violations.
+
+## Step 6: Filter and report
+
+Filter out any issues that were not validated in Step 5. This gives us our list of high signal issues.
+
+If the branch has an associated PR, post inline comments for each issue using `gh`:
+
+1. `git rev-parse HEAD` — get the current commit hash.
+2. `gh pr comment <PR_NUMBER> --body "<comment>"` — for general comments.
+3. For file-specific comments: `gh api repos/{owner}/{repo}/pulls/{pr_number}/comments -f body="<comment>" -f path="<file>" -f line=<line> -f commit_id="<hash_from_step_1>"`
+
+Do not use `$()` command substitution in these commands — run them as separate steps and pass results manually.
+
+**IMPORTANT: Only post ONE comment per unique issue.**
+
+Write out a summary list of issues found, along with the location of each. For example:
+
+### **#1 Empty input causes crash**
+If the input field is empty when page loads, the app will crash.
+
+File: src/ui/Input.tsx
+
+### **#2 Dead code**
+The getUserData function is now unused. It should be deleted.
+
+File: src/core/UserData.ts
+
+## Notes
+
+- All subagents should be explicitly instructed not to post comments themselves. Only you, the main agent, should post comments.
+- Do not use the AskUserQuestion tool. Your goal should be to complete the entire review without user intervention.
+- You must cite and link each issue in inline comments (e.g., if referring to a CLAUDE.md or AGENTS.md rule, include a link to it).
+
+## Fallback: if you don't have access to subagents
+
+If you don't have subagents, perform all the steps above yourself sequentially instead of launching agents. Do each review axis (CLAUDE.md compliance, bug scan, introduced problems) yourself, and validate each issue yourself.

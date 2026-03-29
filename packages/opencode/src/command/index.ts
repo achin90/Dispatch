@@ -11,6 +11,7 @@ import { Log } from "../util/log"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 import PROMPT_MERGE from "./template/merge.txt"
+import PROMPT_DEEP_REVIEW from "./template/deep-review.txt"
 
 export namespace Command {
   const log = Log.create({ service: "command" })
@@ -64,6 +65,7 @@ export namespace Command {
   export const Default = {
     INIT: "init",
     REVIEW: "review",
+    DEEP_REVIEW: "deepReview",
     MERGE: "merge",
   } as const
 
@@ -92,12 +94,21 @@ export namespace Command {
         }
         commands[Default.REVIEW] = {
           name: Default.REVIEW,
-          description: "multi-agent code review for bugs and CLAUDE.md/AGENTS.md compliance",
+          description: "review code changes and provide actionable feedback",
           source: "command",
           get template() {
             return PROMPT_REVIEW.replace("${path}", ctx.worktree)
           },
           hints: hints(PROMPT_REVIEW),
+        }
+        commands[Default.DEEP_REVIEW] = {
+          name: Default.DEEP_REVIEW,
+          description: "multi-agent code review for bugs and CLAUDE.md/AGENTS.md compliance",
+          source: "command",
+          get template() {
+            return PROMPT_DEEP_REVIEW.replace("${path}", ctx.worktree)
+          },
+          hints: hints(PROMPT_DEEP_REVIEW),
         }
         commands[Default.MERGE] = {
           name: Default.MERGE,
