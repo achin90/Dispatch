@@ -169,18 +169,20 @@ export namespace SessionPrompt {
     await Session.touch(input.sessionID)
 
     // this is backwards compatibility for allowing `tools` to be specified when
-    // prompting
-    const permissions: Permission.Ruleset = []
+    // prompting — merge with existing session permissions instead of replacing
+    // so inherited rules (e.g. caller agent's yolo "*: allow") are preserved.
+    const extra: Permission.Ruleset = []
     for (const [tool, enabled] of Object.entries(input.tools ?? {})) {
-      permissions.push({
+      extra.push({
         permission: tool,
         action: enabled ? "allow" : "deny",
         pattern: "*",
       })
     }
-    if (permissions.length > 0) {
-      session.permission = permissions
-      await Session.setPermission({ sessionID: session.id, permission: permissions })
+    if (extra.length > 0) {
+      const merged = Permission.merge(session.permission ?? [], extra)
+      session.permission = merged
+      await Session.setPermission({ sessionID: session.id, permission: merged })
     }
 
     if (input.noReply === true) {
@@ -629,13 +631,13 @@ export namespace SessionPrompt {
 
         // Extract user prompt from message parts, including any images/media
         const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
-        const texts = lastUserMsg?.parts
-          .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
-          .map((p) => p.text) ?? []
+        const texts =
+          lastUserMsg?.parts
+            .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
+            .map((p) => p.text) ?? []
         const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
-        const media = lastUserMsg?.parts
-          .filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime))
-          ?? []
+        const media =
+          lastUserMsg?.parts.filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime)) ?? []
         // When media is attached, build a MessageParam with content blocks so
         // the Claude SDK receives images alongside text. Otherwise pass a plain string.
         const prompt: string | import("@anthropic-ai/sdk/resources").MessageParam =
@@ -879,6 +881,8 @@ export namespace SessionPrompt {
     using _ = log.time("resolveTools")
     const tools: Record<string, AITool> = {}
 
+    const ruleset = Permission.merge(input.agent.permission, input.session.permission ?? [])
+
     const context = (args: any, options: ToolCallOptions): Tool.Context => ({
       sessionID: input.session.id,
       abort: options.abortSignal!,
@@ -909,7 +913,7 @@ export namespace SessionPrompt {
           ...req,
           sessionID: input.session.id,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-          ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
+          ruleset,
         })
       },
     })
