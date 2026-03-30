@@ -83,7 +83,7 @@ export function derivePermissionName(toolName: string): string {
     case "Read":
       return "read"
     case "Write":
-      return "write"
+      return "edit"
     case "Edit":
       return "edit"
     case "Bash":
