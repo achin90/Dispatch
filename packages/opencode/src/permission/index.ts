@@ -141,7 +141,6 @@ export namespace Permission {
   }
 
   export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
-    log.info("evaluate", { permission, pattern, ruleset: rulesets.flat() })
     return evalRule(permission, pattern, ...rulesets)
   }
 

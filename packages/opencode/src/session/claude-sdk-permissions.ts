@@ -113,12 +113,11 @@ export function derivePermissionName(toolName: string): string {
 // needs intact @@ hunk markers and ---/+++ headers to render correctly —
 // stripping them breaks the renderer and produces a blank diff view.
 export function trimDiff(diff: string): string {
-  const hasContent = diff.split("\n").some(
-    (line) =>
-      (line.startsWith("+") || line.startsWith("-")) &&
-      !line.startsWith("---") &&
-      !line.startsWith("+++"),
-  )
+  const hasContent = diff
+    .split("\n")
+    .some(
+      (line) => (line.startsWith("+") || line.startsWith("-")) && !line.startsWith("---") && !line.startsWith("+++"),
+    )
   return hasContent ? diff : ""
 }
 
@@ -226,93 +225,96 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
   // this bind, Permission.ask() and Bus.publish() would operate on a
   // different Instance state than what Permission.reply() sees from the
   // HTTP route handler.
-  return Instance.bind(async (
-    toolName: string,
-    input: Record<string, unknown>,
-    callOptions: Parameters<CanUseTool>[2],
-  ): Promise<PermissionResult> => {
-    const { signal } = callOptions
-    const patterns = extractPatterns(toolName, input)
-    const permission = derivePermissionName(toolName)
-    const requestID = PermissionID.ascending()
+  return Instance.bind(
+    async (
+      toolName: string,
+      input: Record<string, unknown>,
+      callOptions: Parameters<CanUseTool>[2],
+    ): Promise<PermissionResult> => {
+      const { signal } = callOptions
+      const patterns = extractPatterns(toolName, input)
+      const permission = derivePermissionName(toolName)
+      const requestID = PermissionID.ascending()
 
-    // If the signal is already aborted, deny immediately
-    if (signal.aborted) {
-      return { behavior: "deny", message: "Request aborted" }
-    }
+      // If the signal is already aborted, deny immediately
+      if (signal.aborted) {
+        return { behavior: "deny", message: "Request aborted" }
+      }
 
-    // Generate diff metadata for edit/write tools
-    const diffInfo = await generateEditDiff(toolName, input)
-    const metadata: Record<string, unknown> = { toolName, title: callOptions.title }
-    if (diffInfo) {
-      metadata.filepath = diffInfo.filepath
-      metadata.diff = diffInfo.diff
-    }
-    // Store tool input in metadata so the TUI permission prompt can display
-    // details (e.g., bash command) even when the tool part isn't synced
-    // (which happens for subagent tools in child sessions).
-    metadata.input = input
-
-    const toolMessageID = options.messageID
-
-    try {
-      // Use Permission.ask() which registers in the pending map,
-      // publishes the Bus event for the TUI, and waits for the user's reply.
-      // This ensures Permission.reply() (called by the server route when the
-      // TUI responds) can find the request and resolve it.
-      await Promise.race([
-        Permission.ask({
-          id: requestID,
-          sessionID: options.sessionID,
-          permission,
-          patterns,
-          metadata,
-          always: patterns,
-          ruleset: options.ruleset ?? [],
-          tool: {
-            messageID: toolMessageID,
-            callID: callOptions.toolUseID,
-          },
-        }),
-        new Promise<never>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
-        }),
-      ])
-      // Store diff metadata so the TUI can display it.
-      // The tool part may not exist yet (race between stream processing and
-      // canUseTool callback), so we both try to update the part directly AND
-      // stash in the pending map for finalizeRunningTools to pick up.
+      // Generate diff metadata for edit/write tools
+      const diffInfo = await generateEditDiff(toolName, input)
+      const metadata: Record<string, unknown> = { toolName, title: callOptions.title }
       if (diffInfo) {
-        const meta = { diff: diffInfo.diff, filepath: diffInfo.filepath }
-        pending.set(callOptions.toolUseID, meta)
-        await updateToolMetadata(toolMessageID, callOptions.toolUseID, meta)
+        metadata.filepath = diffInfo.filepath
+        metadata.diff = diffInfo.diff
       }
-      return { behavior: "allow", updatedInput: input }
-    } catch (error) {
-      // If the error is NOT from the Permission system (i.e. it came from the
-      // abort signal winning Promise.race), the Effect fiber backing
-      // Deferred.await is still alive and the globalPending entry was never
-      // cleaned up.  Reject it so Effect.ensuring fires and deletes the entry.
-      const fromPermission =
-        error instanceof Permission.RejectedError ||
-        error instanceof Permission.CorrectedError ||
-        error instanceof Permission.DeniedError
-      if (!fromPermission) {
-        Permission.reply({ requestID, reply: "reject" }).catch(() => {})
+      // Store tool input in metadata so the TUI permission prompt can display
+      // details (e.g., bash command) even when the tool part isn't synced
+      // (which happens for subagent tools in child sessions).
+      metadata.input = input
+
+      const toolMessageID = options.messageID
+
+      try {
+        // Use Permission.ask() which registers in the pending map,
+        // publishes the Bus event for the TUI, and waits for the user's reply.
+        // This ensures Permission.reply() (called by the server route when the
+        // TUI responds) can find the request and resolve it.
+        await Promise.race([
+          Permission.ask({
+            id: requestID,
+            sessionID: options.sessionID,
+            permission,
+            patterns,
+            metadata,
+            always: patterns,
+            ruleset: options.ruleset ?? [],
+            tool: {
+              messageID: toolMessageID,
+              callID: callOptions.toolUseID,
+            },
+          }),
+          new Promise<never>((_, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
+          }),
+        ])
+        // Store diff metadata so the TUI can display it.
+        // The tool part may not exist yet (race between stream processing and
+        // canUseTool callback), so we both try to update the part directly AND
+        // stash in the pending map for finalizeRunningTools to pick up.
+        if (diffInfo) {
+          const meta = { diff: diffInfo.diff, filepath: diffInfo.filepath }
+          pending.set(callOptions.toolUseID, meta)
+          await updateToolMetadata(toolMessageID, callOptions.toolUseID, meta)
+        }
+        return { behavior: "allow", updatedInput: input }
+      } catch (error) {
+        // If the error is NOT from the Permission system (i.e. it came from the
+        // abort signal winning Promise.race), the Effect fiber backing
+        // Deferred.await is still alive and the globalPending entry was never
+        // cleaned up.  Reject it so Effect.ensuring fires and deletes the entry.
+        const fromPermission =
+          error instanceof Permission.RejectedError ||
+          error instanceof Permission.CorrectedError ||
+          error instanceof Permission.DeniedError
+        if (!fromPermission) {
+          Permission.reply({ requestID, reply: "reject" }).catch(() => {})
+        }
+
+        const msg =
+          error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
+            ? "User rejected permission"
+            : error instanceof Permission.DeniedError
+              ? "Permission denied by ruleset: specified a rule"
+              : error instanceof Error
+                ? error.message
+                : "Permission denied"
+
+        // Update the tool part to error state so the TUI shows strikethrough
+        await markToolDenied(toolMessageID, callOptions.toolUseID, msg)
+
+        return { behavior: "deny", message: msg }
       }
-
-      const msg = error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
-        ? "User rejected permission"
-        : error instanceof Permission.DeniedError
-          ? "Permission denied by ruleset: specified a rule"
-          : error instanceof Error
-            ? error.message
-            : "Permission denied"
-
-      // Update the tool part to error state so the TUI shows strikethrough
-      await markToolDenied(toolMessageID, callOptions.toolUseID, msg)
-
-      return { behavior: "deny", message: msg }
-    }
-  })
+    },
+  )
 }
