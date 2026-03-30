@@ -64,10 +64,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const stream = messageSequence(
           systemMessage({ session_id: "s1" }),
@@ -110,10 +110,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -165,10 +165,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -205,7 +205,7 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await Session.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => part)
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => part) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -235,7 +235,7 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await Session.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => part)
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => part) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -262,10 +262,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const controller = new AbortController()
 
@@ -308,10 +308,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -352,7 +352,7 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await Session.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => part)
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => part) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -386,10 +386,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -421,10 +421,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -459,10 +459,10 @@ describe("claude-sdk session loop", () => {
         await Session.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation(async (part: any) => {
+        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
-        })
+        }) as any)
 
         const stream = messageSequence(
           systemMessage(),

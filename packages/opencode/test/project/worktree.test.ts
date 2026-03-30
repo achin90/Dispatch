@@ -25,11 +25,12 @@ async function waitReady() {
       reject(new Error("timed out waiting for worktree.ready"))
     }, 10_000)
 
-    function on(evt: { directory?: string; payload: { type: string; properties: { name: string; branch: string } } }) {
+    function on(evt: { directory?: string; payload: Record<string, unknown> }) {
       if (evt.payload.type !== Worktree.Event.Ready.type) return
       clearTimeout(timer)
       GlobalBus.off("event", on)
-      resolve(evt.payload.properties)
+      const props = evt.payload.properties as { name: string; branch: string }
+      resolve(props)
     }
 
     GlobalBus.on("event", on)

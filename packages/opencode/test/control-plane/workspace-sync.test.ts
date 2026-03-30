@@ -79,7 +79,7 @@ describe("control-plane/workspace.startSyncing", () => {
     )
 
     const done = new Promise<void>((resolve) => {
-      const listener = (event: { directory?: string; payload: { type: string } }) => {
+      const listener = (event: { directory?: string; payload: Record<string, unknown> }) => {
         if (event.directory !== id1) return
         if (event.payload.type !== "remote.ready") return
         GlobalBus.off("event", listener)

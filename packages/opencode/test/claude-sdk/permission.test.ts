@@ -287,7 +287,7 @@ describe("claude-sdk permissions", () => {
       // Bridge is created in the agent's directory (like createClaudeSdkQuery does)
       const bridge = await Instance.provide({
         directory: agentDir.path,
-        fn: () => createCanUseToolBridge({ sessionID: sid }),
+        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
       // Bus.subscribe must run inside an Instance context (Bus state is per-directory).
@@ -331,7 +331,7 @@ describe("claude-sdk permissions", () => {
 
       const bridge = await Instance.provide({
         directory: agentDir.path,
-        fn: () => createCanUseToolBridge({ sessionID: sid }),
+        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
       const unsubscribe = await Instance.provide({
@@ -367,7 +367,7 @@ describe("claude-sdk permissions", () => {
 
       const bridge = await Instance.provide({
         directory: agentDir.path,
-        fn: () => createCanUseToolBridge({ sessionID: sid }),
+        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
       const unsubscribe = await Instance.provide({
