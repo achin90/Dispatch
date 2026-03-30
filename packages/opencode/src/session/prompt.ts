@@ -39,7 +39,7 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
-import { createClaudeSdkQuery } from "./claude-sdk-query"
+import { createClaudeSdkQuery, resolveMcpServers } from "./claude-sdk-query"
 import { processClaudeSdkStream } from "./claude-sdk-processor"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
@@ -299,6 +299,7 @@ export namespace SessionPrompt {
 
     let step = 0
     const session = await Session.get(sessionID)
+    const mcp = await resolveMcpServers()
     while (true) {
       await SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
@@ -689,6 +690,7 @@ export namespace SessionPrompt {
           maxTurns: isLastStep ? 1 : undefined,
           ruleset: Permission.merge(agent.permission, session.permission ?? []),
           effort: lastUser.variant as "low" | "medium" | "high" | "max" | undefined,
+          mcpServers: mcp,
         })
 
         const result = await processClaudeSdkStream(sdkQuery, {
