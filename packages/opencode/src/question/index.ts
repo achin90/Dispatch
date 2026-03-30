@@ -87,6 +87,12 @@ export namespace Question {
     deferred: Deferred.Deferred<Answer[], RejectedError>
   }
 
+  // Global index so reply/reject work across directories.
+  // ask() runs in the agent's worktree directory, but
+  // reply()/reject() arrive from the TUI's launch directory.
+  // InstanceState is keyed by directory so the lookup would miss.
+  const index = new Map<QuestionID, PendingEntry>()
+
   interface State {
     pending: Map<QuestionID, PendingEntry>
   }
@@ -117,7 +123,7 @@ export namespace Question {
 
           yield* Effect.addFinalizer(() =>
             Effect.gen(function* () {
-              for (const item of state.pending.values()) {
+              for (const [, item] of state.pending.entries()) {
                 yield* Deferred.fail(item.deferred, new RejectedError())
               }
               state.pending.clear()
@@ -145,24 +151,25 @@ export namespace Question {
           tool: input.tool,
         }
         pending.set(id, { info, deferred })
+        index.set(id, { info, deferred })
         Bus.publish(Event.Asked, info)
 
         return yield* Effect.ensuring(
           Deferred.await(deferred),
           Effect.sync(() => {
             pending.delete(id)
+            index.delete(id)
           }),
         )
       })
 
       const reply = Effect.fn("Question.reply")(function* (input: { requestID: QuestionID; answers: Answer[] }) {
-        const pending = (yield* InstanceState.get(state)).pending
-        const existing = pending.get(input.requestID)
+        const existing = index.get(input.requestID)
         if (!existing) {
           log.warn("reply for unknown request", { requestID: input.requestID })
           return
         }
-        pending.delete(input.requestID)
+        index.delete(input.requestID)
         log.info("replied", { requestID: input.requestID, answers: input.answers })
         Bus.publish(Event.Replied, {
           sessionID: existing.info.sessionID,
@@ -173,13 +180,12 @@ export namespace Question {
       })
 
       const reject = Effect.fn("Question.reject")(function* (requestID: QuestionID) {
-        const pending = (yield* InstanceState.get(state)).pending
-        const existing = pending.get(requestID)
+        const existing = index.get(requestID)
         if (!existing) {
           log.warn("reject for unknown request", { requestID })
           return
         }
-        pending.delete(requestID)
+        index.delete(requestID)
         log.info("rejected", { requestID })
         Bus.publish(Event.Rejected, {
           sessionID: existing.info.sessionID,
@@ -189,8 +195,7 @@ export namespace Question {
       })
 
       const list = Effect.fn("Question.list")(function* () {
-        const pending = (yield* InstanceState.get(state)).pending
-        return Array.from(pending.values(), (x) => x.info)
+        return Array.from(index.values(), (x) => x.info)
       })
 
       return Service.of({ ask, reply, reject, list })

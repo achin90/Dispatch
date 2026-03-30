@@ -12,6 +12,7 @@ import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sd
 import { createTwoFilesPatch } from "diff"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
+import { Question } from "@/question"
 import { Filesystem } from "@/util/filesystem"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session/index"
@@ -155,6 +156,62 @@ async function generateEditDiff(
 }
 
 // ---------------------------------------------------------------------------
+// AskUserQuestion bridge — routes SDK question tool through the TUI
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts the SDK's AskUserQuestionInput into opencode Question.Info[],
+ * calls Question.ask() to show the TUI prompt, waits for answers, then
+ * returns them in the format the SDK expects ({ [questionText]: answerStr }).
+ */
+async function question(
+  input: Record<string, unknown>,
+  opts: CanUseToolBridgeOptions,
+  signal: AbortSignal,
+): Promise<PermissionResult> {
+  const raw = Array.isArray(input.questions) ? input.questions : []
+
+  const questions: Question.Info[] = raw.map((q: Record<string, unknown>) => ({
+    question: typeof q.question === "string" ? q.question : "",
+    header: typeof q.header === "string" ? q.header : "",
+    options: Array.isArray(q.options)
+      ? q.options.map((o: Record<string, unknown>) => ({
+          label: typeof o.label === "string" ? o.label : "",
+          description: typeof o.description === "string" ? o.description : "",
+        }))
+      : [],
+    multiple: q.multiSelect === true,
+  }))
+
+  if (!questions.length) {
+    return { behavior: "deny", message: "No questions provided" }
+  }
+
+  const answers = await Promise.race([
+    Question.ask({
+      sessionID: opts.sessionID,
+      questions,
+    }),
+    new Promise<never>((_, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
+    }),
+  ]).catch(() => null)
+
+  if (!answers) {
+    return { behavior: "deny", message: "User dismissed the question" }
+  }
+
+  // The SDK expects answers as { [questionText]: answerString }.
+  // Multi-select answers are comma-separated.
+  const result = Object.fromEntries(questions.map((q, i) => [q.question, answers[i] ? answers[i].join(", ") : ""]))
+
+  return {
+    behavior: "allow",
+    updatedInput: { ...input, answers: result },
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Create canUseTool callback
 // ---------------------------------------------------------------------------
 
@@ -232,14 +289,24 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       callOptions: Parameters<CanUseTool>[2],
     ): Promise<PermissionResult> => {
       const { signal } = callOptions
-      const patterns = extractPatterns(toolName, input)
-      const permission = derivePermissionName(toolName)
-      const requestID = PermissionID.ascending()
 
       // If the signal is already aborted, deny immediately
       if (signal.aborted) {
         return { behavior: "deny", message: "Request aborted" }
       }
+
+      // ------------------------------------------------------------------
+      // AskUserQuestion: route through the Question system instead of
+      // the generic permission flow. The SDK expects answers to be
+      // returned via updatedInput.answers (keyed by question text).
+      // ------------------------------------------------------------------
+      if (toolName === "AskUserQuestion") {
+        return question(input, options, signal)
+      }
+
+      const patterns = extractPatterns(toolName, input)
+      const permission = derivePermissionName(toolName)
+      const requestID = PermissionID.ascending()
 
       // Generate diff metadata for edit/write tools
       const diffInfo = await generateEditDiff(toolName, input)
