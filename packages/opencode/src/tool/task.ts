@@ -65,6 +65,11 @@ export const TaskTool = Tool.define("task", async (ctx) => {
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
+      // Inherit the caller agent's permission so subtasks respect the
+      // parent's overrides (e.g. yolo agent's "*: allow").  Placed first
+      // so the explicit subtask deny rules below win via findLast.
+      const caller = await Agent.get(ctx.agent)
+
       const session = await iife(async () => {
         if (params.task_id) {
           const found = await Session.get(SessionID.make(params.task_id)).catch(() => {})
@@ -75,6 +80,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           parentID: ctx.sessionID,
           title: params.description + ` (@${agent.name} subagent)`,
           permission: [
+            ...(caller?.permission ?? []),
             {
               permission: "todowrite",
               pattern: "*",
