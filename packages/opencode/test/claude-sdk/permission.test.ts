@@ -86,8 +86,8 @@ describe("claude-sdk permissions", () => {
       expect(derivePermissionName("Read")).toBe("read")
     })
 
-    test("maps Write to write", () => {
-      expect(derivePermissionName("Write")).toBe("write")
+    test("maps Write to edit", () => {
+      expect(derivePermissionName("Write")).toBe("edit")
     })
 
     test("maps Edit to edit", () => {

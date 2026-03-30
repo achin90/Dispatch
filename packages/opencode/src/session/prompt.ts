@@ -452,7 +452,7 @@ export namespace SessionPrompt {
             await Permission.ask({
               ...req,
               sessionID: sessionID,
-              ruleset: Permission.merge(taskAgent.permission, session.permission ?? []),
+              ruleset: Permission.merge(taskAgent.permission, session.permission ?? [], agent.permission),
             })
           },
         }
