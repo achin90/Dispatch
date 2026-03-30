@@ -20,8 +20,8 @@ describe("project.initGit endpoint", () => {
   test("initializes git and reloads immediately", async () => {
     await using tmp = await tmpdir()
     const app = Server.Default()
-    const seen: { directory?: string; payload: { type: string } }[] = []
-    const fn = (evt: { directory?: string; payload: { type: string } }) => {
+    const seen: { directory?: string; payload: Record<string, unknown> }[] = []
+    const fn = (evt: { directory?: string; payload: Record<string, unknown> }) => {
       seen.push(evt)
     }
     const reload = Instance.reload
@@ -77,8 +77,8 @@ describe("project.initGit endpoint", () => {
   test("does not reload when the project is already git", async () => {
     await using tmp = await tmpdir({ git: true })
     const app = Server.Default()
-    const seen: { directory?: string; payload: { type: string } }[] = []
-    const fn = (evt: { directory?: string; payload: { type: string } }) => {
+    const seen: { directory?: string; payload: Record<string, unknown> }[] = []
+    const fn = (evt: { directory?: string; payload: Record<string, unknown> }) => {
       seen.push(evt)
     }
     const reload = Instance.reload

@@ -31,7 +31,7 @@ import { SessionStatus } from "./status"
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     // Check for HTTP status in common SDK error shapes
-    const status = (error as Record<string, unknown>).status ?? (error as Record<string, unknown>).statusCode
+    const status = (error as unknown as Record<string, unknown>).status ?? (error as unknown as Record<string, unknown>).statusCode
     if (status === 500 || String(status) === "500")
       return "Claude internal server error"
     if (typeof status === "number" && status >= 500)

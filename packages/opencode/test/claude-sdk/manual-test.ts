@@ -37,7 +37,9 @@ async function main() {
       messages.push(msg)
       switch (msg.type) {
         case "system":
-          console.log(`[system] init — model: ${msg.model}, tools: ${msg.tools.length}, apiKeySource: ${msg.apiKeySource}`)
+          if (msg.subtype === "init") {
+            console.log(`[system] init — model: ${msg.model}, tools: ${msg.tools.length}, apiKeySource: ${msg.apiKeySource}`)
+          }
           break
         case "assistant":
           const blocks = msg.message.content.map((b) => b.type).join(", ")
