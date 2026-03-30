@@ -69,7 +69,7 @@ export namespace Session {
       slug: row.slug,
       projectID: row.project_id,
       workspaceID: row.workspace_id ?? undefined,
-      // re-resolve for legacy rows stored before bun upgraded its path resolution
+      // re-resolve for legacy rows stored before bun 1.2.23 -> 1.3.11 changed path resolution
       directory: Filesystem.resolve(row.directory),
       parentID: row.parent_id ?? undefined,
       title: row.title,
