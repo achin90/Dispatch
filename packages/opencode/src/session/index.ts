@@ -15,6 +15,7 @@ import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ProjectTable } from "../project/project.sql"
 import { Storage } from "@/storage/storage"
 import { Log } from "../util/log"
+import { Filesystem } from "../util/filesystem"
 import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
@@ -68,7 +69,8 @@ export namespace Session {
       slug: row.slug,
       projectID: row.project_id,
       workspaceID: row.workspace_id ?? undefined,
-      directory: row.directory,
+      // re-resolve for legacy rows stored before bun upgraded its path resolution
+      directory: Filesystem.resolve(row.directory),
       parentID: row.parent_id ?? undefined,
       title: row.title,
       version: row.version,
