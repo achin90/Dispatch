@@ -47,6 +47,9 @@ import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { Log } from "@/util/log"
+
+const log = Log.create({ service: "tui-session" })
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import type { DialogContext } from "@tui/ui/dialog"
@@ -264,7 +267,15 @@ export function Session() {
   })
 
   useKeyboard((evt) => {
+    log.info("key", {
+      name: evt.name,
+      shift: evt.shift,
+      ctrl: evt.ctrl,
+      sessionID: route.sessionID,
+      parentID: session()?.parentID,
+    })
     if (keybind.match("dashboard", evt)) {
+      log.info("navigate to dashboard")
       if (prompt) {
         const info = prompt.current
         if (info.input || info.parts.length) drafts.set(route.sessionID, info)
@@ -275,6 +286,7 @@ export function Session() {
     }
     if (!session()?.parentID) return
     if (keybind.match("app_exit", evt)) {
+      log.info("exit from child session")
       exit()
     }
   })
@@ -1188,6 +1200,12 @@ export function Session() {
               <Prompt
                 visible={!session()?.parentID && permissions().length === 0 && questions().length === 0}
                 ref={(r) => {
+                  log.info("prompt ref mount", {
+                    parentID: session()?.parentID,
+                    permissions: permissions().length,
+                    questions: questions().length,
+                    visible: !session()?.parentID && permissions().length === 0 && questions().length === 0,
+                  })
                   prompt = r
                   promptRef.set(r)
                   // Apply initial prompt when prompt component mounts (e.g., from fork)

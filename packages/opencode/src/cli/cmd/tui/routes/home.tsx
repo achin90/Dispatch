@@ -78,7 +78,7 @@ function PermissionDetail(props: { request: PermissionRequest; selected: boolean
       <Switch>
         <Match when={props.request.permission === "bash"}>
           <text fg={theme.text} wrapMode="word" overflow="hidden">
-            {"$ " + (typeof input().command === "string" ? input().command : props.request.patterns[0] ?? "")}
+            {"$ " + (typeof input().command === "string" ? input().command : (props.request.patterns[0] ?? ""))}
           </text>
         </Match>
         <Match when={(props.request.permission === "edit" || props.request.permission === "write") && diff()}>
@@ -106,7 +106,8 @@ function PermissionDetail(props: { request: PermissionRequest; selected: boolean
         </Match>
         <Match when={props.request.permission === "edit" || props.request.permission === "write"}>
           <text fg={color()} overflow="hidden" wrapMode="none">
-            {(props.request.permission === "edit" ? "Edit " : "Write ") + (filepath() || (props.request.patterns[0] ?? ""))}
+            {(props.request.permission === "edit" ? "Edit " : "Write ") +
+              (filepath() || (props.request.patterns[0] ?? ""))}
           </text>
         </Match>
         <Match when={true}>
@@ -195,12 +196,20 @@ export function Home() {
   function hasPending(sessionID: string): boolean {
     if ((sync.data.permission[sessionID]?.length ?? 0) > 0) return true
     if ((sync.data.question[sessionID]?.length ?? 0) > 0) return true
-    return children().get(sessionID)?.some((id) => hasPending(id)) ?? false
+    return (
+      children()
+        .get(sessionID)
+        ?.some((id) => hasPending(id)) ?? false
+    )
   }
 
   function hasPermission(sessionID: string): boolean {
     if ((sync.data.permission[sessionID]?.length ?? 0) > 0) return true
-    return children().get(sessionID)?.some((id) => hasPermission(id)) ?? false
+    return (
+      children()
+        .get(sessionID)
+        ?.some((id) => hasPermission(id)) ?? false
+    )
   }
 
   function approval(sessionID: string): PermissionRequest | undefined {
@@ -334,8 +343,7 @@ export function Home() {
         dialog.clear()
         setDialogOpen(false)
         if (!name) return
-        const absoluteDir =
-          dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
+        const absoluteDir = dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
         const result = await sdk.client.session.create({
           directory: absoluteDir,
         })
@@ -347,9 +355,7 @@ export function Home() {
           sessionID: result.data.id,
           createdAt: Date.now(),
           directory: dir,
-          worktree: wt
-            ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo }
-            : undefined,
+          worktree: wt ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo } : undefined,
         })
       })()
     }
@@ -373,10 +379,12 @@ export function Home() {
         dialog.clear()
         setDialogOpen(false)
         if (!name) return
-        const worktree = (await sdk.client.worktree.create({
-          directory: repoDir,
-          worktreeCreateInput: { name },
-        })).data
+        const worktree = (
+          await sdk.client.worktree.create({
+            directory: repoDir,
+            worktreeCreateInput: { name },
+          })
+        ).data
         if (!worktree) return
         // Pre-seed zero diff stats so the effect doesn't race the
         // background worktree checkout (--no-checkout + forked boot).
@@ -386,9 +394,11 @@ export function Home() {
           ...prev,
           [dir]: { additions: 0, deletions: 0, files: 0 },
         }))
-        const session = (await sdk.client.session.create({
-          directory: worktree.directory,
-        })).data
+        const session = (
+          await sdk.client.session.create({
+            directory: worktree.directory,
+          })
+        ).data
         if (!session) return
         insertAgent({
           id: crypto.randomUUID(),
@@ -547,11 +557,7 @@ export function Home() {
             </box>
           }
         >
-          <scrollbox
-            flexGrow={1}
-            scrollbarOptions={{ visible: false }}
-            ref={(r: ScrollBoxRenderable) => (scroll = r)}
-          >
+          <scrollbox flexGrow={1} scrollbarOptions={{ visible: false }} ref={(r: ScrollBoxRenderable) => (scroll = r)}>
             <For each={grouped()}>
               {(group) => (
                 <>
@@ -563,10 +569,8 @@ export function Home() {
                       {(stats) => (
                         <text>
                           {"  "}
-                          <span style={{ fg: theme.success }}>+{stats().additions}</span>
-                          {" "}
-                          <span style={{ fg: theme.error }}>-{stats().deletions}</span>
-                          {" "}
+                          <span style={{ fg: theme.success }}>+{stats().additions}</span>{" "}
+                          <span style={{ fg: theme.error }}>-{stats().deletions}</span>{" "}
                           <span style={{ fg: theme.textMuted }}>
                             {stats().files} {Locale.pluralize(stats().files, "file", "files")}
                           </span>
@@ -580,64 +584,55 @@ export function Home() {
                       const isSelected = createMemo(() => idx() === selectedIndex())
                       return (
                         <box id={String(idx())} flexDirection="column">
-                        <box
-                          flexDirection="row"
-                          backgroundColor={isSelected() ? theme.primary : undefined}
-                        >
-                          <box width={4} flexShrink={0}>
-                            <text fg={isSelected() ? fg : theme.textMuted}>{idx() + 1}</text>
+                          <box flexDirection="row" backgroundColor={isSelected() ? theme.primary : undefined}>
+                            <box width={4} flexShrink={0}>
+                              <text fg={isSelected() ? fg : theme.textMuted}>{idx() + 1}</text>
+                            </box>
+                            <box width="30%" flexShrink={0}>
+                              <text
+                                fg={isSelected() ? fg : theme.text}
+                                attributes={isSelected() ? TextAttributes.BOLD : undefined}
+                                overflow="hidden"
+                                wrapMode="none"
+                              >
+                                {agent.name}
+                              </text>
+                            </box>
+                            <box width={18} flexShrink={0}>
+                              <Switch>
+                                <Match when={hasPermission(agent.sessionID)}>
+                                  <text fg={isSelected() ? fg : theme.warning}>Approve (y/n)</text>
+                                </Match>
+                                <Match when={hasPending(agent.sessionID)}>
+                                  <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
+                                </Match>
+                                <Match when={agent.status?.type === "busy"}>
+                                  <Spinner color={isSelected() ? fg : theme.success}>Working</Spinner>
+                                </Match>
+                                <Match when={agent.status?.type === "retry"}>
+                                  <text fg={isSelected() ? fg : theme.error}>Retrying</text>
+                                </Match>
+                                <Match when={true}>
+                                  <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
+                                </Match>
+                              </Switch>
+                            </box>
+                            <box flexGrow={1} flexShrink={1} minWidth={0}>
+                              <Show
+                                when={agent.status?.type === "busy" && agent.status.activity}
+                                fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
+                              >
+                                {(activity) => (
+                                  <text fg={isSelected() ? fg : theme.textMuted} overflow="hidden" wrapMode="none">
+                                    {activity()}
+                                  </text>
+                                )}
+                              </Show>
+                            </box>
                           </box>
-                          <box width="30%" flexShrink={0}>
-                            <text
-                              fg={isSelected() ? fg : theme.text}
-                              attributes={isSelected() ? TextAttributes.BOLD : undefined}
-                              overflow="hidden"
-                              wrapMode="none"
-                            >
-                              {agent.name}
-                            </text>
-                          </box>
-                          <box width={18} flexShrink={0}>
-                            <Switch>
-                              <Match when={hasPermission(agent.sessionID)}>
-                                <text fg={isSelected() ? fg : theme.warning}>Approve (y/n)</text>
-                              </Match>
-                              <Match when={hasPending(agent.sessionID)}>
-                                <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
-                              </Match>
-                              <Match when={agent.status?.type === "busy"}>
-                                <Spinner color={isSelected() ? fg : theme.success}>Working</Spinner>
-                              </Match>
-                              <Match when={agent.status?.type === "retry"}>
-                                <text fg={isSelected() ? fg : theme.error}>Retrying</text>
-                              </Match>
-                              <Match when={true}>
-                                <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
-                              </Match>
-                            </Switch>
-                          </box>
-                          <box flexGrow={1} flexShrink={1} minWidth={0}>
-                            <Show
-                              when={agent.status?.type === "busy" && agent.status.activity}
-                              fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
-                            >
-                              {(activity) => (
-                                <text
-                                  fg={isSelected() ? fg : theme.textMuted}
-                                  overflow="hidden"
-                                  wrapMode="none"
-                                >
-                                  {activity()}
-                                </text>
-                              )}
-                            </Show>
-                          </box>
-                        </box>
-                        <Show when={approval(agent.sessionID)}>
-                          {(perm) => (
-                            <PermissionDetail request={perm()} selected={isSelected()} />
-                          )}
-                        </Show>
+                          <Show when={approval(agent.sessionID)}>
+                            {(perm) => <PermissionDetail request={perm()} selected={isSelected()} />}
+                          </Show>
                         </box>
                       )
                     }}
