@@ -1680,6 +1680,16 @@ export type WorktreeResetInput = {
   directory: string
 }
 
+export type DiffStat = {
+  additions: number
+  deletions: number
+  files: number
+}
+
+export type WorktreeDiff = {
+  diff: string
+}
+
 export type ProjectSummary = {
   id: string
   name?: string
@@ -2788,12 +2798,6 @@ export type WorktreeResetResponses = {
 
 export type WorktreeResetResponse = WorktreeResetResponses[keyof WorktreeResetResponses]
 
-export type DiffStat = {
-  additions: number
-  deletions: number
-  files: number
-}
-
 export type WorktreeDiffstatData = {
   body?: never
   path?: never
@@ -2812,6 +2816,25 @@ export type WorktreeDiffstatResponses = {
 }
 
 export type WorktreeDiffstatResponse = WorktreeDiffstatResponses[keyof WorktreeDiffstatResponses]
+
+export type WorktreeDiffData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/diff"
+}
+
+export type WorktreeDiffResponses = {
+  /**
+   * Unified diff output
+   */
+  200: WorktreeDiff
+}
+
+export type WorktreeDiffResponse = WorktreeDiffResponses[keyof WorktreeDiffResponses]
 
 export type ExperimentalSessionListData = {
   body?: never

@@ -180,6 +180,8 @@ import type {
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
+  WorktreeDiffResponses,
+  WorktreeDiffstatResponses,
   WorktreeInfoResponses,
   WorktreeListResponses,
   WorktreeRemoveErrors,
@@ -188,7 +190,6 @@ import type {
   WorktreeResetErrors,
   WorktreeResetInput,
   WorktreeResetResponses,
-  WorktreeDiffstatResponses,
 } from "./types.gen.js"
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<
@@ -1364,6 +1365,36 @@ export class Worktree extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<WorktreeDiffstatResponses, unknown, ThrowOnError>({
       url: "/experimental/worktree/diffstat",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get worktree diff
+   *
+   * Return the full unified diff of uncommitted changes against HEAD in the working directory.
+   */
+  public diff<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorktreeDiffResponses, unknown, ThrowOnError>({
+      url: "/experimental/worktree/diff",
       ...options,
       ...params,
     })

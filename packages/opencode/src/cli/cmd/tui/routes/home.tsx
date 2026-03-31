@@ -399,7 +399,7 @@ export function Home() {
         })
       })()
     }
-    if (evt.name === "d") {
+    if (evt.name === "d" && !evt.shift) {
       const agent = selected()
       if (!agent) return
       ;(async () => {
@@ -457,6 +457,12 @@ export function Home() {
         }
         setSelectedIndex((i) => Math.min(i, flat().length - 1))
       })()
+    }
+    if (evt.name === "d" && evt.shift) {
+      const agent = selected()
+      if (!agent) return
+      const dir = resolveDir(agent)
+      route.navigate({ type: "diffview", directory: dir })
     }
     if (evt.name === "y") {
       const agent = selected()
@@ -638,6 +644,10 @@ export function Home() {
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>c</span>
             <span style={{ fg: theme.textMuted }}> copy path</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>D</span>
+            <span style={{ fg: theme.textMuted }}> diff</span>
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>enter</span>

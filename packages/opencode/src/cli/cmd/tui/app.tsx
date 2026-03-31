@@ -25,6 +25,7 @@ import { KeybindProvider } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
 import { Session } from "@tui/routes/session"
+import { Diffview } from "@tui/routes/diffview"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -823,6 +824,9 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         </Match>
         <Match when={route.data.type === "session"}>
           <Session />
+        </Match>
+        <Match when={route.data.type === "diffview"}>
+          <Diffview />
         </Match>
       </Switch>
     </box>
