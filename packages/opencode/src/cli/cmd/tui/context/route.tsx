@@ -1,9 +1,6 @@
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import type { PromptInfo } from "../component/prompt/history"
-import { Log } from "@/util/log"
-
-const log = Log.create({ service: "tui-route" })
 
 export type HomeRoute = {
   type: "home"
@@ -40,11 +37,6 @@ export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
         return store
       },
       navigate(route: Route) {
-        log.info("navigate", {
-          type: route.type,
-          sessionID: "sessionID" in route ? route.sessionID : undefined,
-          directory: "directory" in route ? route.directory : undefined,
-        })
         console.log("navigate", route)
         setStore(route)
       },
