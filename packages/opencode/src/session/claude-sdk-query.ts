@@ -13,6 +13,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from
 import type { MessageParam } from "@anthropic-ai/sdk/resources"
 import { Auth } from "@/auth"
 import { Log } from "@/util/log"
+import { Bus } from "@/bus"
 import { MCP } from "@/mcp"
 import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
@@ -42,9 +43,24 @@ export interface ClaudeSdkQueryInput {
  * Creates in-process SDK MCP servers that proxy tool calls to
  * OpenCode's already-connected MCP clients. Uses raw request handlers
  * so the original JSON schemas are preserved for the model.
+ *
+ * Results are cached globally and invalidated when MCP tools change
+ * or servers connect/disconnect.
  */
-export async function resolveMcpServers(): Promise<Record<string, McpServerConfig> | undefined> {
+let cached: Record<string, McpServerConfig> | undefined
+let dirty = true
+let flight: Promise<Record<string, McpServerConfig> | undefined> | undefined
+let subscribed = false
+
+export function invalidateMcpCache() {
+  dirty = true
+  cached = undefined
+}
+
+async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
+  const latency = Log.create({ service: "submit.latency" })
   const connected = await MCP.clients()
+  latency.info("[3k.2] MCP.clients() done", { ts: Date.now(), count: Object.keys(connected).length })
   const names = Object.keys(connected)
   if (!names.length) {
     log.info("resolveMcpServers: no connected MCP clients")
@@ -54,36 +70,65 @@ export async function resolveMcpServers(): Promise<Record<string, McpServerConfi
   log.info("resolveMcpServers: building SDK servers from connected clients", { names })
 
   const servers: Record<string, McpServerConfig> = {}
-
-  for (const [name, client] of Object.entries(connected)) {
-    const listed = await client.listTools().catch((err) => {
-      log.error("resolveMcpServers: listTools failed", { name, error: err instanceof Error ? err.message : String(err) })
-      return undefined
-    })
-    if (!listed || !listed.tools.length) continue
-
-    // Create an in-process MCP server that proxies to the OpenCode client.
-    // Must declare tools capability so setRequestHandler accepts tools/list.
-    const proxy = new McpServer({ name, version: "1.0.0" }, { capabilities: { tools: {} } })
-
-    // Override the low-level request handlers to proxy with original schemas
-    proxy.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: listed.tools,
-    }))
-
-    proxy.server.setRequestHandler(CallToolRequestSchema, async (req) => {
-      const result = await client.callTool({
-        name: req.params.name,
-        arguments: req.params.arguments ?? {},
+  for (const entry of await Promise.all(
+    Object.entries(connected).map(async ([name, client]) => {
+      latency.info("[3k.3] listTools start", { ts: Date.now(), name })
+      const listed = await client.listTools().catch((err) => {
+        log.error("resolveMcpServers: listTools failed", { name, error: err instanceof Error ? err.message : String(err) })
+        return undefined
       })
-      return result as ServerResult
-    })
+      latency.info("[3k.4] listTools done", { ts: Date.now(), name, tools: listed?.tools?.length ?? 0 })
+      if (!listed || !listed.tools.length) return undefined
 
-    servers[name] = { type: "sdk" as const, name, instance: proxy }
-    log.info("resolveMcpServers: created proxy server", { name, tools: listed.tools.length })
+      const proxy = new McpServer({ name, version: "1.0.0" }, { capabilities: { tools: {} } })
+
+      proxy.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: listed.tools,
+      }))
+
+      proxy.server.setRequestHandler(CallToolRequestSchema, async (req) => {
+        const result = await client.callTool({
+          name: req.params.name,
+          arguments: req.params.arguments ?? {},
+        })
+        return result as ServerResult
+      })
+
+      log.info("resolveMcpServers: created proxy server", { name, tools: listed.tools.length })
+      return [name, { type: "sdk" as const, name, instance: proxy }] as const
+    }),
+  )) {
+    if (entry) servers[entry[0]] = entry[1]
   }
 
   return Object.keys(servers).length ? servers : undefined
+}
+
+export async function resolveMcpServers(): Promise<Record<string, McpServerConfig> | undefined> {
+  const latency = Log.create({ service: "submit.latency" })
+  latency.info("[3k.1] resolveMcpServers entered", { ts: Date.now(), cached: !dirty })
+  if (!subscribed) {
+    subscribed = true
+    Bus.subscribe(MCP.ToolsChanged, () => {
+      log.info("mcp tools changed, invalidating cache")
+      invalidateMcpCache()
+    })
+  }
+  if (!dirty) return cached
+
+  // Single-flight: concurrent callers share one in-flight resolution.
+  // After it completes, re-check dirty in case ToolsChanged fired mid-flight.
+  if (!flight) {
+    flight = resolve().finally(() => {
+      flight = undefined
+    })
+  }
+  const result = await flight
+  if (!dirty) return cached
+  cached = result
+  dirty = false
+  latency.info("[3k.5] resolveMcpServers done", { ts: Date.now(), count: cached ? Object.keys(cached).length : 0 })
+  return cached
 }
 
 /**

@@ -162,11 +162,16 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
+    log.info("[3b] submit.latency prompt() entered", { ts: Date.now(), sessionID: input.sessionID })
     const session = await Session.get(input.sessionID)
+    log.info("[3c] submit.latency Session.get done", { ts: Date.now(), sessionID: input.sessionID })
     await SessionRevert.cleanup(session)
+    log.info("[3d] submit.latency SessionRevert.cleanup done", { ts: Date.now(), sessionID: input.sessionID })
 
     const message = await createUserMessage(input)
+    log.info("[3e] submit.latency createUserMessage done", { ts: Date.now(), sessionID: input.sessionID })
     await Session.touch(input.sessionID)
+    log.info("[3f] submit.latency Session.touch done", { ts: Date.now(), sessionID: input.sessionID })
 
     // this is backwards compatibility for allowing `tools` to be specified when
     // prompting — merge with existing session permissions instead of replacing
@@ -189,6 +194,7 @@ export namespace SessionPrompt {
       return message
     }
 
+    log.info("[3g] submit.latency pre-loop()", { ts: Date.now(), sessionID: input.sessionID })
     return loop({ sessionID: input.sessionID })
   })
 
@@ -282,6 +288,7 @@ export namespace SessionPrompt {
   export const loop = fn(LoopInput, async (input) => {
     const { sessionID, resume_existing } = input
 
+    log.info("[3h] submit.latency loop() entered", { ts: Date.now(), sessionID })
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
     if (!abort) {
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
@@ -289,6 +296,7 @@ export namespace SessionPrompt {
         callbacks.push({ resolve, reject })
       })
     }
+    log.info("[3i] submit.latency loop() start/resume done", { ts: Date.now(), sessionID })
 
     await using _ = defer(() => cancel(sessionID))
 
@@ -298,11 +306,15 @@ export namespace SessionPrompt {
     let structuredOutput: unknown | undefined
 
     let step = 0
+    log.info("[3j] submit.latency pre-Session.get", { ts: Date.now(), sessionID })
     const session = await Session.get(sessionID)
+    log.info("[3k] submit.latency post-Session.get", { ts: Date.now(), sessionID })
     const mcp = await resolveMcpServers()
+    log.info("[3l] submit.latency post-resolveMcpServers", { ts: Date.now(), sessionID })
     while (true) {
+      log.info("[4] submit.latency loop pre-status-set", { ts: Date.now(), step, sessionID })
       await SessionStatus.set(sessionID, { type: "busy" })
-      log.info("loop", { step, sessionID })
+      log.info("[4b] submit.latency loop post-status-set", { ts: Date.now(), step, sessionID })
       if (abort.aborted) break
       let msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
 
