@@ -30,9 +30,6 @@ import { formatDuration } from "@/util/format"
 import { createColors, createFrames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
-import { Log } from "@/util/log"
-
-const log = Log.create({ service: "tui-prompt" })
 import { DialogAlert } from "../../ui/dialog-alert"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
@@ -73,15 +70,7 @@ export function Prompt(props: PromptProps) {
   const sdk = useSDK()
   const route = useRoute()
   const sync = useSync()
-  const directory = createMemo(() => {
-    const dir = sync.session.get(props.sessionID ?? "")?.directory
-    log.info("directory memo", {
-      sessionID: props.sessionID,
-      dir,
-      hasSession: !!sync.session.get(props.sessionID ?? ""),
-    })
-    return dir
-  })
+  const directory = createMemo(() => sync.session.get(props.sessionID ?? "")?.directory)
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
@@ -403,7 +392,6 @@ export function Prompt(props: PromptProps) {
   }
 
   createEffect(() => {
-    log.info("visibility effect", { visible: props.visible })
     if (props.visible !== false) input?.focus()
     if (props.visible === false) input?.blur()
   })
@@ -542,12 +530,6 @@ export function Prompt(props: PromptProps) {
   ])
 
   async function submit() {
-    log.info("submit", {
-      disabled: props.disabled,
-      visible: props.visible,
-      input: !!store.prompt.input,
-      autocompleteVisible: autocomplete?.visible,
-    })
     if (props.disabled) return
     if (autocomplete?.visible) return
     if (!store.prompt.input) return
@@ -653,22 +635,10 @@ export function Prompt(props: PromptProps) {
           })),
       })
     } else {
-      const dir = directory()
-      log.info("prompt call", {
-        sessionID,
-        directory: dir,
-        providerID: selectedModel.providerID,
-        modelID: selectedModel.modelID,
-        agent: local.agent.current().name,
-        messageID,
-        variant,
-        inputText: inputText.slice(0, 100),
-        hasSession: !!sync.session.get(sessionID),
-      })
       sdk.client.session
         .prompt({
           sessionID,
-          directory: dir,
+          directory: directory(),
           ...selectedModel,
           messageID,
           agent: local.agent.current().name,
@@ -683,19 +653,7 @@ export function Prompt(props: PromptProps) {
             ...nonTextParts.map(assign),
           ],
         })
-        .then((res) => {
-          log.info("prompt result", {
-            sessionID,
-            ok: !res.error,
-            error: res.error ? JSON.stringify(res.error) : undefined,
-          })
-        })
-        .catch((err) => {
-          log.error("prompt error", {
-            sessionID,
-            error: String(err),
-          })
-        })
+        .catch(() => {})
     }
     history.append({
       ...store.prompt,
