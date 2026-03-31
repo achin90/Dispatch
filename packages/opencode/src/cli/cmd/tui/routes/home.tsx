@@ -15,7 +15,7 @@ import { Installation } from "@/installation"
 import { Global } from "@/global"
 import { Locale } from "@/util/locale"
 import { Spinner } from "@tui/component/spinner"
-import { useKeyboard } from "@opentui/solid"
+import { useKeyboard, useRenderer } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeybind } from "@tui/context/keybind"
 import { useExit } from "../context/exit"
@@ -23,6 +23,7 @@ import { useToast } from "@tui/ui/toast"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Clipboard } from "@tui/util/clipboard"
+import { PtyAttach } from "../util/pty"
 
 interface AgentEntry {
   id: string
@@ -129,7 +130,10 @@ export function Home() {
   const toast = useToast()
   const keybind = useKeybind()
   const exit = useExit()
+  const renderer = useRenderer()
   const fg = selectedForeground(theme)
+
+  const [attaching, setAttaching] = createSignal(false)
 
   const mcp = createMemo(() => Object.keys(sync.data.mcp).length > 0)
   const mcpError = createMemo(() => {
@@ -288,7 +292,8 @@ export function Home() {
       exit()
       return
     }
-    if (dialogOpen()) return
+    if (dialogOpen() || dialog.stack.length > 0) return
+    if (keybind.leader) return
     if (flat().length === 0 && evt.name !== "a" && evt.name !== "w") return
 
     if (evt.name === "j" || evt.name === "down") {
@@ -484,6 +489,26 @@ export function Home() {
         requestID: perm.id,
       })
     }
+    if (evt.name === "t") {
+      if (attaching()) return
+      const agent = selected()
+      if (!agent) return
+      const dir = resolveDir(agent)
+      const leader = keybind.all.leader?.[0]
+      const byte = leader?.ctrl && leader.name
+        ? leader.name.toLowerCase().charCodeAt(0) - 96
+        : 0x18
+      setAttaching(true)
+      const fgInts = fg.toInts()
+      const bgInts = theme.primary.toInts()
+      PtyAttach.open(agent.id, dir, renderer, {
+        leader: byte,
+        label: keybind.print("dashboard"),
+        dir: shortDir(dir),
+        fg: [fgInts[0], fgInts[1], fgInts[2]],
+        bg: [bgInts[0], bgInts[1], bgInts[2]],
+      }).catch(() => {}).finally(() => setAttaching(false))
+    }
   })
 
   return (
@@ -652,6 +677,10 @@ export function Home() {
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>enter</span>
             <span style={{ fg: theme.textMuted }}> open</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>t</span>
+            <span style={{ fg: theme.textMuted }}> terminal</span>
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{keybind.print("command_list")}</span>
