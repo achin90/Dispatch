@@ -14,7 +14,12 @@ export type SessionRoute = {
   initialPrompt?: PromptInfo
 }
 
-export type Route = HomeRoute | SessionRoute
+export type DiffviewRoute = {
+  type: "diffview"
+  directory: string
+}
+
+export type Route = HomeRoute | SessionRoute | DiffviewRoute
 
 export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   name: "Route",

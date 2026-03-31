@@ -333,6 +333,42 @@ export const ExperimentalRoutes = lazy(() =>
       },
     )
     .get(
+      "/worktree/diff",
+      describeRoute({
+        summary: "Get worktree diff",
+        description:
+          "Return the full unified diff of uncommitted changes against HEAD in the working directory.",
+        operationId: "worktree.diff",
+        responses: {
+          200: {
+            description: "Unified diff output",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z
+                    .object({
+                      diff: z.string(),
+                    })
+                    .meta({ ref: "WorktreeDiff" }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        const diff = await new Promise<string>((resolve) => {
+          execFile(
+            "git",
+            ["diff", "HEAD"],
+            { cwd: Instance.directory, maxBuffer: 10 * 1024 * 1024 },
+            (err, stdout) => resolve(err ? "" : stdout),
+          )
+        })
+        return c.json({ diff })
+      },
+    )
+    .get(
       "/session",
       describeRoute({
         summary: "List sessions",
