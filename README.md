@@ -35,6 +35,10 @@ Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard**
 
 ---
 
+## Prerequisites
+
+- [Bun](https://bun.sh) v1.3.11 or later
+
 ## Installation
 
 This fork is not published to npm. Clone and build from source:
@@ -47,13 +51,121 @@ bun install
 
 ---
 
+## Running
+
+There are two ways to run Dispatch locally: development mode and building from source.
+
+### Option 1: Development Mode
+
+Runs the TypeScript source directly via Bun without a build step. This is the fastest way to get started.
+
+From the repository root:
+
+```bash
+bun run dev
+```
+
+To open Dispatch in a specific project directory, pass the path as an argument:
+
+```bash
+bun run dev ~/Documents/workspace
+```
+
+### Option 2: Build and Run
+
+Compiles Dispatch into a standalone binary. Useful for testing production builds or running without Bun installed.
+
+From the `packages/opencode` directory:
+
+```bash
+cd packages/opencode
+bun run build --single
+```
+
+The `--single` flag builds only for your current platform. Without it, the build produces binaries for all supported platforms (linux, darwin, windows across arm64/x64).
+
+The binary is output to `packages/opencode/dist/opencode-<os>-<arch>/bin/opencode`. For example on an Apple Silicon Mac:
+
+```bash
+./packages/opencode/dist/opencode-darwin-arm64/bin/opencode
+```
+
+To open a specific project directory:
+
+```bash
+./packages/opencode/dist/opencode-darwin-arm64/bin/opencode ~/Documents/workspace
+```
+
+### Common Options
+
+These flags work with both `bun run dev` and the built binary:
+
+| Flag | Description |
+| --- | --- |
+| `[project]` | Path to project directory (positional arg) |
+| `--model`, `-m` | Model to use in the format `provider/model` |
+| `--continue`, `-c` | Continue the last session |
+| `--session`, `-s` | Session ID to continue |
+| `--help`, `-h` | Show help |
+| `--version`, `-v` | Show version |
+
+### Subcommands
+
+Dispatch also supports subcommands for headless/non-interactive use:
+
+```bash
+# run a single message non-interactively
+bun run dev -- run "explain this codebase"
+
+# run in a specific directory non-interactively
+bun run dev -- run --dir ~/Documents/workspace "explain this codebase"
+```
+
+---
+
 ## Configuration
 
-Dispatch uses the same configuration files and settings as OpenCode. For full documentation on configuring providers, MCP servers, keybindings, hooks, permissions, and more, see the **[OpenCode docs](https://opencode.ai/docs)**.
+Dispatch respects the same configuration system as OpenCode. Config files use **JSON** or **JSONC** (JSON with Comments) format and are merged together, with later sources overriding earlier ones.
 
-Key config locations:
-- `~/.config/opencode/` -- global settings
-- `.opencode/` in your project root -- project-level settings
+For full documentation see the **[OpenCode configuration docs](https://opencode.ai/docs/config/)**.
+
+### Config File Locations (by precedence)
+
+| Priority | Source | Location |
+| --- | --- | --- |
+| 1 | Remote config | `.well-known/opencode` endpoint (organizational defaults) |
+| 2 | Global config | `~/.config/opencode/opencode.json` |
+| 3 | Custom config | Path specified via `OPENCODE_CONFIG` env var |
+| 4 | Project config | `opencode.json` in project root |
+| 5 | Directory configs | `.opencode/` subdirectories (`agents/`, `commands/`, `plugins/`, etc.) |
+| 6 | Inline config | `OPENCODE_CONFIG_CONTENT` env var |
+
+### Key Configuration Options
+
+- **`model`** -- Main LLM model (e.g., `"anthropic/claude-sonnet-4-5"`)
+- **`small_model`** -- Lightweight model for tasks like title generation
+- **`provider`** -- Provider configuration with timeout/cache settings
+- **`disabled_providers`** / **`enabled_providers`** -- Control which providers are available
+- **`tools`** -- Configure which tools the LLM can access (write, bash, edit, etc.)
+- **`agent`** -- Define custom specialized agents
+- **`mcp`** -- Model Context Protocol server configuration
+- **`autoupdate`** -- Auto-update handling (`true`/`false`/`"notify"`)
+- **`permission`** -- Tool approval requirements (`"ask"` for confirmation)
+- **`instructions`** -- Path to custom instruction/rules files
+
+### Variable Substitution
+
+Config values support variable substitution:
+
+- **Environment variables:** `{env:VARIABLE_NAME}` -- replaced with the env var value (empty string if not set)
+- **File contents:** `{file:path/to/file}` -- inlines the file contents (useful for API keys stored separately)
+
+### Schema
+
+JSON schema files are available for editor autocompletion and validation:
+
+- Main config: `https://opencode.ai/config.json`
+- TUI config: `https://opencode.ai/tui.json`
 
 ---
 
