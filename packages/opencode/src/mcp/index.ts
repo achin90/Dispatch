@@ -589,6 +589,7 @@ export namespace MCP {
       }
       s.clients[name] = result.mcpClient
     }
+    Bus.publish(ToolsChanged, { server: name })
   }
 
   export async function disconnect(name: string) {
@@ -601,6 +602,7 @@ export namespace MCP {
       delete s.clients[name]
     }
     s.status[name] = { status: "disabled" }
+    Bus.publish(ToolsChanged, { server: name })
   }
 
   export async function tools() {

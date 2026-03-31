@@ -25,6 +25,7 @@ import { Clipboard } from "../../util/clipboard"
 import type { FilePart } from "@opencode-ai/sdk/v2"
 import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
+import { Log } from "@/util/log"
 import { Locale } from "@/util/locale"
 import { formatDuration } from "@/util/format"
 import { createColors, createFrames } from "../../ui/spinner.ts"
@@ -74,6 +75,14 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const _latencyLog = Log.create({ service: "submit.latency" })
+  createEffect(
+    on(status, (s, prev) => {
+      if (prev?.type === "idle" && s.type !== "idle") {
+        _latencyLog.info("[7] status memo idle->busy (spinner visible)", { ts: Date.now(), type: s.type })
+      }
+    }),
+  )
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -529,6 +538,8 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
+  const latency = Log.create({ service: "submit.latency" })
+
   async function submit() {
     if (props.disabled) return
     if (autocomplete?.visible) return
@@ -538,6 +549,8 @@ export function Prompt(props: PromptProps) {
       exit()
       return
     }
+    latency.info("[1] submit() entered", { ts: Date.now() })
+
     const selectedModel = local.model.current()
     if (!selectedModel) {
       promptModelWarning()
@@ -590,6 +603,8 @@ export function Prompt(props: PromptProps) {
     // Capture mode before it gets reset
     const currentMode = store.mode
     const variant = local.model.variant.current()
+
+    latency.info("[2] pre-sdk call", { ts: Date.now(), mode: store.mode, sessionID })
 
     if (store.mode === "shell") {
       sdk.client.session.shell({
@@ -655,6 +670,8 @@ export function Prompt(props: PromptProps) {
         })
         .catch(() => {})
     }
+    latency.info("[3] post-sdk call", { ts: Date.now(), sessionID })
+
     history.append({
       ...store.prompt,
       mode: currentMode,

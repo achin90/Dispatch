@@ -23,6 +23,7 @@ import { Bus } from "../../bus"
 import { NamedError } from "@opencode-ai/util/error"
 
 const log = Log.create({ service: "server" })
+const latency = Log.create({ service: "submit.latency" })
 
 export const SessionRoutes = lazy(() =>
   new Hono()
@@ -816,6 +817,7 @@ export const SessionRoutes = lazy(() =>
         return stream(c, async (stream) => {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
+          latency.info("[3a] route handler entered", { ts: Date.now(), sessionID })
           const msg = await SessionPrompt.prompt({ ...body, sessionID })
           stream.write(JSON.stringify(msg))
         })
