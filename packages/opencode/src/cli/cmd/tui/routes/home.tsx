@@ -22,6 +22,7 @@ import { useExit } from "../context/exit"
 import { useToast } from "@tui/ui/toast"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
+import { Clipboard } from "@tui/util/clipboard"
 
 interface AgentEntry {
   id: string
@@ -304,6 +305,14 @@ export function Home() {
         lastEnteredSessionID = agent.sessionID
         route.navigate({ type: "session", sessionID: agent.sessionID })
       }
+    }
+    if (evt.name === "c") {
+      const agent = selected()
+      if (!agent) return
+      const dir = resolveDir(agent)
+      Clipboard.copy(dir)
+        .then(() => toast.show({ message: "Copied path to clipboard", variant: "info" }))
+        .catch(() => toast.show({ message: "Failed to copy path", variant: "error" }))
     }
     if (evt.name === "a") {
       ;(async () => {
@@ -625,6 +634,10 @@ export function Home() {
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>x</span>
             <span style={{ fg: theme.textMuted }}> delete worktree</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>c</span>
+            <span style={{ fg: theme.textMuted }}> copy path</span>
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>enter</span>
