@@ -75,8 +75,11 @@ function defaultBetaUsage() {
     cache_creation_input_tokens: null,
     cache_read_input_tokens: null,
     cache_creation: null,
+    inference_geo: null,
+    iterations: null,
     server_tool_use: null,
     service_tier: null,
+    speed: null,
   } as const
 }
 
@@ -87,8 +90,11 @@ function defaultNonNullableUsage(): NonNullableUsage {
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
     cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+    inference_geo: "us",
+    iterations: [],
     server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
     service_tier: "standard",
+    speed: "standard",
   }
 }
 
