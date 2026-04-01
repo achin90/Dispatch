@@ -127,7 +127,7 @@ describe("claude-sdk session loop", () => {
               model: "claude-sonnet-4-20250514",
               stop_reason: "tool_use",
               stop_sequence: null,
-              usage: { input_tokens: 50, output_tokens: 20, cache_creation_input_tokens: null, cache_read_input_tokens: null, cache_creation: null, server_tool_use: null, service_tier: null },
+              usage: { input_tokens: 50, output_tokens: 20, cache_creation_input_tokens: null, cache_read_input_tokens: null, cache_creation: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
               container: null,
               context_management: null,
             }},

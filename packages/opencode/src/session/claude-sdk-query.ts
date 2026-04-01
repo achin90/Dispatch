@@ -7,8 +7,7 @@
  * 5. Returns the message stream for processClaudeSdkStream()
  */
 
-import { query, type Options, type Query, type SDKUserMessage, type McpServerConfig } from "@anthropic-ai/claude-agent-sdk"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { query, createSdkMcpServer, type Options, type Query, type SDKUserMessage, type McpServerConfig } from "@anthropic-ai/claude-agent-sdk"
 import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from "@modelcontextprotocol/sdk/types.js"
 import type { MessageParam } from "@anthropic-ai/sdk/resources"
 import { Auth } from "@/auth"
@@ -80,13 +79,19 @@ async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
       latency.info("[3k.4] listTools done", { ts: Date.now(), name, tools: listed?.tools?.length ?? 0 })
       if (!listed || !listed.tools.length) return undefined
 
-      const proxy = new McpServer({ name, version: "1.0.0" }, { capabilities: { tools: {} } })
+      // Use createSdkMcpServer to get a correctly-typed McpServerConfig.
+      // Register a dummy tool so the server has tool capability, then
+      // override the request handlers to proxy to the real MCP client.
+      const config = createSdkMcpServer({
+        name,
+        tools: [{ name: "__init__", description: "", inputSchema: {}, handler: async () => ({ content: [] }) }],
+      })
 
-      proxy.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      config.instance.server.setRequestHandler(ListToolsRequestSchema, async () => ({
         tools: listed.tools,
       }))
 
-      proxy.server.setRequestHandler(CallToolRequestSchema, async (req) => {
+      config.instance.server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const result = await client.callTool({
           name: req.params.name,
           arguments: req.params.arguments ?? {},
@@ -95,7 +100,7 @@ async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
       })
 
       log.info("resolveMcpServers: created proxy server", { name, tools: listed.tools.length })
-      return [name, { type: "sdk" as const, name, instance: proxy }] as const
+      return [name, config] as const
     }),
   )) {
     if (entry) servers[entry[0]] = entry[1]
