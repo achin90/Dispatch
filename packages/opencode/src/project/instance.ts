@@ -157,6 +157,8 @@ export const Instance = {
           await Instance.dispose()
         })
       }
+      // Dispose global singletons keyed outside Instance.directory
+      await State.dispose("mcp")
     }).finally(() => {
       disposal.all = undefined
     })

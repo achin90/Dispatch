@@ -15,6 +15,7 @@ import { Process } from "../util/process"
 import { NamedError } from "@opencode-ai/util/error"
 import z from "zod/v4"
 import { Instance } from "../project/instance"
+import { State } from "../project/state"
 import { Installation } from "../installation"
 import { withTimeout } from "@/util/timeout"
 import { McpOAuthProvider } from "./oauth-provider"
@@ -179,8 +180,13 @@ export namespace MCP {
     return pids
   }
 
-  const state = Instance.state(
+  // Global singleton keyed by a fixed string so all Instances share one
+  // set of MCP clients instead of creating duplicates per directory.
+  let dir: string | undefined
+  const state = State.create(
+    () => "mcp",
     async () => {
+      dir = Instance.directory
       const cfg = await Config.get()
       const config = cfg.mcp ?? {}
       const clients: Record<string, MCPClient> = {}
@@ -447,12 +453,12 @@ export namespace MCP {
 
     if (mcp.type === "local") {
       const [cmd, ...args] = mcp.command
-      const cwd = Instance.directory
+      const root = dir ?? Instance.directory
       const transport = new StdioClientTransport({
         stderr: "pipe",
         command: cmd,
         args,
-        cwd,
+        cwd: root,
         env: {
           ...process.env,
           ...(cmd === "opencode" ? { BUN_BE_BUN: "1" } : {}),
@@ -479,7 +485,7 @@ export namespace MCP {
         log.error("local mcp startup failed", {
           key,
           command: mcp.command,
-          cwd,
+          cwd: root,
           error: error instanceof Error ? error.message : String(error),
         })
         status = {
@@ -603,6 +609,11 @@ export namespace MCP {
     }
     s.status[name] = { status: "disabled" }
     Bus.publish(ToolsChanged, { server: name })
+  }
+
+  /** Dispose the global MCP singleton (close all clients). */
+  export async function dispose() {
+    await State.dispose("mcp")
   }
 
   export async function tools() {
