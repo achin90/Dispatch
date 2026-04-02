@@ -681,6 +681,12 @@ export function Home() {
       <box paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" flexShrink={0} gap={0}>
         <box flexDirection="row" gap={3} flexShrink={0}>
           <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>↑↓</span>
+            <span style={{ fg: theme.textMuted }}>/</span>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>j/k</span>
+            <span style={{ fg: theme.textMuted }}> navigate</span>
+          </text>
+          <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>a</span>
             <span style={{ fg: theme.textMuted }}> new agent</span>
           </text>
