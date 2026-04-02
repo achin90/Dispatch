@@ -655,7 +655,7 @@ export function Home() {
                           <Show
                             when={approval(agent.sessionID)}
                             fallback={
-                              <Show when={sync.data.agent_summary[agent.sessionID]}>
+                              <Show when={kv.get("agent_summaries_visible", true) && sync.data.agent_summary[agent.sessionID]}>
                                 {(s) => (
                                   <box paddingLeft={4} maxHeight={4}>
                                     <text fg={theme.textMuted} wrapMode="word" overflow="hidden">

@@ -703,6 +703,15 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         dialog.clear()
       },
     },
+    {
+      title: kv.get("agent_summaries_visible", true) ? "Hide agent summaries" : "Show agent summaries",
+      value: "app.toggle.agent_summaries",
+      category: "System",
+      onSelect: (dialog) => {
+        kv.set("agent_summaries_visible", !kv.get("agent_summaries_visible", true))
+        dialog.clear()
+      },
+    },
   ])
 
   sdk.event.on(TuiEvent.CommandExecute.type, (evt) => {
