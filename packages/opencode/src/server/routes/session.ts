@@ -21,6 +21,7 @@ import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Bus } from "../../bus"
 import { NamedError } from "@opencode-ai/util/error"
+import { Summarize } from "@/session/summarize"
 
 const log = Log.create({ service: "server" })
 const latency = Log.create({ service: "submit.latency" })
@@ -992,6 +993,63 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const session = await SessionRevert.unrevert({ sessionID })
         return c.json(session)
+      },
+    )
+    .get(
+      "/:sessionID/last-response",
+      describeRoute({
+        summary: "Get last response summary",
+        description:
+          "Get the last assistant response for a session, optionally summarized by a small model if the response is long.",
+        operationId: "session.lastResponse",
+        responses: {
+          200: {
+            description: "Last response text",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    text: z.string(),
+                    summary: z.boolean(),
+                  }),
+                ),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const msgs = await Session.messages({ sessionID }).catch(() => [] as MessageV2.WithParts[])
+        const last = msgs.findLast((m) => m.info.role === "assistant")
+        if (!last) return c.json({ text: "", summary: false })
+
+        // Use the last text part — it's the final output, not intermediate text
+        const text = (
+          last.parts
+            .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
+            .at(-1)?.text ?? ""
+        ).trim()
+        if (!text) return c.json({ text: "", summary: false })
+
+        const lines = text.split("\n").filter((l) => l.trim())
+        if (lines.length <= 3 && text.length <= 300) return c.json({ text, summary: false })
+
+        const truncated = lines.slice(0, 3).join("\n").substring(0, 300)
+        const p = Summarize.prompt(text)
+        const pid = (last.info as MessageV2.Assistant).providerID
+        const result = pid === "anthropic" ? await Summarize.anthropic(p) : await Summarize.aisdk(p, pid)
+
+        return result
+          ? c.json({ text: result, summary: true })
+          : c.json({ text: truncated, summary: false })
       },
     )
     .post(

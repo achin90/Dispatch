@@ -3861,6 +3861,43 @@ export type SessionUnrevertResponses = {
 
 export type SessionUnrevertResponse = SessionUnrevertResponses[keyof SessionUnrevertResponses]
 
+export type SessionLastResponseData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/last-response"
+}
+
+export type SessionLastResponseErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionLastResponseError = SessionLastResponseErrors[keyof SessionLastResponseErrors]
+
+export type SessionLastResponseResponses = {
+  /**
+   * Last response text
+   */
+  200: {
+    text: string
+    summary: boolean
+  }
+}
+
+export type SessionLastResponseResponse = SessionLastResponseResponses[keyof SessionLastResponseResponses]
+
 export type PermissionRespondData = {
   body?: {
     response: "once" | "always" | "reject"
