@@ -164,6 +164,14 @@ export function Home() {
     return dir.replace(Global.Path.home, "~")
   }
 
+  function hotkey(idx: number) {
+    const n = idx + 1
+    if (n <= 9) return String(n)
+    if (n === 10) return "0"
+    if (n <= 20) return "!@#$%^&*()"[n - 11]
+    return String(n)
+  }
+
   type EnrichedAgent = AgentEntry & {
     session: (typeof sync.data.session)[0] | undefined
     status: (typeof sync.data.session_status)[string] | undefined
@@ -308,6 +316,16 @@ export function Home() {
     if (dialogOpen() || dialog.stack.length > 0) return
     if (keybind.leader) return
     if (flat().length === 0 && evt.name !== "a" && evt.name !== "w") return
+
+    const sym = evt.name.length === 1 ? "!@#$%^&*()".indexOf(evt.name) : -1
+    const num = sym !== -1 ? sym + 11 : parseInt(evt.name)
+    if (sym !== -1 || !isNaN(num)) {
+      const idx = sym !== -1 ? num : num === 0 ? 10 : num
+      if (idx >= 1 && idx <= flat().length) {
+        setSelectedIndex(idx - 1)
+        scrollToSelected()
+      }
+    }
 
     if (evt.name === "j" || evt.name === "down") {
       move(1)
@@ -590,7 +608,7 @@ export function Home() {
                         <box id={String(idx())} flexDirection="column">
                           <box flexDirection="row" backgroundColor={isSelected() ? theme.primary : undefined}>
                             <box width={4} flexShrink={0}>
-                              <text fg={isSelected() ? fg : theme.textMuted}>{idx() + 1}</text>
+                              <text fg={isSelected() ? fg : theme.textMuted}>{hotkey(idx())}</text>
                             </box>
                             <box width="30%" flexShrink={0}>
                               <text
