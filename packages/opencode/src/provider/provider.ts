@@ -1509,6 +1509,26 @@ export namespace Provider {
     }
   }
 
+  const SMALL_MODELS: Record<string, string[]> = {
+    anthropic: ["claude-haiku-4-5", "claude-haiku-4.5", "3-5-haiku", "3.5-haiku", "haiku"],
+    openai: ["gpt-5-nano", "gpt-5-mini", "gpt-4.1-nano", "gpt-4.1-mini"],
+    opencode: ["gpt-5-nano"],
+    google: ["gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "google-vertex": ["gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "github-copilot": ["gpt-5-mini", "claude-haiku-4.5", "gpt-5-nano"],
+    "amazon-bedrock": ["claude-haiku-4-5", "claude-haiku-4.5", "3-5-haiku", "3.5-haiku"],
+    azure: ["gpt-5-nano", "gpt-5-mini", "gpt-4.1-nano", "gpt-4.1-mini"],
+    openrouter: ["claude-haiku-4-5", "claude-haiku-4.5", "gpt-5-nano", "gemini-2.5-flash"],
+    mistral: ["mistral-small"],
+  }
+
+  // Fallback for unknown providers: try common small models across ecosystems
+  const SMALL_FALLBACK = [
+    "claude-haiku-4-5", "claude-haiku-4.5", "haiku",
+    "gpt-5-nano", "gpt-5-mini",
+    "gemini-3-flash", "gemini-2.5-flash",
+  ]
+
   export async function getSmallModel(providerID: ProviderID) {
     const cfg = await Config.get()
 
@@ -1517,51 +1537,35 @@ export namespace Provider {
       return getModel(parsed.providerID, parsed.modelID)
     }
 
-    const provider = await state().then((state) => state.providers[providerID])
-    if (provider) {
-      let priority = [
-        "claude-haiku-4-5",
-        "claude-haiku-4.5",
-        "3-5-haiku",
-        "3.5-haiku",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
-        "gpt-5-nano",
-      ]
-      if (providerID.startsWith("opencode")) {
-        priority = ["gpt-5-nano"]
-      }
-      if (providerID.startsWith("github-copilot")) {
-        // prioritize free models for github copilot
-        priority = ["gpt-5-mini", "claude-haiku-4.5", ...priority]
-      }
-      for (const item of priority) {
-        if (providerID === ProviderID.amazonBedrock) {
-          const crossRegionPrefixes = ["global.", "us.", "eu."]
-          const candidates = Object.keys(provider.models).filter((m) => m.includes(item))
+    // Use list() so SDK models (e.g. "haiku" alias) are included
+    const providers = await list()
+    const provider = providers[providerID]
+    if (!provider) return undefined
 
-          // Model selection priority:
-          // 1. global. prefix (works everywhere)
-          // 2. User's region prefix (us., eu.)
-          // 3. Unprefixed model
-          const globalMatch = candidates.find((m) => m.startsWith("global."))
-          if (globalMatch) return getModel(providerID, ModelID.make(globalMatch))
+    const priority = SMALL_MODELS[providerID] ?? SMALL_FALLBACK
 
-          const region = provider.options?.region
-          if (region) {
-            const regionPrefix = region.split("-")[0]
-            if (regionPrefix === "us" || regionPrefix === "eu") {
-              const regionalMatch = candidates.find((m) => m.startsWith(`${regionPrefix}.`))
-              if (regionalMatch) return getModel(providerID, ModelID.make(regionalMatch))
-            }
+    for (const item of priority) {
+      if (providerID === ProviderID.amazonBedrock) {
+        const prefixes = ["global.", "us.", "eu."]
+        const candidates = Object.keys(provider.models).filter((m) => m.includes(item))
+
+        const global = candidates.find((m) => m.startsWith("global."))
+        if (global) return getModel(providerID, ModelID.make(global))
+
+        const region = provider.options?.region
+        if (region) {
+          const prefix = region.split("-")[0]
+          if (prefix === "us" || prefix === "eu") {
+            const match = candidates.find((m) => m.startsWith(`${prefix}.`))
+            if (match) return getModel(providerID, ModelID.make(match))
           }
+        }
 
-          const unprefixed = candidates.find((m) => !crossRegionPrefixes.some((p) => m.startsWith(p)))
-          if (unprefixed) return getModel(providerID, ModelID.make(unprefixed))
-        } else {
-          for (const model of Object.keys(provider.models)) {
-            if (model.includes(item)) return getModel(providerID, ModelID.make(model))
-          }
+        const unprefixed = candidates.find((m) => !prefixes.some((p) => m.startsWith(p)))
+        if (unprefixed) return getModel(providerID, ModelID.make(unprefixed))
+      } else {
+        for (const model of Object.keys(provider.models)) {
+          if (model.includes(item)) return getModel(providerID, ModelID.make(model))
         }
       }
     }

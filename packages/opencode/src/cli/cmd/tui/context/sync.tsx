@@ -74,6 +74,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         [key: string]: McpResource
       }
       formatter: FormatterStatus[]
+      agent_summary: {
+        [sessionID: string]: { text: string; ai: boolean }
+      }
       vcs: VcsInfo | undefined
       path: Path
       workspaceList: Workspace[]
@@ -102,6 +105,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       mcp: {},
       mcp_resource: {},
       formatter: [],
+      agent_summary: {},
       vcs: undefined,
       path: { state: "", config: "", worktree: "", directory: "" },
       workspaceList: [],

@@ -25,7 +25,7 @@ import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Clipboard } from "@tui/util/clipboard"
 import { PtyAttach } from "../util/pty"
 
-interface AgentEntry {
+export interface AgentEntry {
   id: string
   name: string
   sessionID: string
@@ -35,6 +35,10 @@ interface AgentEntry {
     branch: string
     directory: string
     sourceRepo: string
+  }
+  summary?: {
+    text: string
+    ai: boolean
   }
 }
 
@@ -630,7 +634,20 @@ export function Home() {
                               </Show>
                             </box>
                           </box>
-                          <Show when={approval(agent.sessionID)}>
+                          <Show
+                            when={approval(agent.sessionID)}
+                            fallback={
+                              <Show when={sync.data.agent_summary[agent.sessionID]}>
+                                {(s) => (
+                                  <box paddingLeft={4} maxHeight={4}>
+                                    <text fg={theme.textMuted} wrapMode="word" overflow="hidden">
+                                      {(s().ai ? "Summary: " : "") + s().text}
+                                    </text>
+                                  </box>
+                                )}
+                              </Show>
+                            }
+                          >
                             {(perm) => <PermissionDetail request={perm()} selected={isSelected()} />}
                           </Show>
                         </box>

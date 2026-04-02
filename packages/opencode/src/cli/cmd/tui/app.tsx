@@ -24,6 +24,7 @@ import { DialogWorkspaceList } from "@tui/component/dialog-workspace-list"
 import { KeybindProvider } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
+import { AgentSummaries } from "@tui/component/agent-summaries"
 import { Session } from "@tui/routes/session"
 import { Diffview } from "@tui/routes/diffview"
 import { PromptHistoryProvider } from "./component/prompt/history"
@@ -818,6 +819,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       }}
       onMouseUp={Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT ? undefined : () => Selection.copy(renderer, toast)}
     >
+      <AgentSummaries />
       <Switch>
         <Match when={route.data.type === "home"}>
           <Home />
