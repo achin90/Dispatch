@@ -40,7 +40,7 @@ import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
 import { createClaudeSdkQuery, resolveMcpServers } from "./claude-sdk-query"
-import { processClaudeSdkStream } from "./claude-sdk-processor"
+import { processClaudeSdkStream, type CompactionRef } from "./claude-sdk-processor"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
@@ -691,6 +691,10 @@ export namespace SessionPrompt {
 
         const controller = state()[sessionID]?.abort
 
+        // Shared ref: the PostCompact hook writes the summary here,
+        // processClaudeSdkStream reads it when handling compact_boundary.
+        const compaction: CompactionRef = {}
+
         const sdkQuery = await createClaudeSdkQuery({
           prompt,
           sessionID,
@@ -703,12 +707,21 @@ export namespace SessionPrompt {
           ruleset: Permission.merge(agent.permission, session.permission ?? []),
           effort: lastUser.variant as "low" | "medium" | "high" | "max" | undefined,
           mcpServers: mcp,
+          hooks: {
+            PostCompact: [{
+              hooks: [async (input) => {
+                compaction.summary = (input as { compact_summary: string }).compact_summary
+                return { continue: true }
+              }],
+            }],
+          },
         })
 
         const result = await processClaudeSdkStream(sdkQuery, {
           assistantMessage,
           sessionID,
           abort,
+          compaction,
         })
 
         if (result.outcome === "error") break

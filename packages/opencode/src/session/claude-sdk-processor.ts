@@ -16,13 +16,12 @@ import { Session } from "./index"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
 import { popPendingMeta } from "./claude-sdk-permissions"
-import {
-  assistantMessageToParts,
-  resultMessageToMetadata,
-  type CompletionMetadata,
-} from "./claude-sdk-adapter"
+import { assistantMessageToParts, resultMessageToMetadata, type CompletionMetadata } from "./claude-sdk-adapter"
 import { setSdkSessionID } from "./claude-sdk-session-map"
 import { SessionStatus } from "./status"
+import { SessionCompaction } from "./compaction"
+import { Bus } from "@/bus"
+import { Instance } from "@/project/instance"
 
 // ---------------------------------------------------------------------------
 // Error message extraction
@@ -31,11 +30,10 @@ import { SessionStatus } from "./status"
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     // Check for HTTP status in common SDK error shapes
-    const status = (error as unknown as Record<string, unknown>).status ?? (error as unknown as Record<string, unknown>).statusCode
-    if (status === 500 || String(status) === "500")
-      return "Claude internal server error"
-    if (typeof status === "number" && status >= 500)
-      return `Claude server error (${status})`
+    const status =
+      (error as unknown as Record<string, unknown>).status ?? (error as unknown as Record<string, unknown>).statusCode
+    if (status === 500 || String(status) === "500") return "Claude internal server error"
+    if (typeof status === "number" && status >= 500) return `Claude server error (${status})`
     return error.message || "Unknown error"
   }
   if (typeof error === "string") return error
@@ -114,10 +112,26 @@ interface SDKTaskNotificationMessage {
   session_id: string
 }
 
+interface SDKCompactBoundary {
+  type: "system"
+  subtype: "compact_boundary"
+  compact_metadata: {
+    trigger: "manual" | "auto"
+    pre_tokens: number
+  }
+  uuid: string
+  session_id: string
+}
+
+export interface CompactionRef {
+  summary?: string
+}
+
 export interface ClaudeSdkProcessorInput {
   assistantMessage: MessageV2.Assistant
   sessionID: SessionID
   abort: AbortSignal
+  compaction?: CompactionRef
 }
 
 export interface ClaudeSdkProcessorResult {
@@ -153,7 +167,14 @@ export async function processClaudeSdkStream(
   // Track the last top-level assistant message's per-turn usage so we can
   // report accurate context-window size (the SDK result reports *cumulative*
   // tokens across all turns, which overstates actual context usage).
-  let lastTurnUsage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null } | undefined
+  let lastTurnUsage:
+    | {
+        input_tokens: number
+        output_tokens: number
+        cache_read_input_tokens?: number | null
+        cache_creation_input_tokens?: number | null
+      }
+    | undefined
 
   try {
     for await (const msg of messages) {
@@ -166,23 +187,14 @@ export async function processClaudeSdkStream(
           if (assistant.parent_tool_use_id === null) {
             lastTurnUsage = assistant.message.usage
           }
-          await processAssistantMessage(
-            assistant,
-            sessionID,
-            assistantMessage,
-            subagentMap,
-          )
+          await processAssistantMessage(assistant, sessionID, assistantMessage, subagentMap)
           break
         }
 
         case "result":
           // All tools must be complete before the result — finalize stragglers.
           await finalizeRunningTools(assistantMessage.id)
-          completionMeta = processResultMessage(
-            msg as SDKResultMessage,
-            assistantMessage,
-            lastTurnUsage,
-          )
+          completionMeta = processResultMessage(msg as SDKResultMessage, assistantMessage, lastTurnUsage)
           await Session.updateMessage(assistantMessage)
           break
 
@@ -201,6 +213,13 @@ export async function processClaudeSdkStream(
             await handleTaskProgress(msg as unknown as SDKTaskProgressMessage, assistantMessage)
           } else if (subtype === "task_notification") {
             await handleTaskNotification(msg as unknown as SDKTaskNotificationMessage, assistantMessage, subagentMap)
+          } else if (subtype === "compact_boundary") {
+            await handleCompactBoundary(
+              msg as unknown as SDKCompactBoundary,
+              sessionID,
+              assistantMessage,
+              input.compaction,
+            )
           }
           break
         }
@@ -444,10 +463,7 @@ async function createChildSession(
  * Update an Agent ToolPart's state.metadata with the child session ID,
  * which is the bridge that makes the TUI Task component work.
  */
-async function updateAgentToolMetadata(
-  agentPart: MessageV2.ToolPart,
-  childSessionID: SessionID,
-): Promise<void> {
+async function updateAgentToolMetadata(agentPart: MessageV2.ToolPart, childSessionID: SessionID): Promise<void> {
   if (agentPart.state.status !== "running") return
   await Session.updatePart({
     ...agentPart,
@@ -519,10 +535,7 @@ async function handleTaskStarted(
 /**
  * Handle task_progress: update the Agent ToolPart's metadata with tool count for live display.
  */
-async function handleTaskProgress(
-  msg: SDKTaskProgressMessage,
-  assistantMessage: MessageV2.Assistant,
-): Promise<void> {
+async function handleTaskProgress(msg: SDKTaskProgressMessage, assistantMessage: MessageV2.Assistant): Promise<void> {
   const toolUseId = msg.tool_use_id
   if (!toolUseId) return
 
@@ -613,7 +626,12 @@ async function handleTaskNotification(
 function processResultMessage(
   msg: SDKResultMessage,
   assistantMessage: MessageV2.Assistant,
-  lastTurnUsage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null },
+  lastTurnUsage?: {
+    input_tokens: number
+    output_tokens: number
+    cache_read_input_tokens?: number | null
+    cache_creation_input_tokens?: number | null
+  },
 ): CompletionMetadata {
   const meta = resultMessageToMetadata(msg)
 
@@ -653,4 +671,71 @@ function processResultMessage(
   assistantMessage.finish = meta.stop_reason ?? "end_turn"
 
   return meta
+}
+
+/**
+ * Handle compact_boundary: the SDK auto-compacted the conversation.
+ * Write compaction boundary markers into OpenCode's database so
+ * filterCompacted() truncates history on subsequent turns.
+ */
+async function handleCompactBoundary(
+  msg: SDKCompactBoundary,
+  sessionID: SessionID,
+  assistantMessage: MessageV2.Assistant,
+  ref?: CompactionRef,
+): Promise<void> {
+  const summary = ref?.summary ?? "Conversation was compacted by the Claude SDK."
+
+  // Create a user message with a compaction part (the boundary marker)
+  const userMsg = await Session.updateMessage({
+    id: MessageID.ascending(),
+    role: "user",
+    sessionID,
+    time: { created: Date.now() },
+    agent: assistantMessage.agent,
+    model: {
+      providerID: assistantMessage.providerID,
+      modelID: assistantMessage.modelID,
+    },
+  })
+  await Session.updatePart({
+    id: PartID.ascending(),
+    messageID: userMsg.id,
+    sessionID,
+    type: "compaction",
+    auto: msg.compact_metadata.trigger === "auto",
+  })
+
+  // Create an assistant message with summary: true containing the summary
+  const session = await Session.get(sessionID)
+  const reply = (await Session.updateMessage({
+    id: MessageID.ascending(),
+    role: "assistant",
+    parentID: userMsg.id,
+    sessionID,
+    mode: "compaction",
+    agent: "compaction",
+    summary: true,
+    path: {
+      cwd: session.directory,
+      root: Instance.worktree,
+    },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: assistantMessage.modelID,
+    providerID: assistantMessage.providerID,
+    time: { created: Date.now(), completed: Date.now() },
+    finish: "end_turn",
+  })) as MessageV2.Assistant
+
+  await Session.updatePart({
+    id: PartID.ascending(),
+    messageID: reply.id,
+    sessionID,
+    type: "text",
+    text: summary,
+    time: { start: Date.now(), end: Date.now() },
+  })
+
+  Bus.publish(SessionCompaction.Event.Compacted, { sessionID })
 }
