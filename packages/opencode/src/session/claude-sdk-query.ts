@@ -36,6 +36,7 @@ export interface ClaudeSdkQueryInput {
   ruleset?: Permission.Ruleset
   effort?: Options["effort"]
   mcpServers?: Record<string, McpServerConfig>
+  hooks?: Options["hooks"]
 }
 
 /**
@@ -198,6 +199,7 @@ export async function createClaudeSdkQuery(
     ...(input.effort ? { effort: input.effort } : {}),
     ...(sdkSessionID ? { resume: sdkSessionID } : {}),
     ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
+    ...(input.hooks ? { hooks: input.hooks } : {}),
   }
 
   log.info("createClaudeSdkQuery: options built", {
