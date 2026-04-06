@@ -5,6 +5,7 @@ import { BusEvent } from "./bus-event"
 import { GlobalBus } from "./global"
 
 export namespace Bus {
+  // event bus for inter-module communication
   const log = Log.create({ service: "bus" })
   type Subscription = (event: any) => void
 
