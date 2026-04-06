@@ -16,6 +16,7 @@ import { Config } from "@/config/config"
 import { ProviderTransform } from "@/provider/transform"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
+import { which } from "bun"
 import type { SDKAssistantMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk"
 import { resolveApiKey } from "./claude-sdk-query"
 import { resultMessageToMetadata } from "./claude-sdk-adapter"
@@ -244,6 +245,7 @@ When constructing the summary, try to stick to this template:
           model: model.api.id,
           cwd,
         })
+        const claudePath = which("claude") ?? undefined
         const stream = claudeQuery({
           prompt: compact,
           options: {
@@ -252,6 +254,7 @@ When constructing the summary, try to stick to this template:
             env,
             resume: sdkSession,
             maxTurns: 1,
+            ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
             hooks: {
               PostCompact: [
                 {
