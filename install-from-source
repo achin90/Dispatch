@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MUTED='\033[0;2m'
+RED='\033[0;31m'
+ORANGE='\033[38;5;214m'
+NC='\033[0m'
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="$HOME/.dispatch/bin"
+
+mkdir -p "$INSTALL_DIR"
+
+# Detect OS
+raw_os=$(uname -s)
+case "$raw_os" in
+  Darwin*)           os="darwin"  ;;
+  Linux*)            os="linux"   ;;
+  MINGW*|MSYS*|CYGWIN*) os="windows" ;;
+  *) echo -e "${RED}Unsupported OS: $raw_os${NC}"; exit 1 ;;
+esac
+
+# Detect arch
+arch=$(uname -m)
+case "$arch" in
+  aarch64|arm64) arch="arm64" ;;
+  x86_64)        arch="x64"   ;;
+  *) echo -e "${RED}Unsupported arch: $arch${NC}"; exit 1 ;;
+esac
+
+# On macOS x64, check for Rosetta
+if [ "$os" = "darwin" ] && [ "$arch" = "x64" ]; then
+  rosetta=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+  [ "$rosetta" = "1" ] && arch="arm64"
+fi
+
+# Check bun
+if ! command -v bun >/dev/null 2>&1; then
+  echo -e "${RED}Error: bun is required to build from source.${NC}"
+  echo -e "${MUTED}Install it at https://bun.sh${NC}"
+  exit 1
+fi
+
+echo -e "${MUTED}Building dispatch for ${NC}$os-$arch${MUTED}...${NC}\n"
+
+cd "$REPO_DIR"
+bun install
+bun run ./packages/opencode/script/build.ts --single
+
+# Locate the binary
+bin_name="dispatch"
+[ "$os" = "windows" ] && bin_name="dispatch.exe"
+
+binary="$REPO_DIR/packages/opencode/dist/dispatch-tui-$os-$arch/bin/$bin_name"
+
+if [ ! -f "$binary" ]; then
+  echo -e "${RED}Build failed: binary not found at $binary${NC}"
+  exit 1
+fi
+
+cp "$binary" "$INSTALL_DIR/$bin_name"
+chmod 755 "$INSTALL_DIR/$bin_name"
+
+echo -e "\n${MUTED}Installed to ${NC}$INSTALL_DIR/$bin_name"
+
+# Add to PATH if needed
+add_to_path() {
+  local file=$1
+  local cmd=$2
+  if grep -Fxq "$cmd" "$file" 2>/dev/null; then
+    echo -e "${MUTED}PATH entry already exists in $file${NC}"
+  elif [[ -w $file ]]; then
+    echo -e "\n# dispatch" >> "$file"
+    echo "$cmd" >> "$file"
+    echo -e "${MUTED}Added dispatch to \$PATH in ${NC}$file"
+  else
+    echo -e "${MUTED}Manually add to your shell config:${NC}"
+    echo -e "  $cmd"
+  fi
+}
+
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+current_shell=$(basename "$SHELL")
+
+case $current_shell in
+  fish)
+    config_files="$HOME/.config/fish/config.fish"
+    ;;
+  zsh)
+    config_files="${ZDOTDIR:-$HOME}/.zshrc ${ZDOTDIR:-$HOME}/.zshenv $XDG_CONFIG_HOME/zsh/.zshrc $XDG_CONFIG_HOME/zsh/.zshenv"
+    ;;
+  bash)
+    config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
+    ;;
+  *)
+    config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile"
+    ;;
+esac
+
+if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+  config_file=""
+  for f in $config_files; do
+    if [[ -f $f ]]; then
+      config_file=$f
+      break
+    fi
+  done
+
+  if [[ -z $config_file ]]; then
+    echo -e "${MUTED}No shell config found. Manually add to your PATH:${NC}"
+    echo -e "  export PATH=$INSTALL_DIR:\$PATH"
+  else
+    case $current_shell in
+      fish) add_to_path "$config_file" "fish_add_path $INSTALL_DIR" ;;
+      *)    add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH" ;;
+    esac
+  fi
+fi
+
+echo -e ""
+echo -e "Done. Run: ${ORANGE}dispatch${NC}"
+echo -e ""
+echo -e "${MUTED}To update, pull the latest changes and rerun this script:${NC}"
+echo -e "  git pull && ./install-from-source"
+echo -e ""

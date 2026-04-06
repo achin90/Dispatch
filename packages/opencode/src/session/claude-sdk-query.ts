@@ -18,6 +18,7 @@ import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge } from "./claude-sdk-permissions"
 import { getSdkSessionID } from "./claude-sdk-session-map"
+import { which } from "bun"
 
 const log = Log.create({ service: "claude-sdk-query" })
 
@@ -184,6 +185,8 @@ export async function createClaudeSdkQuery(
   // If so, resume it so the SDK loads the full conversation history from disk.
   const sdkSessionID = await getSdkSessionID(input.sessionID)
 
+  const claudePath = which("claude") ?? undefined
+
   const options: Options = {
     model: input.model,
     systemPrompt: input.systemPrompt,
@@ -191,6 +194,7 @@ export async function createClaudeSdkQuery(
     env,
     betas: ["context-1m-2025-08-07"],
     permissionMode: input.permissionMode ?? "default",
+    ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
     allowedTools: input.allowedTools,
     disallowedTools: input.disallowedTools,
     canUseTool: createCanUseToolBridge({ sessionID: input.sessionID, messageID: input.messageID, ruleset: input.ruleset }),

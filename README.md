@@ -71,29 +71,35 @@ To open Dispatch in a specific project directory, pass the path as an argument:
 bun run dev ~/Documents/workspace
 ```
 
-### Option 2: Build and Run
+### Option 2: Build and Install
 
-Compiles Dispatch into a standalone binary. Useful for testing production builds or running without Bun installed.
+Compiles Dispatch into a standalone binary and installs it to `~/.dispatch/bin/dispatch`. Requires [Bun](https://bun.sh).
 
-From the `packages/opencode` directory:
+From the repository root:
 
 ```bash
-cd packages/opencode
-bun run build --single
+./install-from-source
 ```
 
-The `--single` flag builds only for your current platform. Without it, the build produces binaries for all supported platforms (linux, darwin, windows across arm64/x64).
-
-The binary is output to `packages/opencode/dist/opencode-<os>-<arch>/bin/opencode`. For example on an Apple Silicon Mac:
+This builds only for your current platform and adds `dispatch` to your PATH. To update, pull the latest changes and rerun:
 
 ```bash
-./packages/opencode/dist/opencode-darwin-arm64/bin/opencode
+git pull && ./install-from-source
 ```
 
-To open a specific project directory:
+Then run from any directory:
 
 ```bash
-./packages/opencode/dist/opencode-darwin-arm64/bin/opencode ~/Documents/workspace
+dispatch
+dispatch ~/Documents/workspace
+```
+
+#### Database note
+
+The built binary and `bun run dev` use separate SQLite databases by default (`opencode.db` vs `opencode-local.db`). To share the same database as dev mode:
+
+```bash
+OPENCODE_DB=opencode-local.db dispatch
 ```
 
 ### Common Options

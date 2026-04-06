@@ -1,4 +1,6 @@
 .DS_Store
+models-snapshot.js
+models-snapshot.d.ts
 node_modules
 .worktrees
 .sst
