@@ -1,6 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import { generateText } from "ai"
 import { resolveApiKey } from "./claude-sdk-query"
+import { which } from "bun"
 import { Provider } from "@/provider/provider"
 import type { ProviderID } from "@/provider/schema"
 
@@ -28,6 +29,7 @@ export namespace Summarize {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15000)
     const chunks: string[] = []
+    const claudePath = which("claude") ?? undefined
     try {
       for await (const evt of query({
         prompt: input,
@@ -37,6 +39,7 @@ export namespace Summarize {
           tools: [],
           env,
           abortController: controller,
+          ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
         },
       })) {
         if (evt.type === "assistant") {
