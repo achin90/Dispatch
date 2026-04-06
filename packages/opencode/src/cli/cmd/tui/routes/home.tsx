@@ -1,5 +1,6 @@
-import { createEffect, createMemo, createSignal, For, Match, on, Show, Switch } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { DiffStat, PermissionRequest } from "@opencode-ai/sdk/v2"
+import type { GitHub } from "@/github"
 import { useTheme, selectedForeground } from "@tui/context/theme"
 import { useSync } from "../context/sync"
 import { useDirectory } from "../context/directory"
@@ -19,7 +20,7 @@ import { useKeyboard, useRenderer } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeybind } from "@tui/context/keybind"
 import { useExit } from "../context/exit"
-import { useToast } from "@tui/ui/toast"
+import { Toast, useToast } from "@tui/ui/toast"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Clipboard } from "@tui/util/clipboard"
@@ -121,6 +122,50 @@ function PermissionDetail(props: { request: PermissionRequest; selected: boolean
         </Match>
       </Switch>
     </box>
+  )
+}
+
+function PRCell(props: { pr: GitHub.PullRequest | null | undefined | "error" }) {
+  const { theme } = useTheme()
+
+  const label = () => {
+    const pr = props.pr
+    if (!pr || pr === "error") return ""
+    const state = pr.draft ? "Draft" : pr.state === "MERGED" ? "Merged" : pr.state === "CLOSED" ? "Closed" : "Open"
+    const ci =
+      pr.checks === "pass" ? " \u2713CI" : pr.checks === "fail" ? " \u2717CI" : pr.checks === "pending" ? " \u29D7CI" : ""
+    const rev = (() => {
+      if (pr.state !== "OPEN" || pr.draft) return ""
+      if (pr.review === "APPROVED") return " Approved"
+      if (pr.review === "CHANGES_REQUESTED") return " Changes Requested"
+      if (pr.review === "REVIEW_REQUIRED") return " Review Required"
+      return ""
+    })()
+    return `PR: #${pr.number} ${state}${ci}${rev}`
+  }
+
+  const color = () => {
+    const pr = props.pr
+    if (!pr || pr === "error") return theme.text
+    if (pr.state === "MERGED") return theme.accent
+    if (pr.state === "CLOSED") return theme.error
+    if (pr.draft) return theme.text
+    if (pr.checks === "fail" || pr.review === "CHANGES_REQUESTED") return theme.error
+    if (pr.review === "APPROVED" && pr.checks === "pass") return theme.success
+    return theme.text
+  }
+
+  return (
+    <Switch fallback={<></>}>
+      <Match when={props.pr === "error"}>
+        <text fg={theme.textMuted}>{"  ?"}</text>
+      </Match>
+      <Match when={props.pr && props.pr !== "error"}>
+        <text fg={color()} overflow="hidden" wrapMode="none">
+          {"  " + label()}
+        </text>
+      </Match>
+    </Switch>
   )
 }
 
@@ -259,6 +304,62 @@ export function Home() {
     if (pending.delete(evt.properties.branch)) fetchDiffStats()
   })
 
+  // ---- GitHub PR integration ----
+
+  const base = () => `${sdk.url}/experimental`
+
+  async function ghFetch<T>(path: string, opts?: RequestInit): Promise<T | null | "error"> {
+    const res = await sdk.fetch(`${base()}${path}${path.includes("?") ? "&" : "?"}directory=${encodeURIComponent(sync.data.path.directory)}`, opts).catch(() => null)
+    if (!res) return "error"
+    if (!res.ok) return "error"
+    return res.json() as Promise<T>
+  }
+
+  const ghStatus = (): GitHub.Status | null => kv.get("gh_status", null)
+  const prData = (): Record<string, GitHub.PullRequest | null | "error"> => kv.get("pr_data", {})
+
+  const ghAvailable = () => ghStatus()?.authenticated
+
+  // Check GitHub auth status once on mount
+  ghFetch<GitHub.Status>("/github/status").then((s) => {
+    if (s) kv.set("gh_status", s)
+  })
+
+  function worktrees() {
+    return flat()
+      .filter((a): a is typeof a & { worktree: NonNullable<typeof a.worktree> } => !!a.worktree?.branch)
+      .reduce((map, a) => map.set(a.worktree.branch, a.worktree.directory), new Map<string, string>())
+  }
+
+  function fetchPRs() {
+    if (!ghAvailable()) return
+    Array.from(worktrees()).forEach(([branch, dir]) => {
+      ghFetch<GitHub.PullRequest | null>(`/github/pr?branch=${encodeURIComponent(branch)}&cwd=${encodeURIComponent(dir)}`).then((res) => {
+        kv.set("pr_data", { ...prData(), [branch]: res })
+      })
+    })
+  }
+
+  // Fetch PRs when agents change or gh becomes available
+  createEffect(
+    on(
+      () => [ghAvailable(), flat().length] as const,
+      () => fetchPRs(),
+    ),
+  )
+
+  // Poll every 60s while dashboard is visible
+  onMount(() => {
+    const timer = setInterval(() => fetchPRs(), 300000)
+    onCleanup(() => clearInterval(timer))
+  })
+
+  function prFor(group: { agents: EnrichedAgent[] }): GitHub.PullRequest | null | undefined | "error" {
+    const branch = group.agents.find((a) => a.worktree?.branch)?.worktree?.branch
+    if (!branch) return undefined
+    return prData()[branch]
+  }
+
   // Restore selection to the last-entered agent
   if (lastEnteredSessionID) {
     const idx = flat().findIndex((a) => a.sessionID === lastEnteredSessionID)
@@ -308,239 +409,301 @@ export function Home() {
     }
   }
 
-  useKeyboard((evt) => {
-    if (keybind.match("app_exit", evt)) {
-      exit()
+  function jump(evt: { name: string }) {
+    const sym = evt.name.length === 1 ? "!@#$%^&*()".indexOf(evt.name) : -1
+    const num = sym !== -1 ? sym + 11 : parseInt(evt.name)
+    if (sym === -1 && isNaN(num)) return
+    const idx = sym !== -1 ? num : num === 0 ? 10 : num
+    if (idx >= 1 && idx <= flat().length) {
+      setSelectedIndex(idx - 1)
+      scrollToSelected()
+    }
+  }
+
+  function down() {
+    move(1)
+    scrollToSelected()
+  }
+
+  function up() {
+    move(-1)
+    scrollToSelected()
+  }
+
+  function enter() {
+    const agent = selected()
+    if (!agent) return
+    lastEnteredSessionID = agent.sessionID
+    route.navigate({ type: "session", sessionID: agent.sessionID })
+  }
+
+  function copy() {
+    const agent = selected()
+    if (!agent) return
+    Clipboard.copy(resolveDir(agent))
+      .then(() => toast.show({ message: "Copied path to clipboard", variant: "info" }))
+      .catch(() => toast.show({ message: "Failed to copy path", variant: "error" }))
+  }
+
+  async function add() {
+    setDialogOpen(true)
+    const dir = await DialogDirectorySelect.show(dialog, "Select Directory")
+    if (!dir) {
+      dialog.clear()
+      setDialogOpen(false)
       return
     }
+    const name = await DialogPrompt.show(dialog, "New Agent", { placeholder: "Agent name" })
+    dialog.clear()
+    setDialogOpen(false)
+    if (!name) return
+    const absoluteDir = dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
+    const result = await sdk.client.session.create({ directory: absoluteDir })
+    if (!result.data) return
+    const wt = (await sdk.client.worktree.info({ directory: absoluteDir })).data
+    insertAgent({
+      id: crypto.randomUUID(),
+      name,
+      sessionID: result.data.id,
+      createdAt: Date.now(),
+      directory: dir,
+      worktree: wt ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo } : undefined,
+    })
+  }
+
+  async function wt() {
+    setDialogOpen(true)
+    const repoDir = await DialogGitRepoSelect.show(
+      dialog,
+      "Select Source Repository",
+      sync.data.path.directory,
+      "Choose the repository to create a new worktree from",
+    )
+    if (!repoDir) {
+      dialog.clear()
+      setDialogOpen(false)
+      return
+    }
+    const name = await DialogPrompt.show(dialog, "New Worktree Agent", { placeholder: "Agent name (used as branch)" })
+    dialog.clear()
+    setDialogOpen(false)
+    if (!name) return
+    const worktree = (await sdk.client.worktree.create({ directory: repoDir, worktreeCreateInput: { name } })).data
+    if (!worktree) return
+    // Pre-seed zero diff stats so the effect doesn't race the
+    // background worktree checkout (--no-checkout + forked boot).
+    const dir = worktree.directory.replace(/\/+$/, "")
+    pending.set(worktree.branch, dir)
+    setDiffStats((prev) => ({ ...prev, [dir]: { additions: 0, deletions: 0, files: 0 } }))
+    const session = (await sdk.client.session.create({ directory: worktree.directory })).data
+    if (!session) return
+    insertAgent({
+      id: crypto.randomUUID(),
+      name,
+      sessionID: session.id,
+      createdAt: Date.now(),
+      directory: worktree.directory,
+      worktree: { branch: worktree.branch, directory: worktree.directory, sourceRepo: repoDir },
+    })
+  }
+
+  async function remove() {
+    const agent = selected()
+    if (!agent) return
+    setDialogOpen(true)
+    const ok = await DialogConfirm.show(dialog, "Remove Agent", `Remove "${agent.name}" from the dashboard?`)
+    dialog.clear()
+    setDialogOpen(false)
+    if (!ok) return
+    kv.set("agents", (kv.get("agents", []) as AgentEntry[]).filter((a) => a.id !== agent.id))
+    setSelectedIndex((i) => Math.min(i, flat().length - 1))
+  }
+
+  async function purge() {
+    const agent = selected()
+    if (!agent) return
+    const dir = resolveDir(agent)
+    const worktreeInfo = (await sdk.client.worktree.info({ directory: dir })).data
+    if (!worktreeInfo) return
+    setDialogOpen(true)
+    const ok = await DialogConfirm.show(dialog, "Delete Worktree", `Delete worktree and all agents in ${shortDir(dir)}?`)
+    if (!ok) {
+      dialog.clear()
+      setDialogOpen(false)
+      return
+    }
+    dialog.replace(() => (
+      <box paddingBottom={1} paddingLeft={4} paddingRight={4}>
+        <Spinner>Deleting worktree…</Spinner>
+      </box>
+    ))
+    await sdk.client.worktree
+      .remove({ directory: dir, worktreeRemoveInput: { directory: dir } })
+      .then(() => {
+        kv.set("agents", (kv.get("agents", []) as AgentEntry[]).filter((a) => resolveDir(a) !== dir))
+      })
+      .catch(() => toast.show({ message: "Failed to delete worktree", variant: "error" }))
+      .finally(() => {
+        dialog.clear()
+        setDialogOpen(false)
+      })
+    setSelectedIndex((i) => Math.min(i, flat().length - 1))
+  }
+
+  function diff() {
+    const agent = selected()
+    if (!agent) return
+    route.navigate({ type: "diffview", directory: resolveDir(agent) })
+  }
+
+  function approve() {
+    const agent = selected()
+    if (!agent) return
+    const perm = approval(agent.sessionID)
+    if (!perm) return
+    sdk.client.permission.reply({ reply: "once", requestID: perm.id })
+  }
+
+  function deny() {
+    const agent = selected()
+    if (!agent) return
+    const perm = approval(agent.sessionID)
+    if (!perm) return
+    sdk.client.permission.reply({ reply: "reject", requestID: perm.id })
+  }
+
+  function attach() {
+    if (attaching()) return
+    const agent = selected()
+    if (!agent) return
+    const dir = resolveDir(agent)
+    const leader = keybind.all.leader?.[0]
+    const byte = leader?.ctrl && leader.name ? leader.name.toLowerCase().charCodeAt(0) - 96 : 0x18
+    setAttaching(true)
+    const fgInts = fg.toInts()
+    const bgInts = theme.primary.toInts()
+    PtyAttach.open(agent.id, dir, renderer, {
+      leader: byte,
+      label: keybind.print("dashboard"),
+      dir: shortDir(dir),
+      fg: [fgInts[0], fgInts[1], fgInts[2]],
+      bg: [bgInts[0], bgInts[1], bgInts[2]],
+    }).catch(() => {}).finally(() => setAttaching(false))
+  }
+
+  function refresh() {
+    fetchPRs()
+    fetchDiffStats()
+    toast.show({ message: "Refreshing PR statuses...", variant: "info" })
+  }
+
+  async function propose() {
+    const agent = selected()
+    if (!agent?.worktree) return
+    const existing = prData()[agent.worktree.branch]
+    if (existing && existing !== "error") {
+      toast.show({ message: `PR #${existing.number} already exists`, variant: "info" })
+      return
+    }
+    setDialogOpen(true)
+    const title = await DialogPrompt.show(dialog, "Create Pull Request", { placeholder: "PR title" })
+    if (!title) {
+      dialog.clear()
+      setDialogOpen(false)
+      return
+    }
+    const body = await DialogPrompt.show(dialog, "PR Description (optional)", { placeholder: "PR description" })
+    dialog.clear()
+    setDialogOpen(false)
+    toast.show({ message: "Creating PR...", variant: "info" })
+    const pr = await ghFetch<GitHub.PullRequest | null>("/github/pr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ head: agent.worktree.branch, title, body: body ?? "", cwd: agent.worktree.directory }),
+    })
+    if (!pr || pr === "error") {
+      toast.show({ message: "Failed to create PR", variant: "error" })
+      return
+    }
+    kv.set("pr_data", { ...prData(), [agent.worktree.branch]: pr })
+    toast.show({ message: `Created PR #${pr.number}`, variant: "info" })
+  }
+
+  function link() {
+    const agent = selected()
+    if (!agent?.worktree) return
+    const pr = prData()[agent.worktree.branch]
+    if (!pr || pr === "error") {
+      toast.show({ message: "No PR for this branch", variant: "info" })
+      return
+    }
+    Clipboard.copy(pr.url)
+      .then(() => toast.show({ message: `Copied ${pr.url}`, variant: "info" }))
+      .catch(() => toast.show({ message: pr.url, variant: "info" }))
+  }
+
+  async function merge() {
+    const agent = selected()
+    if (!agent?.worktree) return
+    const pr = prData()[agent.worktree.branch]
+    if (!pr || pr === "error") {
+      toast.show({ message: "No PR for this branch", variant: "info" })
+      return
+    }
+    if (pr.state !== "OPEN") {
+      toast.show({ message: `PR is ${pr.state.toLowerCase()}`, variant: "info" })
+      return
+    }
+    if (pr.checks === "fail") {
+      toast.show({ message: "PR not ready: CI failing", variant: "error" })
+      return
+    }
+    if (pr.review === "CHANGES_REQUESTED") {
+      toast.show({ message: "PR not ready: changes requested", variant: "error" })
+      return
+    }
+    setDialogOpen(true)
+    const ok = await DialogConfirm.show(dialog, "Merge PR", `Merge PR #${pr.number} "${pr.title}"?`)
+    dialog.clear()
+    setDialogOpen(false)
+    if (!ok) return
+    toast.show({ message: "Merging PR...", variant: "info" })
+    const merged = await ghFetch<boolean>("/github/pr/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ number: pr.number }),
+    })
+    if (!merged) {
+      toast.show({ message: "Failed to merge PR", variant: "error" })
+      return
+    }
+    toast.show({ message: `Merged PR #${pr.number}`, variant: "info" })
+    fetchPRs()
+  }
+
+  useKeyboard((evt) => {
+    if (keybind.match("app_exit", evt)) { exit(); return }
     if (dialogOpen() || dialog.stack.length > 0) return
     if (keybind.leader) return
     if (flat().length === 0 && evt.name !== "a" && evt.name !== "w") return
 
-    const sym = evt.name.length === 1 ? "!@#$%^&*()".indexOf(evt.name) : -1
-    const num = sym !== -1 ? sym + 11 : parseInt(evt.name)
-    if (sym !== -1 || !isNaN(num)) {
-      const idx = sym !== -1 ? num : num === 0 ? 10 : num
-      if (idx >= 1 && idx <= flat().length) {
-        setSelectedIndex(idx - 1)
-        scrollToSelected()
-      }
-    }
-
-    if (evt.name === "j" || evt.name === "down") {
-      move(1)
-      scrollToSelected()
-    }
-    if (evt.name === "k" || evt.name === "up") {
-      move(-1)
-      scrollToSelected()
-    }
-    if (evt.name === "return") {
-      const agent = selected()
-      if (agent) {
-        lastEnteredSessionID = agent.sessionID
-        route.navigate({ type: "session", sessionID: agent.sessionID })
-      }
-    }
-    if (evt.name === "c") {
-      const agent = selected()
-      if (!agent) return
-      const dir = resolveDir(agent)
-      Clipboard.copy(dir)
-        .then(() => toast.show({ message: "Copied path to clipboard", variant: "info" }))
-        .catch(() => toast.show({ message: "Failed to copy path", variant: "error" }))
-    }
-    if (evt.name === "a") {
-      ;(async () => {
-        setDialogOpen(true)
-        const dir = await DialogDirectorySelect.show(dialog, "Select Directory")
-        if (!dir) {
-          dialog.clear()
-          setDialogOpen(false)
-          return
-        }
-        const name = await DialogPrompt.show(dialog, "New Agent", {
-          placeholder: "Agent name",
-        })
-        dialog.clear()
-        setDialogOpen(false)
-        if (!name) return
-        const absoluteDir = dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
-        const result = await sdk.client.session.create({
-          directory: absoluteDir,
-        })
-        if (!result.data) return
-        const wt = (await sdk.client.worktree.info({ directory: absoluteDir })).data
-        insertAgent({
-          id: crypto.randomUUID(),
-          name,
-          sessionID: result.data.id,
-          createdAt: Date.now(),
-          directory: dir,
-          worktree: wt ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo } : undefined,
-        })
-      })()
-    }
-    if (evt.name === "w") {
-      ;(async () => {
-        setDialogOpen(true)
-        const repoDir = await DialogGitRepoSelect.show(
-          dialog,
-          "Select Source Repository",
-          sync.data.path.directory,
-          "Choose the repository to create a new worktree from",
-        )
-        if (!repoDir) {
-          dialog.clear()
-          setDialogOpen(false)
-          return
-        }
-        const name = await DialogPrompt.show(dialog, "New Worktree Agent", {
-          placeholder: "Agent name (used as branch)",
-        })
-        dialog.clear()
-        setDialogOpen(false)
-        if (!name) return
-        const worktree = (
-          await sdk.client.worktree.create({
-            directory: repoDir,
-            worktreeCreateInput: { name },
-          })
-        ).data
-        if (!worktree) return
-        // Pre-seed zero diff stats so the effect doesn't race the
-        // background worktree checkout (--no-checkout + forked boot).
-        const dir = worktree.directory.replace(/\/+$/, "")
-        pending.set(worktree.branch, dir)
-        setDiffStats((prev) => ({
-          ...prev,
-          [dir]: { additions: 0, deletions: 0, files: 0 },
-        }))
-        const session = (
-          await sdk.client.session.create({
-            directory: worktree.directory,
-          })
-        ).data
-        if (!session) return
-        insertAgent({
-          id: crypto.randomUUID(),
-          name,
-          sessionID: session.id,
-          createdAt: Date.now(),
-          directory: worktree.directory,
-          worktree: {
-            branch: worktree.branch,
-            directory: worktree.directory,
-            sourceRepo: repoDir,
-          },
-        })
-      })()
-    }
-    if (evt.name === "d" && !evt.shift) {
-      const agent = selected()
-      if (!agent) return
-      ;(async () => {
-        setDialogOpen(true)
-        const ok = await DialogConfirm.show(dialog, "Remove Agent", `Remove "${agent.name}" from the dashboard?`)
-        dialog.clear()
-        setDialogOpen(false)
-        if (!ok) return
-        const current: AgentEntry[] = kv.get("agents", [])
-        kv.set(
-          "agents",
-          current.filter((a) => a.id !== agent.id),
-        )
-        setSelectedIndex((i) => Math.min(i, flat().length - 1))
-      })()
-    }
-    if (evt.name === "x") {
-      const agent = selected()
-      if (!agent) return
-      const dir = resolveDir(agent)
-      ;(async () => {
-        const wt = (await sdk.client.worktree.info({ directory: dir })).data
-        if (!wt) return
-        setDialogOpen(true)
-        const ok = await DialogConfirm.show(
-          dialog,
-          "Delete Worktree",
-          `Delete worktree and all agents in ${shortDir(dir)}?`,
-        )
-        if (!ok) {
-          dialog.clear()
-          setDialogOpen(false)
-          return
-        }
-        dialog.replace(() => (
-          <box paddingBottom={1} paddingLeft={4} paddingRight={4}>
-            <Spinner>Deleting worktree…</Spinner>
-          </box>
-        ))
-        try {
-          await sdk.client.worktree.remove({
-            directory: dir,
-            worktreeRemoveInput: { directory: dir },
-          })
-          const current: AgentEntry[] = kv.get("agents", [])
-          kv.set(
-            "agents",
-            current.filter((a) => resolveDir(a) !== dir),
-          )
-        } catch {
-          toast.show({ message: "Failed to delete worktree", variant: "error" })
-        } finally {
-          dialog.clear()
-          setDialogOpen(false)
-        }
-        setSelectedIndex((i) => Math.min(i, flat().length - 1))
-      })()
-    }
-    if (evt.name === "d" && evt.shift) {
-      const agent = selected()
-      if (!agent) return
-      const dir = resolveDir(agent)
-      route.navigate({ type: "diffview", directory: dir })
-    }
-    if (evt.name === "y") {
-      const agent = selected()
-      if (!agent) return
-      const perm = approval(agent.sessionID)
-      if (!perm) return
-      sdk.client.permission.reply({
-        reply: "once",
-        requestID: perm.id,
-      })
-    }
-    if (evt.name === "n") {
-      const agent = selected()
-      if (!agent) return
-      const perm = approval(agent.sessionID)
-      if (!perm) return
-      sdk.client.permission.reply({
-        reply: "reject",
-        requestID: perm.id,
-      })
-    }
-    if (evt.name === "t") {
-      if (attaching()) return
-      const agent = selected()
-      if (!agent) return
-      const dir = resolveDir(agent)
-      const leader = keybind.all.leader?.[0]
-      const byte = leader?.ctrl && leader.name
-        ? leader.name.toLowerCase().charCodeAt(0) - 96
-        : 0x18
-      setAttaching(true)
-      const fgInts = fg.toInts()
-      const bgInts = theme.primary.toInts()
-      PtyAttach.open(agent.id, dir, renderer, {
-        leader: byte,
-        label: keybind.print("dashboard"),
-        dir: shortDir(dir),
-        fg: [fgInts[0], fgInts[1], fgInts[2]],
-        bg: [bgInts[0], bgInts[1], bgInts[2]],
-      }).catch(() => {}).finally(() => setAttaching(false))
-    }
+    jump(evt)
+    if (evt.name === "j" || evt.name === "down") down()
+    if (evt.name === "k" || evt.name === "up") up()
+    if (evt.name === "return") enter()
+    if (evt.name === "c") copy()
+    if (evt.name === "a") add()
+    if (evt.name === "w") wt()
+    if (evt.name === "d" && !evt.shift) remove()
+    if (evt.name === "x") purge()
+    if (evt.name === "d" && evt.shift) diff()
+    if (evt.name === "y") approve()
+    if (evt.name === "n") deny()
+    if (evt.name === "t") attach()
+    if (evt.name === "r") refresh()
+    if (evt.name === "p" && evt.shift && ghAvailable()) propose()
+    if (evt.name === "o") link()
+    if (evt.name === "m" && evt.shift && ghAvailable()) merge()
   })
 
   return (
@@ -563,7 +726,7 @@ export function Home() {
               Status
             </text>
           </box>
-          <box flexGrow={1}>
+          <box flexGrow={1} flexShrink={1} minWidth={0}>
             <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
               Activity
             </text>
@@ -599,6 +762,7 @@ export function Home() {
                         </text>
                       )}
                     </Show>
+                    <PRCell pr={prFor(group)} />
                   </box>
                   <For each={group.agents}>
                     {(agent) => {
@@ -696,15 +860,29 @@ export function Home() {
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>d</span>
-            <span style={{ fg: theme.textMuted }}> remove agent</span>
+            <span style={{ fg: theme.textMuted }}> remove</span>
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>x</span>
             <span style={{ fg: theme.textMuted }}> delete worktree</span>
           </text>
+          <Show when={ghAvailable()}>
+            <text>
+              <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>P</span>
+              <span style={{ fg: theme.textMuted }}> create PR</span>
+            </text>
+            <text>
+              <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>o</span>
+              <span style={{ fg: theme.textMuted }}> copy url</span>
+            </text>
+            <text>
+              <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>M</span>
+              <span style={{ fg: theme.textMuted }}> merge</span>
+            </text>
+          </Show>
           <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>c</span>
-            <span style={{ fg: theme.textMuted }}> copy path</span>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>r</span>
+            <span style={{ fg: theme.textMuted }}> refresh PR statuses</span>
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>D</span>
@@ -747,6 +925,7 @@ export function Home() {
           </box>
         </box>
       </box>
+      <Toast />
     </>
   )
 }

@@ -8,6 +8,7 @@ import { execFile } from "child_process"
 import { ProviderID, ModelID } from "../../provider/schema"
 import { ToolRegistry } from "../../tool/registry"
 import { Worktree } from "../../worktree"
+import { GitHub } from "../../github"
 import { Instance } from "../../project/instance"
 import { Project } from "../../project/project"
 import { MCP } from "../../mcp"
@@ -446,6 +447,118 @@ export const ExperimentalRoutes = lazy(() =>
       }),
       async (c) => {
         return c.json(await MCP.resources())
+      },
+    )
+    .get(
+      "/github/status",
+      describeRoute({
+        summary: "Get GitHub status",
+        description: "Check if the gh CLI is installed and authenticated.",
+        operationId: "github.status",
+        responses: {
+          200: {
+            description: "gh CLI authentication status",
+            content: {
+              "application/json": {
+                schema: resolver(GitHub.Status),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        return c.json(await GitHub.status())
+      },
+    )
+    .get(
+      "/github/pr",
+      describeRoute({
+        summary: "Get PR for branch",
+        description: "Look up the most recent GitHub pull request for a given branch name.",
+        operationId: "github.pr",
+        responses: {
+          200: {
+            description: "Pull request info or null",
+            content: {
+              "application/json": {
+                schema: resolver(GitHub.PullRequest.nullable()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "query",
+        z.object({
+          branch: z.string().meta({ description: "Branch name to look up" }),
+          cwd: z.string().optional().meta({ description: "Worktree directory" }),
+        }),
+      ),
+      async (c) => {
+        const q = c.req.valid("query")
+        return c.json(await GitHub.pr(q.branch, q.cwd ?? Instance.worktree))
+      },
+    )
+    .post(
+      "/github/pr",
+      describeRoute({
+        summary: "Create a pull request",
+        description: "Create a new GitHub pull request from the given head branch.",
+        operationId: "github.createPr",
+        responses: {
+          200: {
+            description: "Created pull request info or null on failure",
+            content: {
+              "application/json": {
+                schema: resolver(GitHub.PullRequest.nullable()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          head: z.string(),
+          base: z.string().optional(),
+          title: z.string(),
+          body: z.string().optional(),
+          cwd: z.string(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        return c.json(await GitHub.create(body, body.cwd))
+      },
+    )
+    .post(
+      "/github/pr/merge",
+      describeRoute({
+        summary: "Merge a pull request",
+        description: "Merge a GitHub pull request by number.",
+        operationId: "github.mergePr",
+        responses: {
+          200: {
+            description: "Whether the merge succeeded",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          number: z.number(),
+        }),
+      ),
+      async (c) => {
+        return c.json(await GitHub.merge(c.req.valid("json").number, Instance.worktree))
       },
     ),
 )
