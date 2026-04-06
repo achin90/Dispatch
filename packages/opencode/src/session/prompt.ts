@@ -642,12 +642,13 @@ export namespace SessionPrompt {
           })
         }
 
-        // Extract user prompt from message parts, including any images/media
+        // Extract user prompt from message parts, including any images/media.
+        // Fall back to synthetic parts (e.g. auto-continue after compaction) when
+        // no non-synthetic text exists, to avoid sending an empty prompt to the SDK.
         const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
-        const texts =
-          lastUserMsg?.parts
-            .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
-            .map((p) => p.text) ?? []
+        const parts = lastUserMsg?.parts.filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored) ?? []
+        const real = parts.filter((p) => !p.synthetic)
+        const texts = (real.length ? real : parts).map((p) => p.text)
         const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
         const media =
           lastUserMsg?.parts.filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime)) ?? []
