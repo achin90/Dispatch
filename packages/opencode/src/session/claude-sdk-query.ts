@@ -7,7 +7,14 @@
  * 5. Returns the message stream for processClaudeSdkStream()
  */
 
-import { query, createSdkMcpServer, type Options, type Query, type SDKUserMessage, type McpServerConfig } from "@anthropic-ai/claude-agent-sdk"
+import {
+  query,
+  createSdkMcpServer,
+  type Options,
+  type Query,
+  type SDKUserMessage,
+  type McpServerConfig,
+} from "@anthropic-ai/claude-agent-sdk"
 import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from "@modelcontextprotocol/sdk/types.js"
 import type { MessageParam } from "@anthropic-ai/sdk/resources"
 import { Auth } from "@/auth"
@@ -18,7 +25,7 @@ import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge } from "./claude-sdk-permissions"
 import { getSdkSessionID } from "./claude-sdk-session-map"
-import { which } from "bun"
+import claudeCliPath from "@anthropic-ai/claude-agent-sdk/embed"
 
 const log = Log.create({ service: "claude-sdk-query" })
 
@@ -75,7 +82,10 @@ async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
     Object.entries(connected).map(async ([name, client]) => {
       latency.info("[3k.3] listTools start", { ts: Date.now(), name })
       const listed = await client.listTools().catch((err) => {
-        log.error("resolveMcpServers: listTools failed", { name, error: err instanceof Error ? err.message : String(err) })
+        log.error("resolveMcpServers: listTools failed", {
+          name,
+          error: err instanceof Error ? err.message : String(err),
+        })
         return undefined
       })
       latency.info("[3k.4] listTools done", { ts: Date.now(), name, tools: listed?.tools?.length ?? 0 })
@@ -169,9 +179,7 @@ export async function resolveApiKey(): Promise<string | undefined> {
  * - Model and system prompt configuration
  * - Session resumption for conversation continuity
  */
-export async function createClaudeSdkQuery(
-  input: ClaudeSdkQueryInput,
-): Promise<Query> {
+export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<Query> {
   const apiKey = await resolveApiKey()
 
   const env: Record<string, string | undefined> = {
@@ -185,8 +193,6 @@ export async function createClaudeSdkQuery(
   // If so, resume it so the SDK loads the full conversation history from disk.
   const sdkSessionID = await getSdkSessionID(input.sessionID)
 
-  const claudePath = which("claude") ?? undefined
-
   const options: Options = {
     model: input.model,
     systemPrompt: input.systemPrompt,
@@ -194,10 +200,14 @@ export async function createClaudeSdkQuery(
     env,
     betas: ["context-1m-2025-08-07"],
     permissionMode: input.permissionMode ?? "default",
-    ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
+    pathToClaudeCodeExecutable: claudeCliPath,
     allowedTools: input.allowedTools,
     disallowedTools: input.disallowedTools,
-    canUseTool: createCanUseToolBridge({ sessionID: input.sessionID, messageID: input.messageID, ruleset: input.ruleset }),
+    canUseTool: createCanUseToolBridge({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      ruleset: input.ruleset,
+    }),
     abortController: input.abortController,
     maxTurns: input.maxTurns,
     ...(input.effort ? { effort: input.effort } : {}),
