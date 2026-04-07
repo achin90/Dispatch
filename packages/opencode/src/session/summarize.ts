@@ -1,8 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk"
-import claudeCliPath from "@anthropic-ai/claude-agent-sdk/embed"
+import bin from "@anthropic-ai/claude-agent-sdk/embed"
 import { generateText } from "ai"
 import { resolveApiKey } from "./claude-sdk-query"
-import { which } from "bun"
 import { Provider } from "@/provider/provider"
 import type { ProviderID } from "@/provider/schema"
 
@@ -39,7 +38,7 @@ export namespace Summarize {
           tools: [],
           env,
           abortController: controller,
-          pathToClaudeCodeExecutable: claudeCliPath,
+          pathToClaudeCodeExecutable: bin,
         },
       })) {
         if (evt.type === "assistant") {
