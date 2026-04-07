@@ -201,7 +201,9 @@ export function Home() {
       ? agent.worktree.directory
       : !agent.directory || agent.directory === "."
         ? sync.data.path.directory
-        : sync.data.path.directory + "/" + agent.directory
+        : agent.directory.startsWith("/")
+          ? agent.directory
+          : sync.data.path.directory + "/" + agent.directory
     return dir.replace(/\/+$/, "")
   }
 
@@ -466,7 +468,7 @@ export function Home() {
       name,
       sessionID: result.data.id,
       createdAt: Date.now(),
-      directory: dir,
+      directory: absoluteDir,
       worktree: wt ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo } : undefined,
     })
   }
