@@ -682,7 +682,6 @@ export namespace SessionPrompt {
 
         const skills = await SystemPrompt.skills(agent)
         const systemParts = [
-          ...SystemPrompt.provider(model),
           ...(agent.prompt ? [agent.prompt] : []),
           ...(await SystemPrompt.environment(model)),
           ...(skills ? [skills] : []),
