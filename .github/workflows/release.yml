@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Create draft release
-        run: gh release create "v${{ inputs.version }}" --draft --title "v${{ inputs.version }}"
+        run: gh release create "v${{ inputs.version }}" --draft --title "v${{ inputs.version }}" --notes "" --target ${{ github.sha }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     outputs:

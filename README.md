@@ -35,56 +35,20 @@ Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard**
 
 ---
 
-## Prerequisites
-
-- [Bun](https://bun.sh) v1.3.11 or later
-
 ## Installation
 
-This fork is not published to npm. Clone and build from source:
+### Option 1: curl (recommended)
+
+Installs a pre-built binary for your platform to `~/.dispatch/bin/dispatch` and adds it to your PATH:
 
 ```bash
-git clone https://github.com/<your-org>/Dispatch.git
-cd Dispatch
-bun install
+curl -fsSL https://raw.githubusercontent.com/DemonicEgg/Dispatch/claudesdk/install | bash
 ```
 
----
-
-## Running
-
-There are two ways to run Dispatch locally: development mode and building from source.
-
-### Option 1: Development Mode
-
-Runs the TypeScript source directly via Bun without a build step. This is the fastest way to get started.
-
-From the repository root:
+To install a specific version:
 
 ```bash
-bun run dev
-```
-
-To open Dispatch in a specific project directory, pass the path as an argument:
-
-```bash
-bun run dev ~/Documents/workspace
-```
-
-### Option 2: Build and Install
-
-Compiles Dispatch into a standalone binary and installs it to `~/.dispatch/bin/dispatch`. Requires [Bun](https://bun.sh).
-
-From the repository root:
-
-```bash
-./install-from-source
-```
-
-This builds only for your current platform and adds `dispatch` to your PATH. To update, pull the latest changes and rerun:
-
-```bash
-git pull && ./install-from-source
+curl -fsSL https://raw.githubusercontent.com/DemonicEgg/Dispatch/claudesdk/install | bash -s -- --version 0.1.0
 ```
 
 Then run from any directory:
@@ -93,6 +57,38 @@ Then run from any directory:
 dispatch
 dispatch ~/Documents/workspace
 ```
+
+### Option 2: Build from source
+
+Requires [Bun](https://bun.sh) v1.3.11 or later. Clones, builds, and installs to `~/.dispatch/bin/dispatch`:
+
+```bash
+git clone https://github.com/DemonicEgg/Dispatch.git
+cd Dispatch
+./install-from-source
+```
+
+To update, pull the latest changes and rerun:
+
+```bash
+git pull && ./install-from-source
+```
+
+### Option 3: Development mode
+
+Runs the TypeScript source directly via Bun without a build step:
+
+```bash
+git clone https://github.com/DemonicEgg/Dispatch.git
+cd Dispatch
+bun install
+bun run dev
+bun run dev ~/Documents/workspace
+```
+
+---
+
+## Usage
 
 #### Database note
 
