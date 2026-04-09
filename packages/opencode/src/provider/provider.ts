@@ -925,6 +925,107 @@ export namespace Provider {
 
   export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Provider") {}
 
+  // Claude Agent SDK model metadata — maps SDK model aliases to concrete info.
+  const SDK_MODELS: Record<
+    string,
+    {
+      resolves: string
+      name: string
+      context: number
+      output: number
+      description: string
+      reasoning: boolean
+    }
+  > = {
+    default: {
+      resolves: "claude-opus-4-6[1m]",
+      name: "Opus 4.6 (1M context)",
+      context: 1_000_000,
+      output: 64_000,
+      description: "Most capable for complex work",
+      reasoning: true,
+    },
+    sonnet: {
+      resolves: "claude-sonnet-4-6",
+      name: "Sonnet 4.6",
+      context: 200_000,
+      output: 32_000,
+      description: "Best for everyday tasks",
+      reasoning: true,
+    },
+    "sonnet[1m]": {
+      resolves: "claude-sonnet-4-6[1m]",
+      name: "Sonnet 4.6 (1M context)",
+      context: 1_000_000,
+      output: 32_000,
+      description: "Extra usage · $3/$15 per Mtok",
+      reasoning: true,
+    },
+    haiku: {
+      resolves: "claude-haiku-4-5-20251001",
+      name: "Haiku 4.5",
+      context: 200_000,
+      output: 8_192,
+      description: "Fastest for quick answers",
+      reasoning: false,
+    },
+  }
+
+  function buildSdkModel(alias: string, info: (typeof SDK_MODELS)[string], displayName: string): Model {
+    return {
+      id: ModelID.make(alias),
+      providerID: ProviderID.make("anthropic"),
+      name: displayName,
+      family: info.resolves.split("-").slice(0, 2).join("-"),
+      api: {
+        id: info.resolves,
+        url: "https://api.anthropic.com",
+        npm: "@ai-sdk/anthropic",
+      },
+      status: "active",
+      headers: {},
+      options: {
+        sdkDescription: info.description,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+        cache: { read: 0, write: 0 },
+      },
+      limit: {
+        context: info.context,
+        output: info.output,
+      },
+      capabilities: {
+        temperature: true,
+        reasoning: info.reasoning,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: true,
+      },
+      release_date: "2025-05-14",
+    }
+  }
+
+  function sdkProvider(): Info {
+    const models: Record<string, Model> = {}
+    for (const [alias, info] of Object.entries(SDK_MODELS)) {
+      const m = buildSdkModel(alias, info, info.name)
+      m.variants = mapValues(ProviderTransform.variants(m), (v) => v)
+      models[alias] = m
+    }
+    return {
+      id: ProviderID.make("anthropic"),
+      name: "Anthropic",
+      source: "env",
+      env: ["ANTHROPIC_API_KEY"],
+      options: {},
+      models,
+    }
+  }
+
   function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
     const m: Model = {
       id: ModelID.make(model.id),
@@ -1316,6 +1417,21 @@ export namespace Provider {
             }
 
             log.info("found", { providerID })
+          }
+
+          // Always ensure the Anthropic provider exists with SDK models.
+          // The Claude Agent SDK uses these aliases (default, sonnet, etc.) and they
+          // must be present regardless of whether models.dev returned them.
+          const anthropicID = ProviderID.make("anthropic")
+          const sdk_provider = sdkProvider()
+          if (!providers[anthropicID]) {
+            providers[anthropicID] = sdk_provider
+          } else {
+            for (const [alias, model] of Object.entries(sdk_provider.models)) {
+              if (!providers[anthropicID].models[alias]) {
+                providers[anthropicID].models[alias] = model
+              }
+            }
           }
 
           return {
