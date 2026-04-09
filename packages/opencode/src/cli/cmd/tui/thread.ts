@@ -54,8 +54,11 @@ function createEventSource(client: RpcClient): EventSource {
       // Listen for cross-directory events forwarded via GlobalBus in the worker.
       // When an agent session runs in a different directory (e.g. worktree agent),
       // Bus events go to that directory's PubSub and are bridged through GlobalBus.
+      // Mirror worker.ts resolution: undefined → process.cwd() so the equality
+      // check correctly skips same-directory events that already arrive via "event".
+      const resolved = directory ?? process.cwd()
       const unsubGlobal = client.on<{ directory?: string; payload: Record<string, unknown> }>("global.event", (e) => {
-        if (e.directory === directory) return
+        if (e.directory === resolved) return
         handler(e.payload as Event)
       })
 
