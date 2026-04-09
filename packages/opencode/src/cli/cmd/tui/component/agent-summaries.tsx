@@ -46,11 +46,11 @@ export function AgentSummaries() {
       if (!current.some((a) => a.sessionID === sid)) return
       if (fetching.has(sid)) return
       fetching.add(sid)
-      ;(sdk.client.session as any)
-        .lastResponse({ sessionID: sid })
-        .then((res: { data?: { text?: string; summary?: boolean } }) => {
-          if (!res.data || !res.data.text) return
-          const summary = { text: res.data.text, ai: res.data.summary }
+      sdk.fetch(`${sdk.url}/session/${sid}/last-response`)
+        .then((res) => res?.ok ? res.json() : null)
+        .then((data: { text?: string; summary?: boolean } | null) => {
+          if (!data || !data.text) return
+          const summary = { text: data.text, ai: !!data.summary }
           sync.set("agent_summary", sid, summary)
           const latest: AgentEntry[] = kv.get("agents", [])
           kv.set(

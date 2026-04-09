@@ -1228,6 +1228,9 @@ export function Prompt(props: PromptProps) {
             <box gap={2} flexDirection="row">
               <Switch>
                 <Match when={store.mode === "normal"}>
+                  <text fg={theme.text}>
+                    {keybind.print("dashboard")} <span style={{ fg: theme.textMuted }}>dashboard</span>
+                  </text>
                   <Switch>
                     <Match when={usage()}>
                       {(item) => (
