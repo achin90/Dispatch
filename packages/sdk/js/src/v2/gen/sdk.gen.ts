@@ -43,6 +43,15 @@ import type {
   FindSymbolsResponses,
   FindTextResponses,
   FormatterStatusResponses,
+  GithubCreatePrErrors,
+  GithubCreatePrResponses,
+  GithubMergePrErrors,
+  GithubMergePrResponses,
+  GithubPrErrors,
+  GithubPrResponses,
+  GithubStatusResponses,
+  GitReposListErrors,
+  GitReposListResponses,
   GlobalConfigGetResponses,
   GlobalConfigUpdateErrors,
   GlobalConfigUpdateResponses,
@@ -128,6 +137,8 @@ import type {
   SessionGetResponses,
   SessionInitErrors,
   SessionInitResponses,
+  SessionLastResponseErrors,
+  SessionLastResponseResponses,
   SessionListResponses,
   SessionMessageErrors,
   SessionMessageResponses,
@@ -183,6 +194,9 @@ import type {
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
+  WorktreeDiffResponses,
+  WorktreeDiffstatResponses,
+  WorktreeInfoResponses,
   WorktreeListResponses,
   WorktreeRemoveErrors,
   WorktreeRemoveInput,
@@ -984,6 +998,42 @@ export class Config2 extends HeyApiClient {
   }
 }
 
+export class GitRepos extends HeyApiClient {
+  /**
+   * List git repositories
+   *
+   * Scan immediate children of a root directory and return those that are git repositories.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      root?: string
+      query?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "root" },
+            { in: "query", key: "query" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GitReposListResponses, GitReposListErrors, ThrowOnError>({
+      url: "/experimental/git-repos",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Console extends HeyApiClient {
   /**
    * Get active Console provider metadata
@@ -1470,6 +1520,36 @@ export class Worktree extends HeyApiClient {
   }
 
   /**
+   * Get worktree info
+   *
+   * Check if the current directory is a git worktree and return its info. Returns null if not a worktree.
+   */
+  public info<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorktreeInfoResponses, unknown, ThrowOnError>({
+      url: "/experimental/worktree/info",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Reset worktree
    *
    * Reset a worktree branch to the primary default branch.
@@ -1496,6 +1576,214 @@ export class Worktree extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<WorktreeResetResponses, WorktreeResetErrors, ThrowOnError>({
       url: "/experimental/worktree/reset",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Get worktree diff stats
+   *
+   * Return line-level diff statistics (additions, deletions, file count) for uncommitted changes in the current directory.
+   */
+  public diffstat<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorktreeDiffstatResponses, unknown, ThrowOnError>({
+      url: "/experimental/worktree/diffstat",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get worktree diff
+   *
+   * Return the full unified diff of uncommitted changes against HEAD in the working directory.
+   */
+  public diff<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorktreeDiffResponses, unknown, ThrowOnError>({
+      url: "/experimental/worktree/diff",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Github extends HeyApiClient {
+  /**
+   * Get GitHub status
+   *
+   * Check if the gh CLI is installed and authenticated.
+   */
+  public status<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GithubStatusResponses, unknown, ThrowOnError>({
+      url: "/experimental/github/status",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get PR for branch
+   *
+   * Look up the most recent GitHub pull request for a given branch name.
+   */
+  public pr<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      branch: string
+      cwd?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "branch" },
+            { in: "query", key: "cwd" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GithubPrResponses, GithubPrErrors, ThrowOnError>({
+      url: "/experimental/github/pr",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Create a pull request
+   *
+   * Create a new GitHub pull request from the given head branch.
+   */
+  public createPr<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      head?: string
+      base?: string
+      title?: string
+      body?: string
+      cwd?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "head" },
+            { in: "body", key: "base" },
+            { in: "body", key: "title" },
+            { in: "body", key: "body" },
+            { in: "body", key: "cwd" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<GithubCreatePrResponses, GithubCreatePrErrors, ThrowOnError>({
+      url: "/experimental/github/pr",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Merge a pull request
+   *
+   * Merge a GitHub pull request by number.
+   */
+  public mergePr<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      number?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "number" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<GithubMergePrResponses, GithubMergePrErrors, ThrowOnError>({
+      url: "/experimental/github/pr/merge",
       ...options,
       ...params,
       headers: {
@@ -2447,6 +2735,38 @@ export class Session2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<SessionUnrevertResponses, SessionUnrevertErrors, ThrowOnError>({
       url: "/session/{sessionID}/unrevert",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get last response summary
+   *
+   * Get the last assistant response for a session, optionally summarized by a small model if the response is long.
+   */
+  public lastResponse<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionLastResponseResponses, SessionLastResponseErrors, ThrowOnError>({
+      url: "/session/{sessionID}/last-response",
       ...options,
       ...params,
     })
@@ -4126,6 +4446,11 @@ export class OpencodeClient extends HeyApiClient {
     return (this._config ??= new Config2({ client: this.client }))
   }
 
+  private _gitRepos?: GitRepos
+  get gitRepos(): GitRepos {
+    return (this._gitRepos ??= new GitRepos({ client: this.client }))
+  }
+
   private _experimental?: Experimental
   get experimental(): Experimental {
     return (this._experimental ??= new Experimental({ client: this.client }))
@@ -4139,6 +4464,11 @@ export class OpencodeClient extends HeyApiClient {
   private _worktree?: Worktree
   get worktree(): Worktree {
     return (this._worktree ??= new Worktree({ client: this.client }))
+  }
+
+  private _github?: Github
+  get github(): Github {
+    return (this._github ??= new Github({ client: this.client }))
   }
 
   private _session?: Session2
