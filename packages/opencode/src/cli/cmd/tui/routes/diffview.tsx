@@ -59,6 +59,11 @@ export function Diffview() {
   })
 
   onMount(async () => {
+    if (typeof (sdk.client.worktree as any)?.diff !== "function") {
+      setLoading(false)
+      setError("Diff view not available")
+      return
+    }
     const res = await (sdk.client.worktree as any).diff({ directory: data.directory })
     setLoading(false)
     if (!res.data) {

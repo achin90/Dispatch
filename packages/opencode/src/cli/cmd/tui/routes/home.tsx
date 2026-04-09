@@ -297,10 +297,12 @@ export function Home() {
   const pending = new Map<string, string>() // branch → dir
 
   function fetchDiffStats() {
+    const worktreeClient = sdk.client.worktree as any
+    if (typeof worktreeClient?.diffstat !== "function") return
     const dirs = new Set(pending.values())
     for (const group of grouped()) {
       if (dirs.has(group.dir)) continue
-      ;(sdk.client.worktree as any).diffstat({ directory: group.dir }).then((res: { data?: DiffStat }) => {
+      worktreeClient.diffstat({ directory: group.dir }).then((res: { data?: DiffStat }) => {
         if (!res.data) return
         setDiffStats((prev) => ({ ...prev, [group.dir]: res.data! }))
       })
@@ -469,7 +471,9 @@ export function Home() {
     const absoluteDir = dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
     const result = await sdk.client.session.create({ directory: absoluteDir })
     if (!result.data) return
-    const wt = (await (sdk.client.worktree as any).info({ directory: absoluteDir })).data
+    const wt = typeof (sdk.client.worktree as any)?.info === "function"
+      ? (await (sdk.client.worktree as any).info({ directory: absoluteDir })).data
+      : undefined
     insertAgent({
       id: crypto.randomUUID(),
       name,
@@ -532,7 +536,9 @@ export function Home() {
     const agent = selected()
     if (!agent) return
     const dir = resolveDir(agent)
-    const worktreeInfo = (await (sdk.client.worktree as any).info({ directory: dir })).data
+    const worktreeInfo = typeof (sdk.client.worktree as any)?.info === "function"
+      ? (await (sdk.client.worktree as any).info({ directory: dir })).data
+      : undefined
     if (!worktreeInfo) return
     setDialogOpen(true)
     const ok = await DialogConfirm.show(dialog, "Delete Worktree", `Delete worktree and all agents in ${shortDir(dir)}?`)
