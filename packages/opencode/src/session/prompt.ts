@@ -1497,14 +1497,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       ],
                     }
 
-              const [skills, env, instructions] = yield* Effect.all([
+              const [skills, instructions] = yield* Effect.all([
                 Effect.promise(() => SystemPrompt.skills(agent)),
-                Effect.promise(() => SystemPrompt.environment(model)),
                 instruction.system().pipe(Effect.orDie),
               ])
               const system = [
                 ...(agent.prompt ? [agent.prompt] : []),
-                ...env,
+                // ...env,
                 ...(skills ? [skills] : []),
                 ...instructions,
               ]
