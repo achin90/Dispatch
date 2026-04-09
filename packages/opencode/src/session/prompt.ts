@@ -1384,6 +1384,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               !hasToolCalls &&
               lastUser.id < lastAssistant.id
             ) {
+              // Check if user queued a message while the model was running
+              const queued = msgs.findLast((m) => m.info.role === "user" && m.info.id > lastAssistant!.id)
+              if (queued) {
+                log.info("queued message found, continuing loop", { sessionID })
+                continue
+              }
               log.info("exiting loop", { sessionID })
               break
             }
@@ -1459,6 +1465,25 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               yield* sessions.updateMessage(msg)
 
               if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
+
+              // Ephemerally wrap queued user messages (sent while model was running)
+              if (step > 1 && lastFinished) {
+                for (const m of msgs) {
+                  if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
+                  for (const p of m.parts) {
+                    if (p.type !== "text" || p.ignored || p.synthetic) continue
+                    if (!p.text.trim()) continue
+                    p.text = [
+                      "<system-reminder>",
+                      "The user sent the following message:",
+                      p.text,
+                      "",
+                      "Please address this message and continue with your tasks.",
+                      "</system-reminder>",
+                    ].join("\n")
+                  }
+                }
+              }
 
               // Extract user prompt from message parts, including any images/media.
               // Fall back to synthetic parts (e.g. auto-continue after compaction) when
