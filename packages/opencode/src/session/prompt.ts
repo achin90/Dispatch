@@ -1436,6 +1436,117 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const isLastStep = step >= maxSteps
             msgs = yield* insertReminders({ messages: msgs, agent, session })
 
+            // Route: anthropic provider → Claude Agent SDK, all others → AI SDK
+            if (model.providerID === "anthropic") {
+              // ── Claude Agent SDK path ──────────────────────────────────────
+              const assistantMessage: MessageV2.Assistant = yield* sessions.updateMessage({
+                id: MessageID.ascending(),
+                parentID: lastUser.id,
+                role: "assistant" as const,
+                mode: agent.name,
+                agent: agent.name,
+                variant: lastUser.model.variant,
+                path: { cwd: ctx.directory, root: ctx.worktree },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: model.id,
+                providerID: model.providerID,
+                time: { created: Date.now() },
+                sessionID,
+              })
+
+              if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
+
+              // Extract user prompt from message parts
+              const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+              const parts = lastUserMsg?.parts.filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored) ?? []
+              const real = parts.filter((p) => !p.synthetic)
+              const texts = (real.length ? real : parts).map((p) => p.text)
+              const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
+              const media =
+                lastUserMsg?.parts.filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime)) ?? []
+              const sdkPrompt: string | { role: "user"; content: Array<Record<string, unknown>> } =
+                media.length === 0
+                  ? texts.join("\n")
+                  : {
+                      role: "user" as const,
+                      content: [
+                        ...media.map((p) => {
+                          const data = p.url.slice(p.url.indexOf(",") + 1)
+                          if (p.mime === "application/pdf")
+                            return {
+                              type: "document" as const,
+                              source: { type: "base64" as const, media_type: "application/pdf" as const, data },
+                            }
+                          return {
+                            type: "image" as const,
+                            source: {
+                              type: "base64" as const,
+                              media_type: p.mime as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+                              data,
+                            },
+                          }
+                        }),
+                        ...texts.map((t) => ({ type: "text" as const, text: t })),
+                      ],
+                    }
+
+              const [skills, env, instructions] = yield* Effect.all([
+                Effect.promise(() => SystemPrompt.skills(agent)),
+                Effect.promise(() => SystemPrompt.environment(model)),
+                instruction.system().pipe(Effect.orDie),
+              ])
+              const systemParts = [
+                ...(agent.prompt ? [agent.prompt] : []),
+                ...env,
+                ...(skills ? [skills] : []),
+                ...instructions,
+              ]
+              const systemPrompt = systemParts.join("\n\n")
+
+              const abort = new AbortController()
+              const compactionRef: import("./claude-sdk-processor").CompactionRef = {}
+
+              const sdkResult = yield* Effect.promise(async () => {
+                const { createClaudeSdkQuery } = await import("./claude-sdk-query")
+                const { processClaudeSdkStream } = await import("./claude-sdk-processor")
+
+                const sdkQuery = await createClaudeSdkQuery({
+                  prompt: sdkPrompt,
+                  sessionID,
+                  messageID: assistantMessage.id,
+                  model: model.api.id,
+                  systemPrompt,
+                  cwd: ctx.directory,
+                  abortController: abort,
+                  maxTurns: isLastStep ? 1 : undefined,
+                  ruleset: Permission.merge(agent.permission, session.permission ?? []),
+                  effort: lastUser.model.variant as "low" | "medium" | "high" | "max" | undefined,
+                  hooks: {
+                    PostCompact: [{
+                      hooks: [async (input) => {
+                        compactionRef.summary = (input as { compact_summary: string }).compact_summary
+                        return { continue: true }
+                      }],
+                    }],
+                  },
+                })
+
+                return processClaudeSdkStream(sdkQuery, {
+                  assistantMessage,
+                  sessionID,
+                  abort: abort.signal,
+                  compaction: compactionRef,
+                })
+              })
+
+              yield* InstanceState.withALS(() => instruction.clear(assistantMessage.id)).pipe(Effect.flatMap((x) => x))
+
+              if (sdkResult.outcome === "error") break
+              continue
+            }
+
+            // ── AI SDK path (all non-anthropic providers) ──────────────────
             const msg: MessageV2.Assistant = {
               id: MessageID.ascending(),
               parentID: lastUser.id,
