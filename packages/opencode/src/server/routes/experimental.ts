@@ -1,9 +1,14 @@
 import { Hono } from "hono"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import z from "zod"
+import os from "os"
+import fs from "fs/promises"
+import path from "path"
+import { execFile } from "child_process"
 import { ProviderID, ModelID } from "../../provider/schema"
 import { ToolRegistry } from "../../tool/registry"
 import { Worktree } from "../../worktree"
+import { GitHub } from "../../github"
 import { Instance } from "../../project/instance"
 import { Project } from "../../project/project"
 import { MCP } from "../../mcp"
@@ -37,6 +42,59 @@ const ConsoleSwitchBody = z.object({
 
 export const ExperimentalRoutes = lazy(() =>
   new Hono()
+    .get(
+      "/git-repos",
+      describeRoute({
+        summary: "List git repositories",
+        description:
+          "Scan immediate children of a root directory and return those that are git repositories.",
+        operationId: "gitRepos.list",
+        responses: {
+          200: {
+            description: "Git repository paths",
+            content: {
+              "application/json": {
+                schema: resolver(z.array(z.string()).meta({ ref: "GitRepoPaths" })),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "query",
+        z.object({
+          root: z.string().optional().meta({ description: "Root directory to scan (defaults to home)" }),
+          query: z.string().optional().meta({ description: "Filter repo names (case-insensitive substring)" }),
+        }),
+      ),
+      async (c) => {
+        const { root, query } = c.req.valid("query")
+        const rootDir = root || os.homedir()
+        const repos: string[] = []
+        const needle = query?.toLowerCase()
+
+        async function walk(dir: string) {
+          const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => null)
+          if (!entries) return
+          if (entries.some((e) => e.name === ".git")) {
+            if (!needle || path.basename(dir).toLowerCase().includes(needle)) {
+              repos.push(dir)
+            }
+            return
+          }
+          await Promise.all(
+            entries
+              .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !e.isSymbolicLink() && e.name !== "node_modules")
+              .map((e) => walk(path.join(dir, e.name))),
+          )
+        }
+
+        await walk(rootDir)
+        repos.sort()
+        return c.json(repos)
+      },
+    )
     .get(
       "/console",
       describeRoute({
@@ -245,6 +303,46 @@ export const ExperimentalRoutes = lazy(() =>
         return c.json(sandboxes)
       },
     )
+    .get(
+      "/worktree/info",
+      describeRoute({
+        summary: "Get worktree info",
+        description:
+          "Check if the current directory is a git worktree and return its info. Returns null if not a worktree.",
+        operationId: "worktree.info",
+        responses: {
+          200: {
+            description: "Worktree info or null",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  Worktree.Info.extend({ sourceRepo: z.string() }).nullable().meta({ ref: "WorktreeDetectInfo" }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        const dir = Instance.directory.replace(/\/+$/, "")
+        const gitpath = path.join(dir, ".git")
+        const content = await fs.readFile(gitpath, "utf-8").catch(() => null)
+        if (!content?.startsWith("gitdir:")) return c.json(null)
+        const gitdir = content.replace("gitdir:", "").trim()
+        const resolved = path.isAbsolute(gitdir) ? gitdir : path.resolve(dir, gitdir)
+        const head = await fs.readFile(path.join(resolved, "HEAD"), "utf-8").catch(() => "")
+        const branch = head.startsWith("ref:") ? head.replace("ref:", "").trim().replace(/^refs\/heads\//, "") : path.basename(dir)
+        // Derive source repo: gitdir is like /path/to/main/.git/worktrees/name
+        const match = resolved.match(/^(.+)\/\.git\/worktrees\//)
+        const source = match ? match[1] : path.dirname(resolved)
+        return c.json({
+          name: path.basename(dir),
+          branch,
+          directory: dir,
+          sourceRepo: source,
+        })
+      },
+    )
     .delete(
       "/worktree",
       describeRoute({
@@ -294,6 +392,89 @@ export const ExperimentalRoutes = lazy(() =>
         const body = c.req.valid("json")
         await Worktree.reset(body)
         return c.json(true)
+      },
+    )
+    .get(
+      "/worktree/diffstat",
+      describeRoute({
+        summary: "Get worktree diff stats",
+        description:
+          "Return line-level diff statistics (additions, deletions, file count) for uncommitted changes in the current directory.",
+        operationId: "worktree.diffstat",
+        responses: {
+          200: {
+            description: "Diff statistics",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z
+                    .object({
+                      additions: z.number(),
+                      deletions: z.number(),
+                      files: z.number(),
+                    })
+                    .meta({ ref: "DiffStat" }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        const dir = Instance.directory
+        function numstat(args: string[]): Promise<string> {
+          return new Promise((resolve) => {
+            execFile("git", args, { cwd: dir, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+              resolve(err ? "" : stdout)
+            })
+          })
+        }
+        const raw = await numstat(["diff", "HEAD", "--numstat"])
+        const lines = raw
+          .split("\n")
+          .map((line) => line.split("\t"))
+          .filter((p): p is [string, string, string] => p.length >= 3)
+          .filter((p) => !isNaN(parseInt(p[0], 10)) && !isNaN(parseInt(p[1], 10)))
+        const additions = lines.reduce((sum, p) => sum + parseInt(p[0], 10), 0)
+        const deletions = lines.reduce((sum, p) => sum + parseInt(p[1], 10), 0)
+        const files = new Set(lines.map((p) => p[2])).size
+        return c.json({ additions, deletions, files })
+      },
+    )
+    .get(
+      "/worktree/diff",
+      describeRoute({
+        summary: "Get worktree diff",
+        description:
+          "Return the full unified diff of uncommitted changes against HEAD in the working directory.",
+        operationId: "worktree.diff",
+        responses: {
+          200: {
+            description: "Unified diff output",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z
+                    .object({
+                      diff: z.string(),
+                    })
+                    .meta({ ref: "WorktreeDiff" }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        const diff = await new Promise<string>((resolve) => {
+          execFile(
+            "git",
+            ["diff", "HEAD"],
+            { cwd: Instance.directory, maxBuffer: 10 * 1024 * 1024 },
+            (err, stdout) => resolve(err ? "" : stdout),
+          )
+        })
+        return c.json({ diff })
       },
     )
     .get(
@@ -374,6 +555,118 @@ export const ExperimentalRoutes = lazy(() =>
       }),
       async (c) => {
         return c.json(await MCP.resources())
+      },
+    )
+    .get(
+      "/github/status",
+      describeRoute({
+        summary: "Get GitHub status",
+        description: "Check if the gh CLI is installed and authenticated.",
+        operationId: "github.status",
+        responses: {
+          200: {
+            description: "gh CLI authentication status",
+            content: {
+              "application/json": {
+                schema: resolver(GitHub.Status),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        return c.json(await GitHub.status())
+      },
+    )
+    .get(
+      "/github/pr",
+      describeRoute({
+        summary: "Get PR for branch",
+        description: "Look up the most recent GitHub pull request for a given branch name.",
+        operationId: "github.pr",
+        responses: {
+          200: {
+            description: "Pull request info or null",
+            content: {
+              "application/json": {
+                schema: resolver(GitHub.PullRequest.nullable()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "query",
+        z.object({
+          branch: z.string().meta({ description: "Branch name to look up" }),
+          cwd: z.string().optional().meta({ description: "Worktree directory" }),
+        }),
+      ),
+      async (c) => {
+        const q = c.req.valid("query")
+        return c.json(await GitHub.pr(q.branch, q.cwd ?? Instance.worktree))
+      },
+    )
+    .post(
+      "/github/pr",
+      describeRoute({
+        summary: "Create a pull request",
+        description: "Create a new GitHub pull request from the given head branch.",
+        operationId: "github.createPr",
+        responses: {
+          200: {
+            description: "Created pull request info or null on failure",
+            content: {
+              "application/json": {
+                schema: resolver(GitHub.PullRequest.nullable()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          head: z.string(),
+          base: z.string().optional(),
+          title: z.string(),
+          body: z.string().optional(),
+          cwd: z.string(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        return c.json(await GitHub.create(body, body.cwd))
+      },
+    )
+    .post(
+      "/github/pr/merge",
+      describeRoute({
+        summary: "Merge a pull request",
+        description: "Merge a GitHub pull request by number.",
+        operationId: "github.mergePr",
+        responses: {
+          200: {
+            description: "Whether the merge succeeded",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          number: z.number(),
+        }),
+      ),
+      async (c) => {
+        return c.json(await GitHub.merge(c.req.valid("json").number, Instance.worktree))
       },
     ),
 )

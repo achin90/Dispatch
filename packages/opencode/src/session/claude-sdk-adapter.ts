@@ -9,29 +9,14 @@ import type {
   SDKResultSuccess,
   SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk"
+import type {
+  BetaContentBlock,
+  BetaTextBlock,
+  BetaThinkingBlock,
+  BetaToolUseBlock,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages"
 import { MessageV2 } from "./message-v2"
 import { PartID, SessionID, MessageID } from "./schema"
-
-// Local type definitions matching @anthropic-ai/sdk content block shapes
-// to avoid requiring @anthropic-ai/sdk as a direct dependency.
-interface BetaTextBlock {
-  type: "text"
-  text: string
-}
-
-interface BetaThinkingBlock {
-  type: "thinking"
-  thinking: string
-}
-
-interface BetaToolUseBlock {
-  type: "tool_use"
-  id: string
-  name: string
-  input: unknown
-}
-
-type BetaContentBlock = BetaTextBlock | BetaThinkingBlock | BetaToolUseBlock | { type: string }
 
 // ---------------------------------------------------------------------------
 // Content block type guards
@@ -124,11 +109,17 @@ function normalizeTool(name: string): string {
 }
 
 // Convert snake_case keys to camelCase so TUI components can access them
+// e.g. file_path → filePath, old_string → oldString, replace_all → replaceAll
 function snakeToCamel(str: string): string {
   return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 }
 
-// Strip optional params that the TUI doesn't display
+// The SDK sends all parameters the model specified, but the TUI tool
+// components only display the primary field (e.g. filePath for Read/Edit)
+// and use the input() helper to show "remaining" params as [key=value].
+// In the original OpenCode flow, optional params like limit/offset/replaceAll
+// aren't stored in the input object at all, so they never appear in brackets.
+// We strip them here to match that behavior.
 const TOOL_OMIT_KEYS: Record<string, string[]> = {
   read: ["limit", "offset"],
   edit: ["oldString", "newString", "replaceAll"],
@@ -192,6 +183,7 @@ export function contentBlockToPart(
   if (isToolUseBlock(block)) {
     return toolUseBlockToPart(block, sessionID, messageID)
   }
+  // Unsupported block types (redacted_thinking, server_tool_use, etc.) are skipped
   return null
 }
 

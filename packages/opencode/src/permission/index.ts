@@ -123,15 +123,24 @@ export namespace Permission {
   interface PendingEntry {
     info: Request
     deferred: Deferred.Deferred<void, RejectedError | CorrectedError>
+    // Captured from the agent's InstanceState at ask() time.
+    // reply() may run in a different directory context (the TUI's), so it
+    // must use this reference rather than resolving its own InstanceState.
+    approved: Ruleset
   }
 
+  // Global pending map — NOT per-directory.
+  // Permission requests from agent sessions running in different directories
+  // must be resolvable from the TUI's directory context. The TUI sends
+  // replies via its own directory (x-opencode-directory header), which may
+  // differ from the agent's working directory where the request was created.
+  const globalPending = new Map<PermissionID, PendingEntry>()
+
   interface State {
-    pending: Map<PermissionID, PendingEntry>
     approved: Ruleset
   }
 
   export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
-    log.info("evaluate", { permission, pattern, ruleset: rulesets.flat() })
     return evalRule(permission, pattern, ...rulesets)
   }
 
@@ -146,26 +155,18 @@ export namespace Permission {
           const row = Database.use((db) =>
             db.select().from(PermissionTable).where(eq(PermissionTable.project_id, ctx.project.id)).get(),
           )
-          const state = {
-            pending: new Map<PermissionID, PendingEntry>(),
+          return {
             approved: row?.data ?? [],
           }
-
-          yield* Effect.addFinalizer(() =>
-            Effect.gen(function* () {
-              for (const item of state.pending.values()) {
-                yield* Deferred.fail(item.deferred, new RejectedError())
-              }
-              state.pending.clear()
-            }),
-          )
-
-          return state
+          // No finalizer for globalPending — entries are self-cleaning:
+          // ask() deletes its entry via Effect.ensuring when the deferred
+          // resolves, and the bridge's abort signal handler rejects the
+          // Promise.race which causes the ask() Effect to fail and clean up.
         }),
       )
 
       const ask = Effect.fn("Permission.ask")(function* (input: z.infer<typeof AskInput>) {
-        const { approved, pending } = yield* InstanceState.get(state)
+        const { approved } = yield* InstanceState.get(state)
         const { ruleset, ...request } = input
         let needsAsk = false
 
@@ -191,22 +192,21 @@ export namespace Permission {
         log.info("asking", { id, permission: info.permission, patterns: info.patterns })
 
         const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
-        pending.set(id, { info, deferred })
+        globalPending.set(id, { info, deferred, approved })
         yield* bus.publish(Event.Asked, info)
         return yield* Effect.ensuring(
           Deferred.await(deferred),
           Effect.sync(() => {
-            pending.delete(id)
+            globalPending.delete(id)
           }),
         )
       })
 
       const reply = Effect.fn("Permission.reply")(function* (input: z.infer<typeof ReplyInput>) {
-        const { approved, pending } = yield* InstanceState.get(state)
-        const existing = pending.get(input.requestID)
+        const existing = globalPending.get(input.requestID)
         if (!existing) return
 
-        pending.delete(input.requestID)
+        globalPending.delete(input.requestID)
         yield* bus.publish(Event.Replied, {
           sessionID: existing.info.sessionID,
           requestID: existing.info.id,
@@ -219,9 +219,9 @@ export namespace Permission {
             input.message ? new CorrectedError({ feedback: input.message }) : new RejectedError(),
           )
 
-          for (const [id, item] of pending.entries()) {
+          for (const [id, item] of globalPending.entries()) {
             if (item.info.sessionID !== existing.info.sessionID) continue
-            pending.delete(id)
+            globalPending.delete(id)
             yield* bus.publish(Event.Replied, {
               sessionID: item.info.sessionID,
               requestID: item.info.id,
@@ -235,6 +235,10 @@ export namespace Permission {
         yield* Deferred.succeed(existing.deferred, undefined)
         if (input.reply === "once") return
 
+        // Use the approved list captured from the agent's directory at ask() time,
+        // not from the current InstanceState (which belongs to the TUI's directory
+        // in the cross-directory case).
+        const approved = existing.approved
         for (const pattern of existing.info.always) {
           approved.push({
             permission: existing.info.permission,
@@ -243,13 +247,13 @@ export namespace Permission {
           })
         }
 
-        for (const [id, item] of pending.entries()) {
+        for (const [id, item] of globalPending.entries()) {
           if (item.info.sessionID !== existing.info.sessionID) continue
           const ok = item.info.patterns.every(
-            (pattern) => evaluate(item.info.permission, pattern, approved).action === "allow",
+            (pattern: string) => evaluate(item.info.permission, pattern, approved).action === "allow",
           )
           if (!ok) continue
-          pending.delete(id)
+          globalPending.delete(id)
           yield* bus.publish(Event.Replied, {
             sessionID: item.info.sessionID,
             requestID: item.info.id,
@@ -260,8 +264,7 @@ export namespace Permission {
       })
 
       const list = Effect.fn("Permission.list")(function* () {
-        const pending = (yield* InstanceState.get(state)).pending
-        return Array.from(pending.values(), (item) => item.info)
+        return Array.from(globalPending.values(), (item) => item.info)
       })
 
       return Service.of({ ask, reply, list })

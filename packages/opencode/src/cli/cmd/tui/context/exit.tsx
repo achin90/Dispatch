@@ -2,6 +2,7 @@ import { useRenderer } from "@opentui/solid"
 import { createSimpleContext } from "./helper"
 import { FormatError, FormatUnknownError } from "@/cli/error"
 import { win32FlushInputBuffer } from "../win32"
+import { PtyAttach } from "../util/pty"
 type Exit = ((reason?: unknown) => Promise<void>) & {
   message: {
     set: (value?: string) => () => void
@@ -35,6 +36,7 @@ export const { use: useExit, provider: ExitProvider } = createSimpleContext({
         task = (async () => {
           await input.onBeforeExit?.()
           // Reset window title before destroying renderer
+          PtyAttach.cleanup()
           renderer.setTerminalTitle("")
           renderer.destroy()
           win32FlushInputBuffer()

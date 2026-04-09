@@ -1,0 +1,54 @@
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 1.3.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        run: gh release create "v${{ inputs.version }}" --draft --title "v${{ inputs.version }}" --notes "" --target ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      version: ${{ inputs.version }}
+
+  build-cli:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Build all platforms
+        run: ./packages/opencode/script/build.ts
+        env:
+          OPENCODE_VERSION: ${{ needs.create-release.outputs.version }}
+          OPENCODE_RELEASE: ${{ needs.create-release.outputs.version }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dispatch-cli
+          path: packages/opencode/dist
+
+  finalize-release:
+    needs: [create-release, build-cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish release
+        run: gh release edit "v${{ needs.create-release.outputs.version }}" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

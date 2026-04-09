@@ -9,7 +9,7 @@
  */
 
 import { Global } from "@/global"
-import fs from "fs/promises"
+import { Filesystem } from "@/util/filesystem"
 import path from "path"
 
 const filePath = () => path.join(Global.Path.state, "sdk-sessions.json")
@@ -19,8 +19,7 @@ let cache: Record<string, string> | undefined
 async function load(): Promise<Record<string, string>> {
   if (cache) return cache
   try {
-    const raw = await fs.readFile(filePath(), "utf-8")
-    const data = JSON.parse(raw)
+    const data = await Filesystem.readJson(filePath())
     cache = (data && typeof data === "object" && !Array.isArray(data)) ? data as Record<string, string> : {}
   } catch {
     cache = {}
@@ -30,22 +29,30 @@ async function load(): Promise<Record<string, string>> {
 
 async function save(map: Record<string, string>) {
   cache = map
-  const dir = path.dirname(filePath())
-  await fs.mkdir(dir, { recursive: true })
-  await fs.writeFile(filePath(), JSON.stringify(map, null, 2))
+  await Filesystem.writeJson(filePath(), map)
 }
 
+/**
+ * Get the SDK session UUID for an opencode session ID, if one exists.
+ */
 export async function getSdkSessionID(sessionID: string): Promise<string | undefined> {
   const map = await load()
   return map[sessionID]
 }
 
+/**
+ * Set the SDK session UUID for an opencode session ID.
+ * Called after the first query() returns a system message with session_id.
+ */
 export async function setSdkSessionID(sessionID: string, sdkSessionID: string): Promise<void> {
   const map = await load()
   map[sessionID] = sdkSessionID
   await save(map)
 }
 
+/**
+ * Remove the SDK session UUID mapping for an opencode session ID.
+ */
 export async function removeSdkSessionID(sessionID: string): Promise<void> {
   const map = await load()
   delete map[sessionID]

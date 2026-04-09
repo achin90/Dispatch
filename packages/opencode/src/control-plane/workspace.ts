@@ -137,7 +137,7 @@ export namespace Workspace {
       await parseSSE(res.body, stop, (event) => {
         GlobalBus.emit("event", {
           directory: space.id,
-          payload: event,
+          payload: event as Record<string, unknown>,
         })
       })
 

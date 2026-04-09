@@ -925,7 +925,86 @@ export namespace Provider {
 
   export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Provider") {}
 
+  function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
+    const m: Model = {
+      id: ModelID.make(model.id),
+      providerID: ProviderID.make(provider.id),
+      name: model.name,
+      family: model.family,
+      api: {
+        id: model.id,
+        url: model.provider?.api ?? provider.api!,
+        npm: model.provider?.npm ?? provider.npm ?? "@ai-sdk/openai-compatible",
+      },
+      status: model.status ?? "active",
+      headers: {},
+      options: {},
+      cost: {
+        input: model.cost?.input ?? 0,
+        output: model.cost?.output ?? 0,
+        cache: {
+          read: model.cost?.cache_read ?? 0,
+          write: model.cost?.cache_write ?? 0,
+        },
+        experimentalOver200K: model.cost?.context_over_200k
+          ? {
+              cache: {
+                read: model.cost.context_over_200k.cache_read ?? 0,
+                write: model.cost.context_over_200k.cache_write ?? 0,
+              },
+              input: model.cost.context_over_200k.input,
+              output: model.cost.context_over_200k.output,
+            }
+          : undefined,
+      },
+      limit: {
+        context: model.limit.context,
+        input: model.limit.input,
+        output: model.limit.output,
+      },
+      capabilities: {
+        temperature: model.temperature,
+        reasoning: model.reasoning,
+        attachment: model.attachment,
+        toolcall: model.tool_call,
+        input: {
+          text: model.modalities?.input?.includes("text") ?? false,
+          audio: model.modalities?.input?.includes("audio") ?? false,
+          image: model.modalities?.input?.includes("image") ?? false,
+          video: model.modalities?.input?.includes("video") ?? false,
+          pdf: model.modalities?.input?.includes("pdf") ?? false,
+        },
+        output: {
+          text: model.modalities?.output?.includes("text") ?? false,
+          audio: model.modalities?.output?.includes("audio") ?? false,
+          image: model.modalities?.output?.includes("image") ?? false,
+          video: model.modalities?.output?.includes("video") ?? false,
+          pdf: model.modalities?.output?.includes("pdf") ?? false,
+        },
+        interleaved: model.interleaved ?? false,
+      },
+      release_date: model.release_date,
+      variants: {},
+    }
+
+    m.variants = mapValues(ProviderTransform.variants(m), (v) => v)
+
+    return m
+  }
+
+  export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
+    return {
+      id: ProviderID.make(provider.id),
+      source: "custom",
+      name: provider.name,
+      env: provider.env ?? [],
+      options: {},
+      models: mapValues(provider.models, (model) => fromModelsDevModel(provider, model)),
+    }
+  }
+
   // Claude Agent SDK model metadata — maps SDK model aliases to concrete info.
+  // This is the source of truth for models, replacing models.dev for the Claude SDK path.
   const SDK_MODELS: Record<
     string,
     {
@@ -1009,6 +1088,10 @@ export namespace Provider {
     }
   }
 
+  /**
+   * Returns the static Anthropic SDK models provider. Synchronous — never
+   * waits on models.dev or any network call.
+   */
   function sdkProvider(): Info {
     const models: Record<string, Model> = {}
     for (const [alias, info] of Object.entries(SDK_MODELS)) {
@@ -1026,83 +1109,25 @@ export namespace Provider {
     }
   }
 
-  function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
-    const m: Model = {
-      id: ModelID.make(model.id),
-      providerID: ProviderID.make(provider.id),
-      name: model.name,
-      family: model.family,
-      api: {
-        id: model.id,
-        url: model.provider?.api ?? provider.api!,
-        npm: model.provider?.npm ?? provider.npm ?? "@ai-sdk/openai-compatible",
-      },
-      status: model.status ?? "active",
-      headers: {},
-      options: {},
-      cost: {
-        input: model.cost?.input ?? 0,
-        output: model.cost?.output ?? 0,
-        cache: {
-          read: model.cost?.cache_read ?? 0,
-          write: model.cost?.cache_write ?? 0,
-        },
-        experimentalOver200K: model.cost?.context_over_200k
-          ? {
-              cache: {
-                read: model.cost.context_over_200k.cache_read ?? 0,
-                write: model.cost.context_over_200k.cache_write ?? 0,
-              },
-              input: model.cost.context_over_200k.input,
-              output: model.cost.context_over_200k.output,
-            }
-          : undefined,
-      },
-      limit: {
-        context: model.limit.context,
-        input: model.limit.input,
-        output: model.limit.output,
-      },
-      capabilities: {
-        temperature: model.temperature,
-        reasoning: model.reasoning,
-        attachment: model.attachment,
-        toolcall: model.tool_call,
-        input: {
-          text: model.modalities?.input?.includes("text") ?? false,
-          audio: model.modalities?.input?.includes("audio") ?? false,
-          image: model.modalities?.input?.includes("image") ?? false,
-          video: model.modalities?.input?.includes("video") ?? false,
-          pdf: model.modalities?.input?.includes("pdf") ?? false,
-        },
-        output: {
-          text: model.modalities?.output?.includes("text") ?? false,
-          audio: model.modalities?.output?.includes("audio") ?? false,
-          image: model.modalities?.output?.includes("image") ?? false,
-          video: model.modalities?.output?.includes("video") ?? false,
-          pdf: model.modalities?.output?.includes("pdf") ?? false,
-        },
-        interleaved: model.interleaved ?? false,
-      },
-      release_date: model.release_date,
-      variants: {},
-    }
-
-    m.variants = mapValues(ProviderTransform.variants(m), (v) => v)
-
-    return m
+  const SMALL_MODELS: Record<string, string[]> = {
+    anthropic: ["claude-haiku-4-5", "claude-haiku-4.5", "3-5-haiku", "3.5-haiku", "haiku"],
+    openai: ["gpt-5-nano", "gpt-5-mini", "gpt-4.1-nano", "gpt-4.1-mini"],
+    opencode: ["gpt-5-nano"],
+    google: ["gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "google-vertex": ["gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "github-copilot": ["gpt-5-mini", "claude-haiku-4.5", "gpt-5-nano"],
+    "amazon-bedrock": ["claude-haiku-4-5", "claude-haiku-4.5", "3-5-haiku", "3.5-haiku"],
+    azure: ["gpt-5-nano", "gpt-5-mini", "gpt-4.1-nano", "gpt-4.1-mini"],
+    openrouter: ["claude-haiku-4-5", "claude-haiku-4.5", "gpt-5-nano", "gemini-2.5-flash"],
+    mistral: ["mistral-small"],
   }
 
-  export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
-    return {
-      id: ProviderID.make(provider.id),
-      source: "custom",
-      name: provider.name,
-      env: provider.env ?? [],
-      options: {},
-      models: mapValues(provider.models, (model) => fromModelsDevModel(provider, model)),
-    }
-  }
+  // Fallback for unknown providers: try common small models across ecosystems
+  const SMALL_FALLBACK = [
+    "claude-haiku-4-5", "claude-haiku-4.5", "haiku",
+    "gpt-5-nano", "gpt-5-mini",
+    "gemini-3-flash", "gemini-2.5-flash",
+  ]
 
   const layer: Layer.Layer<Service, never, Config.Service | Auth.Service | Plugin.Service> = Layer.effect(
     Service,
@@ -1419,21 +1444,6 @@ export namespace Provider {
             log.info("found", { providerID })
           }
 
-          // Always ensure the Anthropic provider exists with SDK models.
-          // The Claude Agent SDK uses these aliases (default, sonnet, etc.) and they
-          // must be present regardless of whether models.dev returned them.
-          const anthropicID = ProviderID.make("anthropic")
-          const sdk_provider = sdkProvider()
-          if (!providers[anthropicID]) {
-            providers[anthropicID] = sdk_provider
-          } else {
-            for (const [alias, model] of Object.entries(sdk_provider.models)) {
-              if (!providers[anthropicID].models[alias]) {
-                providers[anthropicID].models[alias] = model
-              }
-            }
-          }
-
           return {
             models: languages,
             providers,
@@ -1444,7 +1454,24 @@ export namespace Provider {
         }),
       )
 
-      const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
+      const list = Effect.fn("Provider.list")(() =>
+        InstanceState.use(state, (s) => {
+          const providers = s.providers
+          // Ensure the "anthropic" provider always has SDK_MODELS merged in.
+          // The Claude Agent SDK uses these aliases (default, sonnet, etc.) and they
+          // must be present regardless of whether models.dev returned them.
+          const id = ProviderID.make("anthropic")
+          const sdk = sdkProvider()
+          if (!providers[id]) {
+            providers[id] = sdk
+          } else {
+            for (const [alias, model] of Object.entries(sdk.models)) {
+              if (!providers[id].models[alias]) providers[id].models[alias] = model
+            }
+          }
+          return providers
+        }),
+      )
 
       async function resolveSDK(model: Model, s: State) {
         try {
@@ -1588,10 +1615,29 @@ export namespace Provider {
       )
 
       const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderID, modelID: ModelID) {
+        // Fast path: check SDK models synchronously so anthropic lookups never
+        // block on models.dev / state() initialisation.
+        const sdk = sdkProvider()
+        if (providerID === sdk.id) {
+          const hit = sdk.models[modelID]
+          if (hit) return hit
+        }
+
         const s = yield* InstanceState.get(state)
-        const provider = s.providers[providerID]
+        const providers = s.providers
+        // Ensure SDK models are merged for anthropic
+        const anthropicId = ProviderID.make("anthropic")
+        if (!providers[anthropicId]) {
+          providers[anthropicId] = sdk
+        } else {
+          for (const [alias, model] of Object.entries(sdk.models)) {
+            if (!providers[anthropicId].models[alias]) providers[anthropicId].models[alias] = model
+          }
+        }
+
+        const provider = providers[providerID]
         if (!provider) {
-          const available = Object.keys(s.providers)
+          const available = Object.keys(providers)
           const matches = fuzzysort.go(providerID, available, { limit: 3, threshold: -10000 })
           throw new ModelNotFoundError({ providerID, modelID, suggestions: matches.map((m) => m.target) })
         }
@@ -1668,43 +1714,42 @@ export namespace Provider {
           return yield* getModel(parsed.providerID, parsed.modelID)
         }
 
+        // Use list-style providers so SDK models (e.g. "haiku" alias) are included
         const s = yield* InstanceState.get(state)
-        const provider = s.providers[providerID]
+        const providers = s.providers
+        // Ensure SDK models are merged for anthropic
+        const anthropicId = ProviderID.make("anthropic")
+        const sdk = sdkProvider()
+        if (!providers[anthropicId]) {
+          providers[anthropicId] = sdk
+        } else {
+          for (const [alias, model] of Object.entries(sdk.models)) {
+            if (!providers[anthropicId].models[alias]) providers[anthropicId].models[alias] = model
+          }
+        }
+        const provider = providers[providerID]
         if (!provider) return undefined
 
-        let priority = [
-          "claude-haiku-4-5",
-          "claude-haiku-4.5",
-          "3-5-haiku",
-          "3.5-haiku",
-          "gemini-3-flash",
-          "gemini-2.5-flash",
-          "gpt-5-nano",
-        ]
-        if (providerID.startsWith("opencode")) {
-          priority = ["gpt-5-nano"]
-        }
-        if (providerID.startsWith("github-copilot")) {
-          priority = ["gpt-5-mini", "claude-haiku-4.5", ...priority]
-        }
+        const priority = SMALL_MODELS[providerID] ?? SMALL_FALLBACK
+
         for (const item of priority) {
           if (providerID === ProviderID.amazonBedrock) {
-            const crossRegionPrefixes = ["global.", "us.", "eu."]
+            const prefixes = ["global.", "us.", "eu."]
             const candidates = Object.keys(provider.models).filter((m) => m.includes(item))
 
-            const globalMatch = candidates.find((m) => m.startsWith("global."))
-            if (globalMatch) return yield* getModel(providerID, ModelID.make(globalMatch))
+            const global = candidates.find((m) => m.startsWith("global."))
+            if (global) return yield* getModel(providerID, ModelID.make(global))
 
             const region = provider.options?.region
             if (region) {
-              const regionPrefix = region.split("-")[0]
-              if (regionPrefix === "us" || regionPrefix === "eu") {
-                const regionalMatch = candidates.find((m) => m.startsWith(`${regionPrefix}.`))
-                if (regionalMatch) return yield* getModel(providerID, ModelID.make(regionalMatch))
+              const prefix = region.split("-")[0]
+              if (prefix === "us" || prefix === "eu") {
+                const match = candidates.find((m) => m.startsWith(`${prefix}.`))
+                if (match) return yield* getModel(providerID, ModelID.make(match))
               }
             }
 
-            const unprefixed = candidates.find((m) => !crossRegionPrefixes.some((p) => m.startsWith(p)))
+            const unprefixed = candidates.find((m) => !prefixes.some((p) => m.startsWith(p)))
             if (unprefixed) return yield* getModel(providerID, ModelID.make(unprefixed))
           } else {
             for (const model of Object.keys(provider.models)) {

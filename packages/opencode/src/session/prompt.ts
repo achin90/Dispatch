@@ -35,6 +35,8 @@ import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { SessionProcessor } from "./processor"
+import { createClaudeSdkQuery, resolveMcpServers } from "./claude-sdk-query"
+import { processClaudeSdkStream, type CompactionRef } from "./claude-sdk-processor"
 import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
@@ -1438,11 +1440,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             // Route: anthropic provider → Claude Agent SDK, all others → AI SDK
             if (model.providerID === "anthropic") {
-              // ── Claude Agent SDK path ──────────────────────────────────────
-              const assistantMessage: MessageV2.Assistant = yield* sessions.updateMessage({
+              // ── Claude Agent SDK path ──────────────────────────────────
+              const msg: MessageV2.Assistant = {
                 id: MessageID.ascending(),
                 parentID: lastUser.id,
-                role: "assistant" as const,
+                role: "assistant",
                 mode: agent.name,
                 agent: agent.name,
                 variant: lastUser.model.variant,
@@ -1453,11 +1455,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 providerID: model.providerID,
                 time: { created: Date.now() },
                 sessionID,
-              })
+              }
+              yield* sessions.updateMessage(msg)
 
               if (step === 1) SessionSummary.summarize({ sessionID, messageID: lastUser.id })
 
-              // Extract user prompt from message parts
+              // Extract user prompt from message parts, including any images/media.
+              // Fall back to synthetic parts (e.g. auto-continue after compaction) when
+              // no non-synthetic text exists, to avoid sending an empty prompt to the SDK.
               const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
               const parts = lastUserMsg?.parts.filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored) ?? []
               const real = parts.filter((p) => !p.synthetic)
@@ -1465,7 +1470,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
               const media =
                 lastUserMsg?.parts.filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime)) ?? []
-              const sdkPrompt: string | { role: "user"; content: Array<Record<string, unknown>> } =
+
+              const prompt: string | import("@anthropic-ai/sdk/resources").MessageParam =
                 media.length === 0
                   ? texts.join("\n")
                   : {
@@ -1496,57 +1502,62 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 Effect.promise(() => SystemPrompt.environment(model)),
                 instruction.system().pipe(Effect.orDie),
               ])
-              const systemParts = [
+              const system = [
                 ...(agent.prompt ? [agent.prompt] : []),
                 ...env,
                 ...(skills ? [skills] : []),
                 ...instructions,
               ]
-              const systemPrompt = systemParts.join("\n\n")
+              const systemPrompt = system.join("\n\n")
 
-              const abort = new AbortController()
-              const compactionRef: import("./claude-sdk-processor").CompactionRef = {}
+              const mcp = yield* Effect.promise(() => resolveMcpServers())
 
-              const sdkResult = yield* Effect.promise(async () => {
-                const { createClaudeSdkQuery } = await import("./claude-sdk-query")
-                const { processClaudeSdkStream } = await import("./claude-sdk-processor")
+              // Shared ref: the PostCompact hook writes the summary here,
+              // processClaudeSdkStream reads it when handling compact_boundary.
+              const compactRef: CompactionRef = {}
 
-                const sdkQuery = await createClaudeSdkQuery({
-                  prompt: sdkPrompt,
+              const sdkQuery = yield* Effect.promise(() =>
+                createClaudeSdkQuery({
+                  prompt,
                   sessionID,
-                  messageID: assistantMessage.id,
+                  messageID: msg.id,
                   model: model.api.id,
                   systemPrompt,
                   cwd: ctx.directory,
-                  abortController: abort,
                   maxTurns: isLastStep ? 1 : undefined,
                   ruleset: Permission.merge(agent.permission, session.permission ?? []),
                   effort: lastUser.model.variant as "low" | "medium" | "high" | "max" | undefined,
+                  mcpServers: mcp,
                   hooks: {
                     PostCompact: [{
                       hooks: [async (input) => {
-                        compactionRef.summary = (input as { compact_summary: string }).compact_summary
+                        compactRef.summary = (input as { compact_summary: string }).compact_summary
                         return { continue: true }
                       }],
                     }],
                   },
-                })
+                }),
+              )
 
-                return processClaudeSdkStream(sdkQuery, {
-                  assistantMessage,
+              const abortController = new AbortController()
+              const abort = abortController.signal
+
+              const result = yield* Effect.promise(() =>
+                processClaudeSdkStream(sdkQuery, {
+                  assistantMessage: msg,
                   sessionID,
-                  abort: abort.signal,
-                  compaction: compactionRef,
-                })
-              })
+                  abort,
+                  compaction: compactRef,
+                }),
+              )
 
-              yield* InstanceState.withALS(() => instruction.clear(assistantMessage.id)).pipe(Effect.flatMap((x) => x))
+              yield* InstanceState.withALS(() => instruction.clear(msg.id)).pipe(Effect.flatMap((x) => x))
 
-              if (sdkResult.outcome === "error") break
+              if (result.outcome === "error") break
               continue
             }
 
-            // ── AI SDK path (all non-anthropic providers) ──────────────────
+            // ── AI SDK path (all non-anthropic providers) ──────────────
             const msg: MessageV2.Assistant = {
               id: MessageID.ascending(),
               parentID: lastUser.id,

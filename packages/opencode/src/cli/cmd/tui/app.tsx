@@ -40,7 +40,9 @@ import { DialogConsoleOrg } from "@tui/component/dialog-console-org"
 import { KeybindProvider, useKeybind } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
+import { AgentSummaries } from "@tui/component/agent-summaries"
 import { Session } from "@tui/routes/session"
+import { Diffview } from "@tui/routes/diffview"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -502,6 +504,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
+      title: "Agent dashboard",
+      value: "dashboard",
+      keybind: "dashboard",
+      category: "Session",
+      enabled: route.data.type === "session",
+      onSelect: () => {
+        route.navigate({ type: "home" })
+        dialog.clear()
+      },
+    },
+    {
       title: "Switch model",
       value: "model.list",
       keybind: "model_list",
@@ -763,6 +776,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       onSelect: () => {
         process.once("SIGCONT", () => {
           renderer.resume()
+          renderer.currentRenderBuffer.clear()
+          renderer.requestRender()
         })
 
         renderer.suspend()
@@ -801,6 +816,15 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       onSelect: (dialog) => {
         const current = kv.get("diff_wrap_mode", "word")
         kv.set("diff_wrap_mode", current === "word" ? "none" : "word")
+        dialog.clear()
+      },
+    },
+    {
+      title: kv.get("agent_summaries_visible", true) ? "Hide agent summaries" : "Show agent summaries",
+      value: "app.toggle.agent_summaries",
+      category: "System",
+      onSelect: (dialog) => {
+        kv.set("agent_summaries_visible", !kv.get("agent_summaries_visible", true))
         dialog.clear()
       },
     },
@@ -918,6 +942,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       }}
       onMouseUp={Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT ? undefined : () => Selection.copy(renderer, toast)}
     >
+      <AgentSummaries />
       <Show when={Flag.OPENCODE_SHOW_TTFD}>
         <TimeToFirstDraw />
       </Show>
@@ -928,6 +953,9 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           </Match>
           <Match when={route.data.type === "session"}>
             <Session />
+          </Match>
+          <Match when={route.data.type === "diffview"}>
+            <Diffview />
           </Match>
         </Switch>
       </Show>

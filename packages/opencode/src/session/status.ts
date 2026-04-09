@@ -5,6 +5,7 @@ import { makeRuntime } from "@/effect/run-service"
 import { SessionID } from "./schema"
 import { Effect, Layer, ServiceMap } from "effect"
 import z from "zod"
+import { Log } from "../util/log"
 
 export namespace SessionStatus {
   export const Info = z
@@ -20,6 +21,7 @@ export namespace SessionStatus {
       }),
       z.object({
         type: z.literal("busy"),
+        activity: z.string().optional(),
       }),
     ])
     .meta({
@@ -70,9 +72,13 @@ export namespace SessionStatus {
         return new Map(yield* InstanceState.get(state))
       })
 
+      const statusLatency = Log.create({ service: "submit.latency" })
+
       const set = Effect.fn("SessionStatus.set")(function* (sessionID: SessionID, status: Info) {
         const data = yield* InstanceState.get(state)
+        statusLatency.info("[5] SessionStatus.set pre-publish", { ts: Date.now(), type: status.type, sessionID })
         yield* bus.publish(Event.Status, { sessionID, status })
+        statusLatency.info("[5b] SessionStatus.set post-publish", { ts: Date.now(), type: status.type, sessionID })
         if (status.type === "idle") {
           yield* bus.publish(Event.Idle, { sessionID })
           data.delete(sessionID)

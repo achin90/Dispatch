@@ -31,6 +31,8 @@ import type { Path } from "@opencode-ai/sdk"
 import type { Workspace } from "@opencode-ai/sdk/v2"
 import { ConsoleState, emptyConsoleState, type ConsoleState as ConsoleStateType } from "@/config/console-state"
 
+const log = Log.create({ service: "submit.latency" })
+
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
   init: () => {
@@ -74,6 +76,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         [key: string]: McpResource
       }
       formatter: FormatterStatus[]
+      agent_summary: {
+        [sessionID: string]: { text: string; ai: boolean }
+      }
       vcs: VcsInfo | undefined
       path: Path
       workspaceList: Workspace[]
@@ -103,6 +108,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       mcp: {},
       mcp_resource: {},
       formatter: [],
+      agent_summary: {},
       vcs: undefined,
       path: { state: "", config: "", worktree: "", directory: "" },
       workspaceList: [],
@@ -233,6 +239,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "session.status": {
+          log.info("[6] submit.latency sync received session.status", { ts: Date.now(), type: event.properties.status.type, sessionID: event.properties.sessionID })
           setStore("session_status", event.properties.sessionID, event.properties.status)
           break
         }

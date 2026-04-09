@@ -37,7 +37,6 @@ function withVcsOnly(directory: string, body: () => Promise<void>) {
   })
 }
 
-type BranchEvent = { directory?: string; payload: { type: string; properties: { branch?: string } } }
 const weird = process.platform === "win32" ? "space file.txt" : "tab\tfile.txt"
 
 /** Wait for a Vcs.Event.BranchUpdated event on GlobalBus, with retry polling as fallback */
@@ -52,14 +51,15 @@ function nextBranchUpdate(directory: string, timeout = 10_000) {
       reject(new Error("timed out waiting for BranchUpdated event"))
     }, timeout)
 
-    function on(evt: BranchEvent) {
+    function on(evt: { directory?: string; payload: Record<string, unknown> }) {
       if (evt.directory !== directory) return
       if (evt.payload.type !== Vcs.Event.BranchUpdated.type) return
       if (settled) return
       settled = true
       clearTimeout(timer)
       GlobalBus.off("event", on)
-      resolve(evt.payload.properties.branch)
+      const props = evt.payload.properties as { branch?: string } | undefined
+      resolve(props?.branch)
     }
 
     GlobalBus.on("event", on)

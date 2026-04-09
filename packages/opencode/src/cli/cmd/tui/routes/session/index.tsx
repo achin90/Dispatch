@@ -86,6 +86,8 @@ import { TuiPluginRuntime } from "../../plugin"
 
 addDefaultParsers(parsers.parsers)
 
+const drafts = new Map<string, PromptInfo>()
+
 const context = createContext<{
   width: number
   sessionID: string
@@ -134,7 +136,9 @@ export function Session() {
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
   const pending = createMemo(() => {
-    return messages().findLast((x) => x.role === "assistant" && !x.time.completed)?.id
+    const last = messages().findLast((x) => x.role === "assistant")
+    if (!last || last.time.completed) return
+    return last.id
   })
 
   const lastAssistant = createMemo(() => {
@@ -210,9 +214,21 @@ export function Session() {
   const bind = (r: PromptRef | undefined) => {
     prompt = r
     promptRef.set(r)
-    if (seeded || !route.initialPrompt || !r) return
-    seeded = true
-    r.set(route.initialPrompt)
+    if (seeded || !r) return
+    if (route.initialPrompt) {
+      seeded = true
+      r.set(route.initialPrompt)
+    } else {
+      const draft = drafts.get(route.sessionID)
+      if (draft) {
+        // Defer to next frame so the Enter key from dashboard navigation
+        // doesn't immediately submit the restored draft
+        setTimeout(() => {
+          r.set(draft)
+          drafts.delete(route.sessionID)
+        }, 0)
+      }
+    }
   }
   const keybind = useKeybind()
   const dialog = useDialog()
@@ -241,6 +257,15 @@ export function Session() {
   })
 
   useKeyboard((evt) => {
+    if (keybind.match("dashboard", evt)) {
+      if (prompt) {
+        const info = prompt.current
+        if (info.input || info.parts.length) drafts.set(route.sessionID, info)
+        else drafts.delete(route.sessionID)
+      }
+      navigate({ type: "home" })
+      return
+    }
     if (!session()?.parentID) return
     if (keybind.match("app_exit", evt)) {
       exit()
@@ -1168,6 +1193,7 @@ export function Session() {
                     ref={bind}
                     disabled={disabled()}
                     onSubmit={() => {
+                      drafts.delete(route.sessionID)
                       toBottom()
                     }}
                     sessionID={route.sessionID}
@@ -1349,7 +1375,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           )
         }}
       </For>
-      <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
+      <Show when={props.parts.some((x) => x.type === "tool" && (x.tool === "task" || x.tool === "agent"))}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
@@ -1487,12 +1513,27 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     return true
   })
 
+  // Normalize tool name: SDK sends PascalCase ("Read"), TUI expects lowercase ("read").
+  // Also handles old persisted data that may have PascalCase names.
+  const normalizedTool = createMemo(() => props.part.tool.toLowerCase())
+
+  // Normalize input keys: SDK sends snake_case (file_path), TUI expects camelCase (filePath).
+  // Also handles old persisted data that may have snake_case keys.
+  const normalizedInput = createMemo(() =>
+    Object.fromEntries(
+      Object.entries(props.part.state.input ?? {}).map(([key, val]) => [
+        key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()),
+        val,
+      ]),
+    ),
+  )
+
   const toolprops = {
     get metadata() {
       return props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {})
     },
     get input() {
-      return props.part.state.input ?? {}
+      return normalizedInput()
     },
     get output() {
       return props.part.state.status === "completed" ? props.part.state.output : undefined
@@ -1503,7 +1544,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
       return permissions[permissionIndex]
     },
     get tool() {
-      return props.part.tool
+      return normalizedTool()
     },
     get part() {
       return props.part
@@ -1513,49 +1554,52 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   return (
     <Show when={!shouldHide()}>
       <Switch>
-        <Match when={props.part.tool === "bash"}>
+        <Match when={normalizedTool() === "bash"}>
           <Bash {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "glob"}>
+        <Match when={normalizedTool() === "glob"}>
           <Glob {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "read"}>
+        <Match when={normalizedTool() === "read"}>
           <Read {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "grep"}>
+        <Match when={normalizedTool() === "grep"}>
           <Grep {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "list"}>
+        <Match when={normalizedTool() === "list"}>
           <List {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "webfetch"}>
+        <Match when={normalizedTool() === "webfetch"}>
           <WebFetch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "codesearch"}>
+        <Match when={normalizedTool() === "codesearch"}>
           <CodeSearch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "websearch"}>
+        <Match when={normalizedTool() === "websearch"}>
           <WebSearch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "write"}>
+        <Match when={normalizedTool() === "write"}>
           <Write {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "edit"}>
+        <Match when={normalizedTool() === "edit"}>
           <Edit {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "task"}>
+        <Match when={normalizedTool() === "task"}>
           <Task {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "apply_patch"}>
+        <Match when={normalizedTool() === "agent"}>
+          <Task {...toolprops} />
+        </Match>
+        <Match when={normalizedTool() === "apply_patch"}>
           <ApplyPatch {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "todowrite"}>
+        <Match when={normalizedTool() === "todowrite"}>
           <TodoWrite {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "question"}>
+        <Match when={normalizedTool() === "question"}>
           <Question {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "skill"}>
+        <Match when={normalizedTool() === "skill"}>
           <Skill {...toolprops} />
         </Match>
         <Match when={true}>
@@ -1568,7 +1612,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
 
 type ToolProps<T> = {
   input: Partial<Tool.InferParameters<T>>
-  metadata: Partial<Tool.InferMetadata<T>>
+  metadata: Partial<Tool.InferMetadata<T>> & Record<string, unknown>
   permission: Record<string, any>
   tool: string
   output?: string
@@ -1819,7 +1863,18 @@ function Bash(props: ToolProps<typeof BashTool>) {
 }
 
 function Write(props: ToolProps<typeof WriteTool>) {
+  const ctx = use()
   const { theme, syntax } = useTheme()
+
+  const view = createMemo(() => {
+    const diffStyle = ctx.tui.diff_style
+    if (diffStyle === "stacked") return "unified"
+    return ctx.width > 120 ? "split" : "unified"
+  })
+
+  const ft = createMemo(() => filetype(props.input.filePath))
+  const diffContent = createMemo(() => props.metadata.diff)
+
   const code = createMemo(() => {
     if (!props.input.content) return ""
     return props.input.content
@@ -1827,6 +1882,32 @@ function Write(props: ToolProps<typeof WriteTool>) {
 
   return (
     <Switch>
+      <Match when={props.metadata.diff !== undefined}>
+        <BlockTool title={"← Wrote " + normalizePath(props.input.filePath!)} part={props.part}>
+          <box paddingLeft={1}>
+            <diff
+              diff={diffContent()}
+              view={view()}
+              filetype={ft()}
+              syntaxStyle={syntax()}
+              showLineNumbers={true}
+              width="100%"
+              wrapMode={ctx.diffWrapMode()}
+              fg={theme.text}
+              addedBg={theme.diffAddedBg}
+              removedBg={theme.diffRemovedBg}
+              contextBg={theme.diffContextBg}
+              addedSignColor={theme.diffHighlightAdded}
+              removedSignColor={theme.diffHighlightRemoved}
+              lineNumberFg={theme.diffLineNumber}
+              lineNumberBg={theme.diffContextBg}
+              addedLineNumberBg={theme.diffAddedLineNumberBg}
+              removedLineNumberBg={theme.diffRemovedLineNumberBg}
+            />
+          </box>
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
+        </BlockTool>
+      </Match>
       <Match when={props.metadata.diagnostics !== undefined}>
         <BlockTool title={"# Wrote " + normalizePath(props.input.filePath!)} part={props.part}>
           <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>

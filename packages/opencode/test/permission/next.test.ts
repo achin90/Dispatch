@@ -24,8 +24,17 @@ async function rejectAll(message?: string) {
 async function waitForPending(count: number) {
   for (let i = 0; i < 20; i++) {
     const list = await Permission.list()
-    if (list.length === count) return list
+    if (list.length >= count) return list
     await Bun.sleep(0)
+  }
+  return Permission.list()
+}
+
+async function waitForPendingID(id: PermissionID) {
+  for (let i = 0; i < 100; i++) {
+    const list = await Permission.list()
+    if (list.some((p) => p.id === id)) return list
+    await Bun.sleep(10)
   }
   return Permission.list()
 }
@@ -910,7 +919,7 @@ test("reply - publishes replied event", async () => {
   })
 })
 
-test("permission requests stay isolated by directory", async () => {
+test("permission requests are visible globally across directories", async () => {
   await using one = await tmpdir({ git: true })
   await using two = await tmpdir({ git: true })
 
@@ -942,35 +951,35 @@ test("permission requests stay isolated by directory", async () => {
       }),
   })
 
-  const onePending = await Instance.provide({
-    directory: one.path,
-    fn: () => waitForPending(1),
-  })
-  const twoPending = await Instance.provide({
-    directory: two.path,
-    fn: () => waitForPending(1),
-  })
+  try {
+    // Global pending map: list() returns ALL pending requests regardless of directory.
+    // Wait until both our IDs appear (there may be stale entries from other test files).
+    const pending = await Instance.provide({
+      directory: one.path,
+      fn: () => waitForPendingID(PermissionID.make("per_dir_b")),
+    })
+    const ids = pending.map((p) => p.id)
+    expect(ids).toContain(PermissionID.make("per_dir_a"))
+    expect(ids).toContain(PermissionID.make("per_dir_b"))
+  } finally {
+    // Always clean up — reply reject to both, then await the ask promises
+    await Instance.provide({
+      directory: one.path,
+      fn: () => Permission.reply({ requestID: PermissionID.make("per_dir_a"), reply: "reject" }),
+    }).catch(() => {})
+    await Instance.provide({
+      directory: two.path,
+      fn: () => Permission.reply({ requestID: PermissionID.make("per_dir_b"), reply: "reject" }),
+    }).catch(() => {})
 
-  expect(onePending).toHaveLength(1)
-  expect(twoPending).toHaveLength(1)
-  expect(onePending[0].id).toBe(PermissionID.make("per_dir_a"))
-  expect(twoPending[0].id).toBe(PermissionID.make("per_dir_b"))
-
-  await Instance.provide({
-    directory: one.path,
-    fn: () => Permission.reply({ requestID: onePending[0].id, reply: "reject" }),
-  })
-  await Instance.provide({
-    directory: two.path,
-    fn: () => Permission.reply({ requestID: twoPending[0].id, reply: "reject" }),
-  })
-
-  await a.catch(() => {})
-  await b.catch(() => {})
+    await a.catch(() => {})
+    await b.catch(() => {})
+  }
 })
 
-test("pending permission rejects on instance dispose", async () => {
+test("pending permission survives instance dispose", async () => {
   await using tmp = await tmpdir({ git: true })
+  await Instance.provide({ directory: tmp.path, fn: () => rejectAll() })
 
   const ask = Instance.provide({
     directory: tmp.path,
@@ -985,10 +994,6 @@ test("pending permission rejects on instance dispose", async () => {
         ruleset: [],
       }),
   })
-  const result = ask.then(
-    () => "resolved" as const,
-    (err) => err,
-  )
 
   await Instance.provide({
     directory: tmp.path,
@@ -999,11 +1004,25 @@ test("pending permission rejects on instance dispose", async () => {
     },
   })
 
-  expect(await result).toBeInstanceOf(Permission.RejectedError)
+  // With the global pending map, dispose no longer rejects pending requests.
+  // In production, cleanup happens via abort signals from the bridge.
+  // The request should still be in the pending list after dispose.
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const pending = await Permission.list()
+      expect(pending.map((p) => p.id)).toContain(PermissionID.make("per_dispose"))
+
+      // Clean up by rejecting
+      await rejectAll()
+    },
+  })
+  await ask.catch(() => {})
 })
 
-test("pending permission rejects on instance reload", async () => {
+test("pending permission survives instance reload", async () => {
   await using tmp = await tmpdir({ git: true })
+  await Instance.provide({ directory: tmp.path, fn: () => rejectAll() })
 
   const ask = Instance.provide({
     directory: tmp.path,
@@ -1018,10 +1037,6 @@ test("pending permission rejects on instance reload", async () => {
         ruleset: [],
       }),
   })
-  const result = ask.then(
-    () => "resolved" as const,
-    (err) => err,
-  )
 
   await Instance.provide({
     directory: tmp.path,
@@ -1032,11 +1047,25 @@ test("pending permission rejects on instance reload", async () => {
     },
   })
 
-  expect(await result).toBeInstanceOf(Permission.RejectedError)
+  // With the global pending map, reload no longer rejects pending requests.
+  // In production, cleanup happens via abort signals from the bridge.
+  // The request should still be in the pending list after reload.
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const pending = await Permission.list()
+      expect(pending.map((p) => p.id)).toContain(PermissionID.make("per_reload"))
+
+      // Clean up by rejecting
+      await rejectAll()
+    },
+  })
+  await ask.catch(() => {})
 })
 
 test("reply - does nothing for unknown requestID", async () => {
   await using tmp = await tmpdir({ git: true })
+  await Instance.provide({ directory: tmp.path, fn: () => rejectAll() })
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
@@ -1091,6 +1120,7 @@ test("ask - allows all patterns when all match allow rules", async () => {
 
 test("ask - should deny even when an earlier pattern is ask", async () => {
   await using tmp = await tmpdir({ git: true })
+  await Instance.provide({ directory: tmp.path, fn: () => rejectAll() })
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
@@ -1117,6 +1147,7 @@ test("ask - should deny even when an earlier pattern is ask", async () => {
 
 test("ask - abort should clear pending request", async () => {
   await using tmp = await tmpdir({ git: true })
+  await Instance.provide({ directory: tmp.path, fn: () => rejectAll() })
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {

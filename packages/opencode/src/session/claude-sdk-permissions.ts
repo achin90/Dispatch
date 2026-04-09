@@ -23,6 +23,10 @@ import { SessionID, MessageID } from "@/session/schema"
 // Pending metadata — diffs generated before tool parts may exist
 // ---------------------------------------------------------------------------
 
+// The SDK calls canUseTool() concurrently with yielding the assistant message.
+// Our stream processor may not have created the ToolPart yet when
+// canUseTool finishes. Store diffs here keyed by toolUseID so
+// finalizeRunningTools can merge them when transitioning to "completed".
 const pending = new Map<string, Record<string, unknown>>()
 
 export function popPendingMeta(callID: string): Record<string, unknown> | undefined {
@@ -62,6 +66,7 @@ export function extractPatterns(toolName: string, input: Record<string, unknown>
       break
   }
 
+  // For MCP tools or unknown tools, try common field names
   if (typeof input.file_path === "string") return [input.file_path]
   if (typeof input.path === "string") return [input.path]
   if (typeof input.command === "string") return [input.command]
@@ -74,6 +79,7 @@ export function extractPatterns(toolName: string, input: Record<string, unknown>
 // ---------------------------------------------------------------------------
 
 export function derivePermissionName(toolName: string): string {
+  // Map SDK tool names to the permission names used by the existing system
   switch (toolName) {
     case "Read":
       return "read"
@@ -94,6 +100,7 @@ export function derivePermissionName(toolName: string): string {
     case "NotebookEdit":
       return "notebook_edit"
     default:
+      // MCP tools come as "mcp__server__tool" — pass through as-is
       return toolName.toLowerCase()
   }
 }
@@ -102,6 +109,10 @@ export function derivePermissionName(toolName: string): string {
 // Diff generation for edit/write tools
 // ---------------------------------------------------------------------------
 
+// Returns the full unified diff when actual +/- content lines exist, or ""
+// when the diff is header-only (no real changes). The <diff> TUI component
+// needs intact @@ hunk markers and ---/+++ headers to render correctly —
+// stripping them breaks the renderer and produces a blank diff view.
 export function trimDiff(diff: string): string {
   const hasContent = diff
     .split("\n")
@@ -145,9 +156,14 @@ async function generateEditDiff(
 }
 
 // ---------------------------------------------------------------------------
-// AskUserQuestion bridge
+// AskUserQuestion bridge — routes SDK question tool through the TUI
 // ---------------------------------------------------------------------------
 
+/**
+ * Converts the SDK's AskUserQuestionInput into opencode Question.Info[],
+ * calls Question.ask() to show the TUI prompt, waits for answers, then
+ * returns them in the format the SDK expects ({ [questionText]: answerStr }).
+ */
 async function question(
   input: Record<string, unknown>,
   opts: CanUseToolBridgeOptions,
@@ -185,6 +201,8 @@ async function question(
     return { behavior: "deny", message: "User dismissed the question" }
   }
 
+  // The SDK expects answers as { [questionText]: answerString }.
+  // Multi-select answers are comma-separated.
   const result = Object.fromEntries(questions.map((q, i) => [q.question, answers[i] ? answers[i].join(", ") : ""]))
 
   return {
@@ -203,6 +221,11 @@ export interface CanUseToolBridgeOptions {
   ruleset?: Permission.Ruleset
 }
 
+/**
+ * When the SDK's canUseTool returns deny, the SDK handles the denial
+ * internally — it never tells us to update the tool part. We need to
+ * mark the part as error ourselves so the TUI shows strikethrough.
+ */
 async function markToolDenied(messageID: MessageID, callID: string, error: string) {
   try {
     const parts = await MessageV2.parts(messageID)
@@ -222,10 +245,16 @@ async function markToolDenied(messageID: MessageID, callID: string, error: strin
       },
     })
   } catch {
-    // Best-effort
+    // Best-effort: if we can't find or update the part, the denial
+    // still works — the tool just won't show strikethrough styling.
   }
 }
 
+/**
+ * Update a tool part's state.metadata with additional fields (e.g., diff for edits).
+ * Best-effort — if the part can't be found (race condition), the pending map
+ * in finalizeRunningTools handles it.
+ */
 async function updateToolMetadata(messageID: MessageID, callID: string, meta: Record<string, unknown>) {
   try {
     const parts = await MessageV2.parts(messageID)
@@ -247,6 +276,12 @@ async function updateToolMetadata(messageID: MessageID, callID: string, meta: Re
 }
 
 export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUseTool {
+  // Bind the callback to the current Instance ALS context.
+  // The Agent SDK spawns a subprocess and calls canUseTool from a stream
+  // reader context that may lose the AsyncLocalStorage context. Without
+  // this bind, Permission.ask() and Bus.publish() would operate on a
+  // different Instance state than what Permission.reply() sees from the
+  // HTTP route handler.
   return Instance.bind(
     async (
       toolName: string,
@@ -255,10 +290,16 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
     ): Promise<PermissionResult> => {
       const { signal } = callOptions
 
+      // If the signal is already aborted, deny immediately
       if (signal.aborted) {
         return { behavior: "deny", message: "Request aborted" }
       }
 
+      // ------------------------------------------------------------------
+      // AskUserQuestion: route through the Question system instead of
+      // the generic permission flow. The SDK expects answers to be
+      // returned via updatedInput.answers (keyed by question text).
+      // ------------------------------------------------------------------
       if (toolName === "AskUserQuestion") {
         return question(input, options, signal)
       }
@@ -267,17 +308,25 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       const permission = derivePermissionName(toolName)
       const requestID = PermissionID.ascending()
 
+      // Generate diff metadata for edit/write tools
       const diffInfo = await generateEditDiff(toolName, input)
       const metadata: Record<string, unknown> = { toolName, title: callOptions.title }
       if (diffInfo) {
         metadata.filepath = diffInfo.filepath
         metadata.diff = diffInfo.diff
       }
+      // Store tool input in metadata so the TUI permission prompt can display
+      // details (e.g., bash command) even when the tool part isn't synced
+      // (which happens for subagent tools in child sessions).
       metadata.input = input
 
       const toolMessageID = options.messageID
 
       try {
+        // Use Permission.ask() which registers in the pending map,
+        // publishes the Bus event for the TUI, and waits for the user's reply.
+        // This ensures Permission.reply() (called by the server route when the
+        // TUI responds) can find the request and resolve it.
         await Promise.race([
           Permission.ask({
             id: requestID,
@@ -296,7 +345,10 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
             signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
           }),
         ])
-
+        // Store diff metadata so the TUI can display it.
+        // The tool part may not exist yet (race between stream processing and
+        // canUseTool callback), so we both try to update the part directly AND
+        // stash in the pending map for finalizeRunningTools to pick up.
         if (diffInfo) {
           const meta = { diff: diffInfo.diff, filepath: diffInfo.filepath }
           pending.set(callOptions.toolUseID, meta)
@@ -304,6 +356,10 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
         }
         return { behavior: "allow", updatedInput: input }
       } catch (error) {
+        // If the error is NOT from the Permission system (i.e. it came from the
+        // abort signal winning Promise.race), the Effect fiber backing
+        // Deferred.await is still alive and the globalPending entry was never
+        // cleaned up.  Reject it so Effect.ensuring fires and deletes the entry.
         const fromPermission =
           error instanceof Permission.RejectedError ||
           error instanceof Permission.CorrectedError ||
@@ -321,6 +377,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
                 ? error.message
                 : "Permission denied"
 
+        // Update the tool part to error state so the TUI shows strikethrough
         await markToolDenied(toolMessageID, callOptions.toolUseID, msg)
 
         return { behavior: "deny", message: msg }

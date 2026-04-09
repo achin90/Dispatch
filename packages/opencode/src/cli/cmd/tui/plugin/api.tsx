@@ -95,6 +95,13 @@ function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]
     }
   }
 
+  if (route.data.type === "diffview") {
+    return {
+      name: "diffview",
+      params: { directory: route.data.directory },
+    }
+  }
+
   return {
     name: route.data.id,
     params: route.data.data,

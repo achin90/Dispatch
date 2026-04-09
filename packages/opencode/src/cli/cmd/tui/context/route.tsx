@@ -20,7 +20,12 @@ export type PluginRoute = {
   data?: Record<string, unknown>
 }
 
-export type Route = HomeRoute | SessionRoute | PluginRoute
+export type DiffviewRoute = {
+  type: "diffview"
+  directory: string
+}
+
+export type Route = HomeRoute | SessionRoute | PluginRoute | DiffviewRoute
 
 export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   name: "Route",

@@ -29,6 +29,7 @@ import { Instance } from "@/project/instance"
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
+    // Check for HTTP status in common SDK error shapes
     const status =
       (error as unknown as Record<string, unknown>).status ?? (error as unknown as Record<string, unknown>).statusCode
     if (status === 500 || String(status) === "500") return "Claude internal server error"
@@ -61,6 +62,9 @@ function formatActivity(part: MessageV2.ToolPart): string {
 // ---------------------------------------------------------------------------
 // SDK task system message types
 // ---------------------------------------------------------------------------
+// The SDK sends these with type: "system" but different subtypes.
+// TypeScript narrows the switch on msg.type to SDKSystemMessage (subtype: "init" only),
+// so we define local interfaces matching the SDK's actual types.
 
 interface SDKTaskStartedMessage {
   type: "system"
@@ -143,6 +147,15 @@ interface SubagentContext {
 
 /**
  * Process a stream of SDKMessage from the Agent SDK's query() function.
+ *
+ * For each AssistantMessage: maps content blocks to MessageV2 parts and persists them.
+ * For the ResultMessage: finalizes the assistant message with cost/token metadata.
+ * Routes subagent messages to child sessions via parent_tool_use_id.
+ *
+ * The SDK owns tool execution — it never sends us tool-result events. Before
+ * processing a new assistant message (which means previous tools finished),
+ * we finalize any "running" tool parts so spinners stop and the TUI can
+ * collapse them.
  */
 export async function processClaudeSdkStream(
   messages: AsyncIterable<SDKMessage>,
@@ -151,6 +164,9 @@ export async function processClaudeSdkStream(
   const { assistantMessage, sessionID } = input
   let completionMeta: CompletionMetadata | undefined
   const subagentMap = new Map<string, SubagentContext>()
+  // Track the last top-level assistant message's per-turn usage so we can
+  // report accurate context-window size (the SDK result reports *cumulative*
+  // tokens across all turns, which overstates actual context usage).
   let lastTurnUsage:
     | {
         input_tokens: number
@@ -167,6 +183,7 @@ export async function processClaudeSdkStream(
       switch (msg.type) {
         case "assistant": {
           const assistant = msg as SDKAssistantMessage
+          // Only track top-level messages (not subagent) for context size
           if (assistant.parent_tool_use_id === null) {
             lastTurnUsage = assistant.message.usage
           }
@@ -175,12 +192,16 @@ export async function processClaudeSdkStream(
         }
 
         case "result":
+          // All tools must be complete before the result — finalize stragglers.
           await finalizeRunningTools(assistantMessage.id)
           completionMeta = processResultMessage(msg as SDKResultMessage, assistantMessage, lastTurnUsage)
           await Session.updateMessage(assistantMessage)
           break
 
         case "system": {
+          // The SDK sends multiple system subtypes (init, task_started, task_progress,
+          // task_notification) all with type: "system". TypeScript narrows to SDKSystemMessage
+          // which only has subtype: "init", so we cast to access subtype as a string.
           const sysMsg = msg as SDKSystemMessage
           const subtype = sysMsg.subtype as string
 
@@ -203,12 +224,17 @@ export async function processClaudeSdkStream(
           break
         }
 
+        // user, stream_event, etc. — ignored
         default:
           break
       }
     }
   } catch (error) {
+    // The SDK throws when the abort signal fires (e.g. user presses Esc).
+    // This is expected — treat it as a clean abort, not an unhandled error.
     if (!input.abort.aborted) {
+      // Handle API errors (e.g. 500 Internal Server Error) gracefully
+      // instead of letting them bubble up as unhandled exceptions.
       await abortRunningTools(assistantMessage.id)
       for (const ctx of Array.from(subagentMap.values())) {
         await abortRunningTools(ctx.childMessageID)
@@ -224,8 +250,10 @@ export async function processClaudeSdkStream(
     }
   }
 
+  // If we exited without a result message (e.g. abort), mark pending tools as errors
   if (!completionMeta) {
     await abortRunningTools(assistantMessage.id)
+    // Also abort running tools in child sessions
     for (const ctx of Array.from(subagentMap.values())) {
       await abortRunningTools(ctx.childMessageID)
     }
@@ -244,10 +272,18 @@ export async function processClaudeSdkStream(
   }
 }
 
+/**
+ * Mark all "running" tool parts as "completed". Called before processing a new
+ * assistant message or result, since the SDK wouldn't proceed if tools were
+ * still running.
+ */
 async function finalizeRunningTools(messageID: MessageID): Promise<void> {
   const parts = await MessageV2.parts(messageID)
   for (const part of parts) {
     if (part.type !== "tool" || part.state.status !== "running") continue
+    // Merge any pending metadata stashed by canUseTool (e.g. diffs for
+    // edit/write tools). The pending map handles the race where canUseTool
+    // runs before processAssistantMessage creates the ToolPart.
     const merged = {
       ...(part.state.metadata ?? {}),
       ...popPendingMeta(part.callID),
@@ -269,6 +305,9 @@ async function finalizeRunningTools(messageID: MessageID): Promise<void> {
   }
 }
 
+/**
+ * Mark all "running" tool parts as "error" on abort/unexpected exit.
+ */
 async function abortRunningTools(messageID: MessageID): Promise<void> {
   const parts = await MessageV2.parts(messageID)
   for (const part of parts) {
@@ -288,6 +327,11 @@ async function abortRunningTools(messageID: MessageID): Promise<void> {
   }
 }
 
+/**
+ * Maps an SDKAssistantMessage's content blocks to MessageV2 parts and persists each one.
+ * If the message has a parent_tool_use_id, it belongs to a subagent and is routed to
+ * the appropriate child session.
+ */
 async function processAssistantMessage(
   msg: SDKAssistantMessage,
   sessionID: SessionID,
@@ -295,24 +339,29 @@ async function processAssistantMessage(
   subagentMap: Map<string, SubagentContext>,
 ): Promise<void> {
   if (msg.parent_tool_use_id === null) {
+    // Top-level message — finalize running tools then persist parts
     await finalizeRunningTools(assistantMessage.id)
     const parts = assistantMessageToParts(msg, sessionID, assistantMessage.id)
     for (const part of parts) {
       await Session.updatePart(part)
     }
+    // Update activity based on the last meaningful part
     const tool = parts.findLast((p) => p.type === "tool")
     const activity = tool ? formatActivity(tool) : "Thinking..."
-    await SessionStatus.set(sessionID, { type: "busy", activity } as any)
+    await SessionStatus.set(sessionID, { type: "busy", activity })
     return
   }
 
+  // Subagent message — route to child session
   const parentToolUseId = msg.parent_tool_use_id
   let ctx = subagentMap.get(parentToolUseId)
 
   if (!ctx) {
+    // First message from this subagent — create child session (task_started hasn't arrived yet)
     ctx = await createChildSession(sessionID, assistantMessage, parentToolUseId)
     subagentMap.set(parentToolUseId, ctx)
   } else {
+    // Subsequent turn — previous tools in child session must be complete
     await finalizeRunningTools(ctx.childMessageID)
   }
 
@@ -322,17 +371,28 @@ async function processAssistantMessage(
   }
 }
 
+/**
+ * Resolve the agent name from a tool part's input.
+ * The SDK sends subagentType as PascalCase (e.g., "Explore") but opencode
+ * agents use lowercase names (e.g., "explore") for color/display matching.
+ */
 function resolveAgentName(toolPart: MessageV2.ToolPart | undefined, fallback?: string): string {
   const raw = (toolPart?.state.input?.subagentType as string | undefined) ?? fallback
   return raw?.toLowerCase() ?? "default"
 }
 
+/**
+ * Create a child session for a subagent and wire it up to the parent Agent ToolPart.
+ * Creates a user message (with the prompt) and an assistant message, mirroring
+ * the structure the old task tool creates via SessionPrompt.prompt().
+ */
 async function createChildSession(
   sessionID: SessionID,
   assistantMessage: MessageV2.Assistant,
   parentToolUseId: string,
   overrideAgentName?: string,
 ): Promise<SubagentContext> {
+  // Find the Agent ToolPart's description/prompt from its input to use as title
   const parentParts = await MessageV2.parts(assistantMessage.id)
   const agentPart = parentParts.find(
     (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === parentToolUseId,
@@ -346,6 +406,7 @@ async function createChildSession(
     title: description ? `${description} (@${agentName} subagent)` : "Subagent",
   })
 
+  // Create a user message with the prompt text (matches old task tool pattern)
   const userMessageID = MessageID.ascending()
   const userMessage: MessageV2.User = {
     id: userMessageID,
@@ -360,6 +421,7 @@ async function createChildSession(
   }
   await Session.updateMessage(userMessage)
 
+  // Create text part for the user message with the prompt
   if (prompt) {
     await Session.updatePart({
       id: PartID.ascending(),
@@ -371,6 +433,7 @@ async function createChildSession(
     })
   }
 
+  // Create an assistant message linked to the user message
   const childMessageID = MessageID.ascending()
   const childMessage: MessageV2.Assistant = {
     id: childMessageID,
@@ -388,6 +451,7 @@ async function createChildSession(
   }
   await Session.updateMessage(childMessage)
 
+  // Update the parent Agent ToolPart's metadata with the child session ID
   if (agentPart) {
     await updateAgentToolMetadata(agentPart, childSession.id)
   }
@@ -395,6 +459,10 @@ async function createChildSession(
   return { childSessionID: childSession.id, childMessageID, userMessageID }
 }
 
+/**
+ * Update an Agent ToolPart's state.metadata with the child session ID,
+ * which is the bridge that makes the TUI Task component work.
+ */
 async function updateAgentToolMetadata(agentPart: MessageV2.ToolPart, childSessionID: SessionID): Promise<void> {
   if (agentPart.state.status !== "running") return
   await Session.updatePart({
@@ -409,6 +477,10 @@ async function updateAgentToolMetadata(agentPart: MessageV2.ToolPart, childSessi
   })
 }
 
+/**
+ * Handle task_started: eagerly create child session if not yet created,
+ * update title and Agent ToolPart state.
+ */
 async function handleTaskStarted(
   msg: SDKTaskStartedMessage,
   sessionID: SessionID,
@@ -418,6 +490,9 @@ async function handleTaskStarted(
   const toolUseId = msg.tool_use_id
   if (!toolUseId) return
 
+  // task_type is a generic classification (e.g., "local_agent"), not the agent name.
+  // The actual agent name comes from the tool input's subagentType field.
+  // We pass task_type as a fallback for createChildSession.
   const taskTypeFallback = msg.task_type ?? "default"
 
   let ctx = subagentMap.get(toolUseId)
@@ -426,12 +501,14 @@ async function handleTaskStarted(
     subagentMap.set(toolUseId, ctx)
   }
 
+  // Resolve the correct agent name for the title
   const parentParts = await MessageV2.parts(assistantMessage.id)
   const agentPart = parentParts.find(
     (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
   )
   const agentName = resolveAgentName(agentPart, taskTypeFallback)
 
+  // Update the child session title with the description and correct agent name
   if (msg.description) {
     await Session.setTitle({
       sessionID: ctx.childSessionID,
@@ -439,6 +516,7 @@ async function handleTaskStarted(
     })
   }
 
+  // Update the Agent ToolPart's title
   if (agentPart && agentPart.state.status === "running") {
     await Session.updatePart({
       ...agentPart,
@@ -454,6 +532,9 @@ async function handleTaskStarted(
   }
 }
 
+/**
+ * Handle task_progress: update the Agent ToolPart's metadata with tool count for live display.
+ */
 async function handleTaskProgress(msg: SDKTaskProgressMessage, assistantMessage: MessageV2.Assistant): Promise<void> {
   const toolUseId = msg.tool_use_id
   if (!toolUseId) return
@@ -478,6 +559,9 @@ async function handleTaskProgress(msg: SDKTaskProgressMessage, assistantMessage:
   }
 }
 
+/**
+ * Handle task_notification: finalize child session tools and mark Agent ToolPart as completed/error.
+ */
 async function handleTaskNotification(
   msg: SDKTaskNotificationMessage,
   assistantMessage: MessageV2.Assistant,
@@ -513,6 +597,7 @@ async function handleTaskNotification(
       },
     })
   } else {
+    // failed or stopped
     await Session.updatePart({
       ...agentPart,
       state: {
@@ -529,6 +614,15 @@ async function handleTaskNotification(
   }
 }
 
+/**
+ * Extracts completion metadata from SDKResultMessage and updates the assistant message.
+ * Mutates the assistantMessage in place (same pattern as existing processor).
+ *
+ * The SDK result reports *cumulative* token counts across all turns (API calls).
+ * For context-window display and overflow detection we need the *last turn's*
+ * usage, which represents the actual prompt size sent to the API.  We store
+ * that in `tokens.total` so isOverflow() and the TUI can use it.
+ */
 function processResultMessage(
   msg: SDKResultMessage,
   assistantMessage: MessageV2.Assistant,
@@ -541,6 +635,9 @@ function processResultMessage(
 ): CompletionMetadata {
   const meta = resultMessageToMetadata(msg)
 
+  // Compute context-window size from the last turn's usage.
+  // input_tokens excludes cached tokens, so add cache read + write to get
+  // the full prompt size that counts against the context limit.
   const context = lastTurnUsage
     ? lastTurnUsage.input_tokens +
       (lastTurnUsage.cache_read_input_tokens ?? 0) +
@@ -576,6 +673,11 @@ function processResultMessage(
   return meta
 }
 
+/**
+ * Handle compact_boundary: the SDK auto-compacted the conversation.
+ * Write compaction boundary markers into OpenCode's database so
+ * filterCompacted() truncates history on subsequent turns.
+ */
 async function handleCompactBoundary(
   msg: SDKCompactBoundary,
   sessionID: SessionID,
@@ -584,6 +686,7 @@ async function handleCompactBoundary(
 ): Promise<void> {
   const summary = ref?.summary ?? "Conversation was compacted by the Claude SDK."
 
+  // Create a user message with a compaction part (the boundary marker)
   const userMsg = await Session.updateMessage({
     id: MessageID.ascending(),
     role: "user",
@@ -603,6 +706,7 @@ async function handleCompactBoundary(
     auto: msg.compact_metadata.trigger === "auto",
   })
 
+  // Create an assistant message with summary: true containing the summary
   const session = await Session.get(sessionID)
   const reply = (await Session.updateMessage({
     id: MessageID.ascending(),
