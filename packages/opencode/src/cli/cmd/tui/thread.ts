@@ -51,8 +51,17 @@ function createEventSource(client: RpcClient): EventSource {
         }
       })
 
+      // Listen for cross-directory events forwarded via GlobalBus in the worker.
+      // When an agent session runs in a different directory (e.g. worktree agent),
+      // Bus events go to that directory's PubSub and are bridged through GlobalBus.
+      const unsubGlobal = client.on<{ directory?: string; payload: Record<string, unknown> }>("global.event", (e) => {
+        if (e.directory === directory) return
+        handler(e.payload as Event)
+      })
+
       return () => {
         unsub()
+        unsubGlobal()
         client.call("unsubscribe", { id })
       }
     },

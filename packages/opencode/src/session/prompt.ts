@@ -1464,12 +1464,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // Fall back to synthetic parts (e.g. auto-continue after compaction) when
               // no non-synthetic text exists, to avoid sending an empty prompt to the SDK.
               const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
-              const parts = lastUserMsg?.parts.filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored) ?? []
+              const parts =
+                lastUserMsg?.parts.filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored) ?? []
               const real = parts.filter((p) => !p.synthetic)
               const texts = (real.length ? real : parts).map((p) => p.text)
               const supported = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
               const media =
-                lastUserMsg?.parts.filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime)) ?? []
+                lastUserMsg?.parts.filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime)) ??
+                []
 
               const prompt: string | import("@anthropic-ai/sdk/resources").MessageParam =
                 media.length === 0
@@ -1528,12 +1530,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   effort: lastUser.model.variant as "low" | "medium" | "high" | "max" | undefined,
                   mcpServers: mcp,
                   hooks: {
-                    PostCompact: [{
-                      hooks: [async (input) => {
-                        compactRef.summary = (input as { compact_summary: string }).compact_summary
-                        return { continue: true }
-                      }],
-                    }],
+                    PostCompact: [
+                      {
+                        hooks: [
+                          async (input) => {
+                            compactRef.summary = (input as { compact_summary: string }).compact_summary
+                            return { continue: true }
+                          },
+                        ],
+                      },
+                    ],
                   },
                 }),
               )
@@ -1553,6 +1559,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               yield* InstanceState.withALS(() => instruction.clear(msg.id)).pipe(Effect.flatMap((x) => x))
 
               if (result.outcome === "error") break
+              if (result.outcome === "stop") break
               continue
             }
 

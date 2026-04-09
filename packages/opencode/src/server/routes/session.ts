@@ -22,9 +22,25 @@ import { lazy } from "../../util/lazy"
 import { Bus } from "../../bus"
 import { NamedError } from "@opencode-ai/util/error"
 import { Summarize } from "@/session/summarize"
+import { Instance } from "@/project/instance"
+import { InstanceBootstrap } from "@/project/bootstrap"
 
 const log = Log.create({ service: "server" })
 const latency = Log.create({ service: "submit.latency" })
+
+/**
+ * Run a function within the Instance context of a session's stored directory.
+ * This ensures that tools, system prompts, and file operations use the
+ * directory the session was created in, not the TUI's startup directory.
+ */
+async function withSessionDirectory<R>(sessionID: SessionID, fn: () => Promise<R>): Promise<R> {
+  const session = await Session.get(sessionID)
+  return Instance.provide({
+    directory: session.directory,
+    init: InstanceBootstrap,
+    fn,
+  })
+}
 
 export const SessionRoutes = lazy(() =>
   new Hono()
@@ -543,7 +559,7 @@ export const SessionRoutes = lazy(() =>
           },
           auto: body.auto,
         })
-        await SessionPrompt.loop({ sessionID })
+        await withSessionDirectory(sessionID, () => SessionPrompt.loop({ sessionID }))
         return c.json(true)
       },
     )
@@ -818,8 +834,7 @@ export const SessionRoutes = lazy(() =>
         return stream(c, async (stream) => {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
-          latency.info("[3a] route handler entered", { ts: Date.now(), sessionID })
-          const msg = await SessionPrompt.prompt({ ...body, sessionID })
+          const msg = await withSessionDirectory(sessionID, () => SessionPrompt.prompt({ ...body, sessionID }))
           stream.write(JSON.stringify(msg))
         })
       },
@@ -851,7 +866,7 @@ export const SessionRoutes = lazy(() =>
         return stream(c, async () => {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
-          SessionPrompt.prompt({ ...body, sessionID }).catch((err) => {
+          withSessionDirectory(sessionID, () => SessionPrompt.prompt({ ...body, sessionID })).catch((err) => {
             log.error("prompt_async failed", { sessionID, error: err })
             Bus.publish(Session.Event.Error, {
               sessionID,
@@ -894,7 +909,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
-        const msg = await SessionPrompt.command({ ...body, sessionID })
+        const msg = await withSessionDirectory(sessionID, () => SessionPrompt.command({ ...body, sessionID }))
         return c.json(msg)
       },
     )
@@ -926,7 +941,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
-        const msg = await SessionPrompt.shell({ ...body, sessionID })
+        const msg = await withSessionDirectory(sessionID, () => SessionPrompt.shell({ ...body, sessionID }))
         return c.json(msg)
       },
     )
@@ -1033,9 +1048,8 @@ export const SessionRoutes = lazy(() =>
 
         // Use the last text part -- it's the final output, not intermediate text
         const text = (
-          last.parts
-            .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
-            .at(-1)?.text ?? ""
+          last.parts.filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored).at(-1)
+            ?.text ?? ""
         ).trim()
         if (!text) return c.json({ text: "", summary: false })
 
@@ -1047,9 +1061,7 @@ export const SessionRoutes = lazy(() =>
         const pid = (last.info as MessageV2.Assistant).providerID
         const result = pid === "anthropic" ? await Summarize.anthropic(p) : await Summarize.aisdk(p, pid)
 
-        return result
-          ? c.json({ text: result, summary: true })
-          : c.json({ text: truncated, summary: false })
+        return result ? c.json({ text: result, summary: true }) : c.json({ text: truncated, summary: false })
       },
     )
     .post(
