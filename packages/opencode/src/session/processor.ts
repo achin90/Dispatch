@@ -23,6 +23,21 @@ export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
   const log = Log.create({ service: "session.processor" })
 
+  function formatActivity(toolName: string, input: Record<string, unknown> | undefined): string {
+    const name = toolName.charAt(0).toUpperCase() + toolName.slice(1)
+    if (!input) return name
+    const detail =
+      (input.filePath as string) ??
+      (input.file_path as string) ??
+      (input.command as string) ??
+      (input.pattern as string) ??
+      (input.prompt as string) ??
+      (input.description as string)
+    if (!detail) return name
+    const short = detail.includes("/") ? detail.split("/").pop()! : detail
+    return `${name} ${short}`
+  }
+
   export type Result = "compact" | "stop" | "continue"
 
   export type Event = LLM.Event
@@ -111,7 +126,7 @@ export namespace SessionProcessor {
         const handleEvent = Effect.fn("SessionProcessor.handleEvent")(function* (value: StreamEvent) {
           switch (value.type) {
             case "start":
-              yield* status.set(ctx.sessionID, { type: "busy" })
+              yield* status.set(ctx.sessionID, { type: "busy", activity: "Thinking..." })
               return
 
             case "reasoning-start":
@@ -177,6 +192,10 @@ export namespace SessionProcessor {
               }
               const match = ctx.toolcalls[value.toolCallId]
               if (!match) return
+              yield* status.set(ctx.sessionID, {
+                type: "busy",
+                activity: formatActivity(value.toolName, value.input as Record<string, unknown> | undefined),
+              })
               ctx.toolcalls[value.toolCallId] = yield* session.updatePart({
                 ...match,
                 tool: value.toolName,
