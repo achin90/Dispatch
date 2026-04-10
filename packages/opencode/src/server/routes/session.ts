@@ -399,7 +399,8 @@ export const SessionRoutes = lazy(() =>
         }),
       ),
       async (c) => {
-        await SessionPrompt.cancel(c.req.valid("param").sessionID)
+        const sessionID = c.req.valid("param").sessionID
+        await withSessionDirectory(sessionID, () => SessionPrompt.cancel(sessionID))
         return c.json(true)
       },
     )
@@ -717,7 +718,7 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const params = c.req.valid("param")
-        await SessionPrompt.assertNotBusy(params.sessionID)
+        await withSessionDirectory(params.sessionID, () => SessionPrompt.assertNotBusy(params.sessionID))
         await Session.removeMessage({
           sessionID: params.sessionID,
           messageID: params.messageID,

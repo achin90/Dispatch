@@ -1542,6 +1542,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // processClaudeSdkStream reads it when handling compact_boundary.
               const compactRef: CompactionRef = {}
 
+              const abortController = new AbortController()
+              const abort = abortController.signal
+
               const sdkQuery = yield* Effect.promise(() =>
                 createClaudeSdkQuery({
                   prompt,
@@ -1554,6 +1557,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ruleset: Permission.merge(agent.permission, session.permission ?? []),
                   effort: lastUser.model.variant as "low" | "medium" | "high" | "max" | undefined,
                   mcpServers: mcp,
+                  abortController,
                   hooks: {
                     PostCompact: [
                       {
@@ -1569,9 +1573,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 }),
               )
 
-              const abortController = new AbortController()
-              const abort = abortController.signal
-
               const result = yield* Effect.promise(() =>
                 processClaudeSdkStream(sdkQuery, {
                   assistantMessage: msg,
@@ -1579,6 +1580,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   abort,
                   compaction: compactRef,
                 }),
+              ).pipe(
+                Effect.onInterrupt(() => Effect.sync(() => abortController.abort())),
               )
 
               yield* InstanceState.withALS(() => instruction.clear(msg.id)).pipe(Effect.flatMap((x) => x))
