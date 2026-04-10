@@ -53,6 +53,7 @@ export const TaskTool = Tool.defineEffect(
         return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
       }
 
+      const caller = yield* agent.get(ctx.agent)
       const canTask = next.permission.some((rule) => rule.permission === id)
       const canTodo = next.permission.some((rule) => rule.permission === "todowrite")
 
@@ -70,6 +71,7 @@ export const TaskTool = Tool.defineEffect(
             parentID: ctx.sessionID,
             title: params.description + ` (@${next.name} subagent)`,
             permission: [
+              ...(caller?.permission ?? []),
               ...(canTodo
                 ? []
                 : [
