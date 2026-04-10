@@ -1,5 +1,7 @@
 # Dispatch
 
+<!-- test comment for pr creation -->
+
 A multi-agent dashboard built on top of [OpenCode](https://github.com/anomalyco/opencode), the open source AI coding agent.
 
 > **Fork notice**: This project is a fork of [opencode](https://github.com/anomalyco/opencode) (MIT License, Copyright 2025 opencode). It is **not** built by the OpenCode team and is **not** affiliated with them. See [LICENSE](./LICENSE) for the full license text.
@@ -13,6 +15,7 @@ Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard**
 ### Features added in this fork
 
 **Agent Dashboard (home screen)**
+
 - Table view showing all active agents with columns: #, Name, Status, Activity
 - Agent registry backed by a KV store, decoupled from sessions
 - Keyboard-driven workflow:
@@ -27,6 +30,7 @@ Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard**
 - Activity summary showing `+additions -deletions files` from the session
 
 **Claude Agent SDK backend**
+
 - Added `@anthropic-ai/claude-agent-sdk` for routing Anthropic API requests (Vercel AI SDK retained for other providers)
 - Uses your existing Claude Code login (API key or subscription auth)
 - SDK owns the tool loop and execution (Read, Write, Edit, Bash, Glob, Grep)
@@ -102,14 +106,14 @@ OPENCODE_DB=opencode-local.db dispatch
 
 These flags work with both `bun run dev` and the built binary:
 
-| Flag | Description |
-| --- | --- |
-| `[project]` | Path to project directory (positional arg) |
-| `--model`, `-m` | Model to use in the format `provider/model` |
-| `--continue`, `-c` | Continue the last session |
-| `--session`, `-s` | Session ID to continue |
-| `--help`, `-h` | Show help |
-| `--version`, `-v` | Show version |
+| Flag               | Description                                 |
+| ------------------ | ------------------------------------------- |
+| `[project]`        | Path to project directory (positional arg)  |
+| `--model`, `-m`    | Model to use in the format `provider/model` |
+| `--continue`, `-c` | Continue the last session                   |
+| `--session`, `-s`  | Session ID to continue                      |
+| `--help`, `-h`     | Show help                                   |
+| `--version`, `-v`  | Show version                                |
 
 ### Subcommands
 
@@ -133,14 +137,14 @@ For full documentation see the **[OpenCode configuration docs](https://opencode.
 
 ### Config File Locations (by precedence)
 
-| Priority | Source | Location |
-| --- | --- | --- |
-| 1 | Remote config | `.well-known/opencode` endpoint (organizational defaults) |
-| 2 | Global config | `~/.config/opencode/opencode.json` |
-| 3 | Custom config | Path specified via `OPENCODE_CONFIG` env var |
-| 4 | Project config | `opencode.json` in project root |
-| 5 | Directory configs | `.opencode/` subdirectories (`agents/`, `commands/`, `plugins/`, etc.) |
-| 6 | Inline config | `OPENCODE_CONFIG_CONTENT` env var |
+| Priority | Source            | Location                                                               |
+| -------- | ----------------- | ---------------------------------------------------------------------- |
+| 1        | Remote config     | `.well-known/opencode` endpoint (organizational defaults)              |
+| 2        | Global config     | `~/.config/opencode/opencode.json`                                     |
+| 3        | Custom config     | Path specified via `OPENCODE_CONFIG` env var                           |
+| 4        | Project config    | `opencode.json` in project root                                        |
+| 5        | Directory configs | `.opencode/` subdirectories (`agents/`, `commands/`, `plugins/`, etc.) |
+| 6        | Inline config     | `OPENCODE_CONFIG_CONTENT` env var                                      |
 
 ### Key Configuration Options
 
