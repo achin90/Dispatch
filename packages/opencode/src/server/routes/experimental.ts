@@ -46,8 +46,7 @@ export const ExperimentalRoutes = lazy(() =>
       "/git-repos",
       describeRoute({
         summary: "List git repositories",
-        description:
-          "Scan immediate children of a root directory and return those that are git repositories.",
+        description: "Scan immediate children of a root directory and return those that are git repositories.",
         operationId: "gitRepos.list",
         responses: {
           200: {
@@ -85,7 +84,9 @@ export const ExperimentalRoutes = lazy(() =>
           }
           await Promise.all(
             entries
-              .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !e.isSymbolicLink() && e.name !== "node_modules")
+              .filter(
+                (e) => e.isDirectory() && !e.name.startsWith(".") && !e.isSymbolicLink() && e.name !== "node_modules",
+              )
               .map((e) => walk(path.join(dir, e.name))),
           )
         }
@@ -331,7 +332,12 @@ export const ExperimentalRoutes = lazy(() =>
         const gitdir = content.replace("gitdir:", "").trim()
         const resolved = path.isAbsolute(gitdir) ? gitdir : path.resolve(dir, gitdir)
         const head = await fs.readFile(path.join(resolved, "HEAD"), "utf-8").catch(() => "")
-        const branch = head.startsWith("ref:") ? head.replace("ref:", "").trim().replace(/^refs\/heads\//, "") : path.basename(dir)
+        const branch = head.startsWith("ref:")
+          ? head
+              .replace("ref:", "")
+              .trim()
+              .replace(/^refs\/heads\//, "")
+          : path.basename(dir)
         // Derive source repo: gitdir is like /path/to/main/.git/worktrees/name
         const match = resolved.match(/^(.+)\/\.git\/worktrees\//)
         const source = match ? match[1] : path.dirname(resolved)
@@ -445,8 +451,7 @@ export const ExperimentalRoutes = lazy(() =>
       "/worktree/diff",
       describeRoute({
         summary: "Get worktree diff",
-        description:
-          "Return the full unified diff of uncommitted changes against HEAD in the working directory.",
+        description: "Return the full unified diff of uncommitted changes against HEAD in the working directory.",
         operationId: "worktree.diff",
         responses: {
           200: {
@@ -467,11 +472,8 @@ export const ExperimentalRoutes = lazy(() =>
       }),
       async (c) => {
         const diff = await new Promise<string>((resolve) => {
-          execFile(
-            "git",
-            ["diff", "HEAD"],
-            { cwd: Instance.directory, maxBuffer: 10 * 1024 * 1024 },
-            (err, stdout) => resolve(err ? "" : stdout),
+          execFile("git", ["diff", "HEAD"], { cwd: Instance.directory, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) =>
+            resolve(err ? "" : stdout),
           )
         })
         return c.json({ diff })
@@ -616,10 +618,10 @@ export const ExperimentalRoutes = lazy(() =>
         operationId: "github.createPr",
         responses: {
           200: {
-            description: "Created pull request info or null on failure",
+            description: "Created pull request info or error on failure",
             content: {
               "application/json": {
-                schema: resolver(GitHub.PullRequest.nullable()),
+                schema: resolver(z.union([GitHub.PullRequest, GitHub.CreateError])),
               },
             },
           },

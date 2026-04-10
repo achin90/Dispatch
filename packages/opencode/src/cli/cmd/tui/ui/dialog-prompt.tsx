@@ -20,8 +20,14 @@ export function DialogPrompt(props: DialogPromptProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
   let textarea: TextareaRenderable
+  let mounted = false
 
   useKeyboard((evt) => {
+    if (!mounted) {
+      evt.preventDefault()
+      evt.stopPropagation()
+      return
+    }
     if (props.busy) {
       if (evt.name === "escape") return
       evt.preventDefault()
@@ -39,6 +45,7 @@ export function DialogPrompt(props: DialogPromptProps) {
       if (!textarea || textarea.isDestroyed) return
       if (props.busy) return
       textarea.focus()
+      mounted = true
     }, 1)
     textarea.gotoLineEnd()
   })

@@ -32,6 +32,9 @@ import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Clipboard } from "@tui/util/clipboard"
 import { PtyAttach } from "../util/pty"
+import { Log } from "@/util/log"
+
+const log = Log.create({ service: "home" })
 
 export interface AgentEntry {
   id: string
@@ -140,7 +143,13 @@ function PRCell(props: { pr: GitHub.PullRequest | null | undefined | "error" }) 
     if (!pr || pr === "error") return ""
     const state = pr.draft ? "Draft" : pr.state === "MERGED" ? "Merged" : pr.state === "CLOSED" ? "Closed" : "Open"
     const ci =
-      pr.checks === "pass" ? " \u2713CI" : pr.checks === "fail" ? " \u2717CI" : pr.checks === "pending" ? " \u29D7CI" : ""
+      pr.checks === "pass"
+        ? " \u2713 CI"
+        : pr.checks === "fail"
+          ? " \u2717 CI"
+          : pr.checks === "pending"
+            ? " \u29D7 CI"
+            : ""
     const rev = (() => {
       if (pr.state !== "OPEN" || pr.draft) return ""
       if (pr.review === "APPROVED") return " Approved"
@@ -320,9 +329,18 @@ export function Home() {
   const base = () => `${sdk.url}/experimental`
 
   async function ghFetch<T>(path: string, opts?: RequestInit): Promise<T | null | "error"> {
-    const res = await sdk.fetch(`${base()}${path}${path.includes("?") ? "&" : "?"}directory=${encodeURIComponent(sync.data.path.directory)}`, opts).catch(() => null)
+    const url = `${base()}${path}${path.includes("?") ? "&" : "?"}directory=${encodeURIComponent(sync.data.path.directory)}`
+    log.info("ghFetch", { method: opts?.method ?? "GET", path })
+    const res = await sdk.fetch(url, opts).catch((err) => {
+      log.error("ghFetch: network error", { path, err: String(err) })
+      return null
+    })
     if (!res) return "error"
-    if (!res.ok) return "error"
+    if (!res.ok) {
+      const text = await res.text().catch(() => "")
+      log.error("ghFetch: non-ok response", { path, status: res.status, body: text })
+      return "error"
+    }
     return res.json() as Promise<T>
   }
 
@@ -345,7 +363,9 @@ export function Home() {
   function fetchPRs() {
     if (!ghAvailable()) return
     Array.from(worktrees()).forEach(([branch, dir]) => {
-      ghFetch<GitHub.PullRequest | null>(`/github/pr?branch=${encodeURIComponent(branch)}&cwd=${encodeURIComponent(dir)}`).then((res) => {
+      ghFetch<GitHub.PullRequest | null>(
+        `/github/pr?branch=${encodeURIComponent(branch)}&cwd=${encodeURIComponent(dir)}`,
+      ).then((res) => {
         kv.set("pr_data", { ...prData(), [branch]: res })
       })
     })
@@ -468,18 +488,19 @@ export function Home() {
     dialog.clear()
     setDialogOpen(false)
     if (!name) return
-    const absoluteDir = dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
-    const result = await sdk.client.session.create({ directory: absoluteDir })
+    const root = dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
+    const result = await sdk.client.session.create({ directory: root })
     if (!result.data) return
-    const wt = typeof (sdk.client.worktree as any)?.info === "function"
-      ? (await (sdk.client.worktree as any).info({ directory: absoluteDir })).data
-      : undefined
+    const wt =
+      typeof (sdk.client.worktree as any)?.info === "function"
+        ? (await (sdk.client.worktree as any).info({ directory: root })).data
+        : undefined
     insertAgent({
       id: crypto.randomUUID(),
       name,
       sessionID: result.data.id,
       createdAt: Date.now(),
-      directory: absoluteDir,
+      directory: root,
       worktree: wt ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo } : undefined,
     })
   }
@@ -528,7 +549,10 @@ export function Home() {
     dialog.clear()
     setDialogOpen(false)
     if (!ok) return
-    kv.set("agents", (kv.get("agents", []) as AgentEntry[]).filter((a) => a.id !== agent.id))
+    kv.set(
+      "agents",
+      (kv.get("agents", []) as AgentEntry[]).filter((a) => a.id !== agent.id),
+    )
     setSelectedIndex((i) => Math.min(i, flat().length - 1))
   }
 
@@ -536,12 +560,17 @@ export function Home() {
     const agent = selected()
     if (!agent) return
     const dir = resolveDir(agent)
-    const worktreeInfo = typeof (sdk.client.worktree as any)?.info === "function"
-      ? (await (sdk.client.worktree as any).info({ directory: dir })).data
-      : undefined
-    if (!worktreeInfo) return
+    const info =
+      typeof (sdk.client.worktree as any)?.info === "function"
+        ? (await (sdk.client.worktree as any).info({ directory: dir })).data
+        : undefined
+    if (!info) return
     setDialogOpen(true)
-    const ok = await DialogConfirm.show(dialog, "Delete Worktree", `Delete worktree and all agents in ${shortDir(dir)}?`)
+    const ok = await DialogConfirm.show(
+      dialog,
+      "Delete Worktree",
+      `Delete worktree and all agents in ${shortDir(dir)}?`,
+    )
     if (!ok) {
       dialog.clear()
       setDialogOpen(false)
@@ -555,7 +584,10 @@ export function Home() {
     await sdk.client.worktree
       .remove({ directory: dir, worktreeRemoveInput: { directory: dir } })
       .then(() => {
-        kv.set("agents", (kv.get("agents", []) as AgentEntry[]).filter((a) => resolveDir(a) !== dir))
+        kv.set(
+          "agents",
+          (kv.get("agents", []) as AgentEntry[]).filter((a) => resolveDir(a) !== dir),
+        )
       })
       .catch(() => toast.show({ message: "Failed to delete worktree", variant: "error" }))
       .finally(() => {
@@ -603,7 +635,9 @@ export function Home() {
       dir: shortDir(dir),
       fg: [fgInts[0], fgInts[1], fgInts[2]],
       bg: [bgInts[0], bgInts[1], bgInts[2]],
-    }).catch(() => {}).finally(() => setAttaching(false))
+    })
+      .catch(() => {})
+      .finally(() => setAttaching(false))
   }
 
   function refresh() {
@@ -614,34 +648,50 @@ export function Home() {
 
   async function propose() {
     const agent = selected()
-    if (!agent?.worktree) return
+    log.info("propose: triggered", { agent: agent?.id, worktree: agent?.worktree?.branch })
+    if (!agent?.worktree) {
+      log.warn("propose: no worktree on selected agent")
+      return
+    }
     const existing = prData()[agent.worktree.branch]
-    if (existing && existing !== "error") {
+    if (existing && existing !== "error" && existing.state === "OPEN") {
+      log.info("propose: open PR already exists", { number: existing.number, branch: agent.worktree.branch })
       toast.show({ message: `PR #${existing.number} already exists`, variant: "info" })
       return
     }
+    log.info("propose: opening title dialog", { branch: agent.worktree.branch })
     setDialogOpen(true)
     const title = await DialogPrompt.show(dialog, "Create Pull Request", { placeholder: "PR title" })
     if (!title) {
+      log.info("propose: title dialog cancelled")
       dialog.clear()
       setDialogOpen(false)
       return
     }
+    log.info("propose: title entered", { title })
     const body = await DialogPrompt.show(dialog, "PR Description (optional)", { placeholder: "PR description" })
+    log.info("propose: body entered", { body: body ?? "" })
     dialog.clear()
     setDialogOpen(false)
     toast.show({ message: "Creating PR...", variant: "info" })
-    const pr = await ghFetch<GitHub.PullRequest | null>("/github/pr", {
+    const payload = { head: agent.worktree.branch, title, body: body ?? "", cwd: agent.worktree.directory }
+    log.info("propose: posting /github/pr", payload)
+    const result = await ghFetch<GitHub.PullRequest | GitHub.CreateError>("/github/pr", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ head: agent.worktree.branch, title, body: body ?? "", cwd: agent.worktree.directory }),
+      body: JSON.stringify(payload),
     })
-    if (!pr || pr === "error") {
+    log.info("propose: /github/pr response", { result: JSON.stringify(result) })
+    if (!result || result === "error") {
       toast.show({ message: "Failed to create PR", variant: "error" })
       return
     }
-    kv.set("pr_data", { ...prData(), [agent.worktree.branch]: pr })
-    toast.show({ message: `Created PR #${pr.number}`, variant: "info" })
+    if ("error" in result) {
+      toast.show({ message: result.error, variant: "error" })
+      return
+    }
+    kv.set("pr_data", { ...prData(), [agent.worktree.branch]: result })
+    toast.show({ message: `Created PR #${result.number}`, variant: "info" })
   }
 
   function link() {
@@ -697,7 +747,10 @@ export function Home() {
   }
 
   useKeyboard((evt) => {
-    if (keybind.match("app_exit", evt)) { exit(); return }
+    if (keybind.match("app_exit", evt)) {
+      exit()
+      return
+    }
     if (dialogOpen() || dialog.stack.length > 0) return
     if (keybind.leader) return
     if (flat().length === 0 && evt.name !== "a" && evt.name !== "w") return
@@ -716,9 +769,19 @@ export function Home() {
     if (evt.name === "n") deny()
     if (evt.name === "t") attach()
     if (evt.name === "r") refresh()
-    if (evt.name === "p" && evt.shift && ghAvailable()) propose()
+    if (evt.name === "p" && evt.shift && ghAvailable()) {
+      evt.preventDefault()
+      evt.stopPropagation()
+      propose()
+      return
+    }
     if (evt.name === "o") link()
-    if (evt.name === "m" && evt.shift && ghAvailable()) merge()
+    if (evt.name === "m" && evt.shift && ghAvailable()) {
+      evt.preventDefault()
+      evt.stopPropagation()
+      merge()
+      return
+    }
   })
 
   return (
@@ -820,7 +883,10 @@ export function Home() {
                             </box>
                             <box flexGrow={1} flexShrink={1} minWidth={0}>
                               <Show
-                                when={agent.status?.type === "busy" && (agent.status as { type: "busy"; activity?: string }).activity}
+                                when={
+                                  agent.status?.type === "busy" &&
+                                  (agent.status as { type: "busy"; activity?: string }).activity
+                                }
                                 fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
                               >
                                 {(activity) => (
@@ -834,7 +900,11 @@ export function Home() {
                           <Show
                             when={approval(agent.sessionID)}
                             fallback={
-                              <Show when={kv.get("agent_summaries_visible", true) && sync.data.agent_summary[agent.sessionID]}>
+                              <Show
+                                when={
+                                  kv.get("agent_summaries_visible", true) && sync.data.agent_summary[agent.sessionID]
+                                }
+                              >
                                 {(s) => (
                                   <box paddingLeft={4} maxHeight={4}>
                                     <text fg={theme.textMuted} wrapMode="word" overflow="hidden">

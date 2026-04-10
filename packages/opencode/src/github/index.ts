@@ -48,11 +48,16 @@ export namespace GitHub {
   export async function pr(branch: string, cwd?: string): Promise<PullRequest | null> {
     const result = await gh(
       [
-        "pr", "list",
-        "--head", branch,
-        "--state", "all",
-        "--limit", "1",
-        "--json", "number,title,state,url,isDraft,baseRefName,statusCheckRollup,reviewDecision",
+        "pr",
+        "list",
+        "--head",
+        branch,
+        "--state",
+        "all",
+        "--limit",
+        "1",
+        "--json",
+        "number,title,state,url,isDraft,baseRefName,statusCheckRollup,reviewDecision",
       ],
       cwd,
     )
@@ -81,21 +86,41 @@ export namespace GitHub {
       ((c.conclusion ?? c.status ?? "") as string).toUpperCase(),
     )
     if (states.some((s) => s === "FAILURE" || s === "ERROR" || s === "CANCELLED" || s === "TIMED_OUT")) return "fail"
-    if (states.some((s) => s === "PENDING" || s === "IN_PROGRESS" || s === "QUEUED" || s === "WAITING")) return "pending"
+    if (states.some((s) => s === "PENDING" || s === "IN_PROGRESS" || s === "QUEUED" || s === "WAITING"))
+      return "pending"
     if (states.every((s) => s === "SUCCESS" || s === "NEUTRAL" || s === "SKIPPED")) return "pass"
     return "pending"
+  }
+
+  export const CreateError = z
+    .object({
+      error: z.string(),
+    })
+    .meta({ ref: "GitHubCreateError" })
+
+  export type CreateError = z.infer<typeof CreateError>
+
+  function summarize(stderr: string): string {
+    const lines = stderr.split("\n").filter(Boolean)
+    // Find the first line that looks like an actual error description,
+    // skipping generic "failed to push some refs" wrappers.
+    const detail = lines.find(
+      (l) => (l.includes("ERROR") || l.startsWith("error:")) && !l.includes("failed to push some refs"),
+    )
+    return detail?.replace(/^error:\s*/, "").trim() ?? lines.pop() ?? "unknown error"
   }
 
   export async function create(
     input: { head: string; base?: string; title: string; body?: string },
     cwd?: string,
-  ): Promise<PullRequest | null> {
+  ): Promise<PullRequest | CreateError> {
     // Push branch to remote first — gh pr create requires the head branch to exist on GitHub
     if (cwd) {
       const push = await git(["push", "-u", "origin", input.head], { cwd })
       if (push.exitCode !== 0) {
-        log.error("git push failed before pr create", { head: input.head, cwd, stderr: push.stderr.toString() })
-        return null
+        const stderr = push.stderr.toString()
+        log.error("git push failed before pr create", { head: input.head, cwd, stderr })
+        return { error: `git push failed: ${summarize(stderr)}` }
       }
     }
     const args = ["pr", "create", "--head", input.head, "--title", input.title, "--body", input.body ?? ""]
@@ -103,9 +128,9 @@ export namespace GitHub {
     const result = await gh(args, cwd)
     if (result.code !== 0) {
       log.error("gh pr create failed", { args, cwd, code: result.code, stdout: result.stdout, stderr: result.stderr })
-      return null
+      return { error: `gh pr create failed: ${summarize(result.stderr)}` }
     }
-    return pr(input.head, cwd)
+    return (await pr(input.head, cwd)) ?? { error: "PR created but could not fetch it" }
   }
 
   export async function merge(number: number, cwd?: string): Promise<boolean> {
