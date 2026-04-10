@@ -1498,7 +1498,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 lastUserMsg?.parts.filter((p): p is MessageV2.FilePart => p.type === "file" && supported.has(p.mime)) ??
                 []
 
-              const prompt: string | import("@anthropic-ai/sdk/resources").MessageParam =
+              const prompt: string | import("@anthropic-ai/claude-agent-sdk").SDKUserMessage["message"] =
                 media.length === 0
                   ? texts.join("\n")
                   : {
@@ -1580,9 +1580,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   abort,
                   compaction: compactRef,
                 }),
-              ).pipe(
-                Effect.onInterrupt(() => Effect.sync(() => abortController.abort())),
-              )
+              ).pipe(Effect.onInterrupt(() => Effect.sync(() => abortController.abort())))
 
               yield* InstanceState.withALS(() => instruction.clear(msg.id)).pipe(Effect.flatMap((x) => x))
 

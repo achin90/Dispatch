@@ -13,7 +13,13 @@ import type {
   ModelUsage,
   NonNullableUsage,
 } from "@anthropic-ai/claude-agent-sdk"
-import type { BetaTextBlock, BetaThinkingBlock, BetaToolUseBlock, BetaContentBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages"
+
+// Derive Beta types from SDKAssistantMessage.message (BetaMessage) to avoid
+// importing directly from @anthropic-ai/sdk which is only a transitive dep.
+type BetaContentBlock = SDKAssistantMessage["message"]["content"][number]
+type BetaTextBlock = Extract<BetaContentBlock, { type: "text" }>
+type BetaThinkingBlock = Extract<BetaContentBlock, { type: "thinking" }>
+type BetaToolUseBlock = Extract<BetaContentBlock, { type: "tool_use" }>
 import type { UUID } from "crypto"
 
 // ---------------------------------------------------------------------------
@@ -302,10 +308,7 @@ export function errorResponse(
   sid?: string,
 ): AsyncGenerator<SDKMessage, void> {
   const s = sid ?? sessionId()
-  return messageSequence(
-    systemMessage({ session_id: s }),
-    resultError(errorSubtype, errors, { session_id: s }),
-  )
+  return messageSequence(systemMessage({ session_id: s }), resultError(errorSubtype, errors, { session_id: s }))
 }
 
 // ---------------------------------------------------------------------------

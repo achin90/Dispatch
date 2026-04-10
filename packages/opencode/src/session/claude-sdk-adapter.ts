@@ -9,12 +9,13 @@ import type {
   SDKResultSuccess,
   SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk"
-import type {
-  BetaContentBlock,
-  BetaTextBlock,
-  BetaThinkingBlock,
-  BetaToolUseBlock,
-} from "@anthropic-ai/sdk/resources/beta/messages/messages"
+
+// Derive Beta types from SDKAssistantMessage.message (BetaMessage) to avoid
+// importing directly from @anthropic-ai/sdk which is only a transitive dep.
+type BetaContentBlock = SDKAssistantMessage["message"]["content"][number]
+type BetaTextBlock = Extract<BetaContentBlock, { type: "text" }>
+type BetaThinkingBlock = Extract<BetaContentBlock, { type: "thinking" }>
+type BetaToolUseBlock = Extract<BetaContentBlock, { type: "tool_use" }>
 import { MessageV2 } from "./message-v2"
 import { PartID, SessionID, MessageID } from "./schema"
 
@@ -38,11 +39,7 @@ export function isToolUseBlock(block: BetaContentBlock): block is BetaToolUseBlo
 // Content block → MessageV2 Part mappers
 // ---------------------------------------------------------------------------
 
-export function textBlockToPart(
-  block: BetaTextBlock,
-  sessionID: SessionID,
-  messageID: MessageID,
-): MessageV2.TextPart {
+export function textBlockToPart(block: BetaTextBlock, sessionID: SessionID, messageID: MessageID): MessageV2.TextPart {
   return {
     id: PartID.ascending(),
     sessionID,

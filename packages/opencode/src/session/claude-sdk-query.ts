@@ -16,7 +16,10 @@ import {
   type McpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk"
 import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from "@modelcontextprotocol/sdk/types.js"
-import type { MessageParam } from "@anthropic-ai/sdk/resources"
+
+// Derive MessageParam from SDKUserMessage to avoid importing from
+// @anthropic-ai/sdk which is only a transitive dep.
+type MessageParam = SDKUserMessage["message"]
 import { Auth } from "@/auth"
 import { Log } from "@/util/log"
 import { Bus } from "@/bus"
