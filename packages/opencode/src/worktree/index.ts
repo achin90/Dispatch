@@ -1,6 +1,5 @@
 import z from "zod"
 import { NamedError } from "@opencode-ai/util/error"
-import { Global } from "../global"
 import { Instance } from "../project/instance"
 import { InstanceBootstrap } from "../project/bootstrap"
 import { Project } from "../project/project"
@@ -204,7 +203,7 @@ export namespace Worktree {
         const ctx = yield* InstanceState.context
         for (const attempt of Array.from({ length: MAX_NAME_ATTEMPTS }, (_, i) => i)) {
           const name = base ? (attempt === 0 ? base : `${base}-${Slug.create()}`) : Slug.create()
-          const branch = `opencode/${name}`
+          const branch = name
           const directory = pathSvc.join(root, name)
 
           if (yield* fs.exists(directory).pipe(Effect.orDie)) continue
@@ -224,11 +223,11 @@ export namespace Worktree {
           throw new NotGitError({ message: "Worktrees are only supported for git projects" })
         }
 
-        const root = pathSvc.join(Global.Path.data, "worktree", ctx.project.id)
-        yield* fs.makeDirectory(root, { recursive: true }).pipe(Effect.orDie)
-
-        const base = name ? slugify(name) : ""
-        return yield* candidate(root, base || undefined)
+        const repo = pathSvc.basename(ctx.worktree)
+        const root = pathSvc.dirname(ctx.worktree)
+        const slug = name ? slugify(name) : ""
+        const base = slug ? `${repo}-${slug}` : `${repo}-${Slug.create()}`
+        return yield* candidate(root, base)
       })
 
       const setup = Effect.fnUntraced(function* (info: Info) {
