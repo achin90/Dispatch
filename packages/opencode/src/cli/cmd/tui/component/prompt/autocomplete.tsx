@@ -228,9 +228,12 @@ export function Autocomplete(props: {
 
       const { lineRange, baseQuery } = extractLineRange(query ?? "")
 
-      // Get files from SDK
+      // Get files from SDK — use the session's directory so suggestions
+      // reflect the agent's working directory, not the TUI launch directory.
+      const session = props.sessionID ? sync.session.get(props.sessionID) : undefined
       const result = await sdk.client.find.files({
         query: baseQuery,
+        ...(session?.directory ? { directory: session.directory } : {}),
       })
 
       const options: AutocompleteOption[] = []
@@ -250,7 +253,7 @@ export function Autocomplete(props: {
         const width = props.anchor().width - 4
         options.push(
           ...sortedFiles.map((item): AutocompleteOption => {
-            const baseDir = (sync.data.path.directory || process.cwd()).replace(/\/+$/, "")
+            const baseDir = (session?.directory || sync.data.path.directory || process.cwd()).replace(/\/+$/, "")
             const fullPath = `${baseDir}/${item}`
             const urlObj = pathToFileURL(fullPath)
             let filename = item
