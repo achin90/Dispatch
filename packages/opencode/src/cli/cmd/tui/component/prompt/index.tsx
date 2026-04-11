@@ -40,8 +40,10 @@ import { DialogSkill } from "../dialog-skill"
 export type PromptProps = {
   sessionID?: string
   workspaceID?: string
+  directory?: string
   visible?: boolean
   disabled?: boolean
+  compact?: boolean
   onSubmit?: () => void
   ref?: (ref: PromptRef | undefined) => void
   hint?: JSX.Element
@@ -257,7 +259,7 @@ export function Prompt(props: PromptProps) {
         keybind: "session_interrupt",
         category: "Session",
         hidden: true,
-        enabled: status().type !== "idle",
+        enabled: status().type !== "idle" && !props.compact,
         onSelect: (dialog) => {
           if (autocomplete.visible) return
           if (!input.focused) return
@@ -875,6 +877,7 @@ export function Prompt(props: PromptProps) {
     <>
       <Autocomplete
         sessionID={props.sessionID}
+        directory={props.directory}
         ref={(r) => {
           autocomplete = r
           setAuto(() => r)
@@ -1157,7 +1160,7 @@ export function Prompt(props: PromptProps) {
           />
         </box>
         <box width="100%" flexDirection="row" justifyContent="space-between">
-          <Show when={status().type !== "idle"} fallback={props.hint ?? <text />}>
+          <Show when={status().type !== "idle" && !props.compact} fallback={props.hint ?? <text />}>
             <box
               flexDirection="row"
               gap={1}
@@ -1237,7 +1240,7 @@ export function Prompt(props: PromptProps) {
               </text>
             </box>
           </Show>
-          <Show when={status().type !== "retry"}>
+          <Show when={status().type !== "retry" && !props.compact}>
             <box gap={2} flexDirection="row">
               <Switch>
                 <Match when={store.mode === "normal"}>

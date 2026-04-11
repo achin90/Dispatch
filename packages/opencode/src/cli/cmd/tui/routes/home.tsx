@@ -19,11 +19,12 @@ import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogDirectorySelect } from "@tui/component/dialog-directory-select"
 import { DialogGitRepoSelect } from "@tui/component/dialog-git-repo-select"
+import { Prompt } from "@tui/component/prompt"
 import { Installation } from "@/installation"
 import { Global } from "@/global"
 import { Locale } from "@/util/locale"
 import { Spinner } from "@tui/component/spinner"
-import { useKeyboard, useRenderer } from "@opentui/solid"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeybind } from "@tui/context/keybind"
 import { useExit } from "../context/exit"
@@ -197,6 +198,7 @@ export function Home() {
   const keybind = useKeybind()
   const exit = useExit()
   const renderer = useRenderer()
+  const dimensions = useTerminalDimensions()
   const fg = selectedForeground(theme)
 
   const [attaching, setAttaching] = createSignal(false)
@@ -211,6 +213,7 @@ export function Home() {
 
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [dialogOpen, setDialogOpen] = createSignal(false)
+  const [promptOpen, setPromptOpen] = createSignal(false)
 
   function resolveDir(agent: AgentEntry) {
     const dir = agent.worktree
@@ -708,6 +711,12 @@ export function Home() {
       .catch(() => toast.show({ message: pr.url, variant: "info" }))
   }
 
+  function openPrompt() {
+    const agent = selected()
+    if (!agent) return
+    setPromptOpen(true)
+  }
+
   async function merge() {
     const agent = selected()
     if (!agent?.worktree) return
@@ -748,6 +757,16 @@ export function Home() {
   }
 
   useKeyboard((evt) => {
+    const wasOpen = promptOpen()
+    if (wasOpen) {
+      if (evt.name === "escape") {
+        setPromptOpen(false)
+        evt.preventDefault()
+        evt.stopPropagation()
+      }
+      // Let the Prompt component handle all keys (including ctrl-c clear)
+      return
+    }
     if (keybind.match("app_exit", evt)) {
       exit()
       return
@@ -769,6 +788,13 @@ export function Home() {
     if (evt.name === "y") approve()
     if (evt.name === "n") deny()
     if (evt.name === "t") attach()
+    if (evt.name === "i") {
+      if (!selected()) return
+      evt.preventDefault()
+      evt.stopPropagation()
+      openPrompt()
+      return
+    }
     if (evt.name === "r") refresh()
     if (evt.name === "p" && evt.shift && ghAvailable()) {
       evt.preventDefault()
@@ -928,14 +954,35 @@ export function Home() {
           </scrollbox>
         </Show>
       </box>
+      <Show when={promptOpen() && selected()}>
+        <box
+          position="absolute"
+          top={0}
+          left={0}
+          width={dimensions().width}
+          height={dimensions().height}
+          justifyContent="center"
+          alignItems="center"
+        >
+          <box width={Math.min(dimensions().width - 8, 120)}>
+            <Prompt
+              sessionID={selected()!.sessionID}
+              directory={resolveDir(selected()!)}
+              visible={true}
+              compact={true}
+              onSubmit={() => queueMicrotask(() => setPromptOpen(false))}
+              hint={
+                <text>
+                  <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>esc</span>
+                  <span style={{ fg: theme.textMuted }}> dismiss</span>
+                </text>
+              }
+            />
+          </box>
+        </box>
+      </Show>
       <box paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" flexShrink={0} gap={0}>
         <box flexDirection="row" gap={3} flexShrink={0}>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>↑↓</span>
-            <span style={{ fg: theme.textMuted }}>/</span>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>j/k</span>
-            <span style={{ fg: theme.textMuted }}> navigate</span>
-          </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>a</span>
             <span style={{ fg: theme.textMuted }}> new agent</span>
@@ -970,13 +1017,25 @@ export function Home() {
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>r</span>
             <span style={{ fg: theme.textMuted }}> refresh PR statuses</span>
           </text>
+        </box>
+        <box flexDirection="row" gap={3} flexShrink={0}>
           <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>D</span>
-            <span style={{ fg: theme.textMuted }}> diff</span>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>↑↓</span>
+            <span style={{ fg: theme.textMuted }}>/</span>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>j/k</span>
+            <span style={{ fg: theme.textMuted }}> navigate</span>
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>enter</span>
             <span style={{ fg: theme.textMuted }}> open</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>i</span>
+            <span style={{ fg: theme.textMuted }}> message</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>D</span>
+            <span style={{ fg: theme.textMuted }}> diff</span>
           </text>
           <text>
             <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>t</span>

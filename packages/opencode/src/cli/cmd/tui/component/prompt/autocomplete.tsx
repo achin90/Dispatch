@@ -68,6 +68,7 @@ export type AutocompleteOption = {
 export function Autocomplete(props: {
   value: string
   sessionID?: string
+  directory?: string
   setPrompt: (input: (prompt: PromptInfo) => void) => void
   setExtmark: (partIndex: number, extmarkId: number) => void
   anchor: () => BoxRenderable
@@ -230,10 +231,10 @@ export function Autocomplete(props: {
 
       // Get files from SDK — use the session's directory so suggestions
       // reflect the agent's working directory, not the TUI launch directory.
-      const session = props.sessionID ? sync.session.get(props.sessionID) : undefined
+      const dir = props.directory || sync.session.get(props.sessionID ?? "")?.directory
       const result = await sdk.client.find.files({
         query: baseQuery,
-        ...(session?.directory ? { directory: session.directory } : {}),
+        ...(dir ? { directory: dir } : {}),
       })
 
       const options: AutocompleteOption[] = []
@@ -253,7 +254,7 @@ export function Autocomplete(props: {
         const width = props.anchor().width - 4
         options.push(
           ...sortedFiles.map((item): AutocompleteOption => {
-            const baseDir = (session?.directory || sync.data.path.directory || process.cwd()).replace(/\/+$/, "")
+            const baseDir = (dir || sync.data.path.directory || process.cwd()).replace(/\/+$/, "")
             const fullPath = `${baseDir}/${item}`
             const urlObj = pathToFileURL(fullPath)
             let filename = item
@@ -502,6 +503,11 @@ export function Autocomplete(props: {
     command.keybinds(true)
     setStore("visible", false)
   }
+
+  // Restore keybinds if unmounted while autocomplete was visible
+  onCleanup(() => {
+    if (store.visible) command.keybinds(true)
+  })
 
   onMount(() => {
     props.ref({
