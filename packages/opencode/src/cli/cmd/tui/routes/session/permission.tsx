@@ -485,7 +485,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
   useKeyboard((evt) => {
     if (dialog.stack.length > 0) return
 
-    if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+    if (!keybind.leader && (evt.name === "escape" || keybind.match("app_exit", evt))) {
       evt.preventDefault()
       props.onCancel()
       return

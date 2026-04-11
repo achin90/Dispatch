@@ -210,7 +210,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         evt.preventDefault()
         submit()
       }
-      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      if (!keybind.leader && (evt.name === "escape" || keybind.match("app_exit", evt))) {
         evt.preventDefault()
         reject()
       }
@@ -243,7 +243,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         selectOption()
       }
 
-      if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      if (!keybind.leader && (evt.name === "escape" || keybind.match("app_exit", evt))) {
         evt.preventDefault()
         reject()
       }
