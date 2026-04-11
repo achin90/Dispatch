@@ -600,6 +600,7 @@ export function Home() {
   function diff() {
     const agent = selected()
     if (!agent) return
+    lastEnteredSessionID = agent.sessionID
     route.navigate({ type: "diffview", directory: resolveDir(agent) })
   }
 
