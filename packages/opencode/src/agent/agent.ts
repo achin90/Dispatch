@@ -114,6 +114,9 @@ export namespace Agent {
                 Permission.fromConfig({
                   question: "allow",
                   plan_enter: "allow",
+                  bash: "ask",
+                  edit: "ask",
+                  write: "ask",
                 }),
                 user,
               ),
@@ -138,6 +141,20 @@ export namespace Agent {
                     [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]:
                       "allow",
                   },
+                }),
+                user,
+              ),
+              mode: "primary",
+              native: true,
+            },
+            yolo: {
+              name: "yolo",
+              description: "Auto runs write, edit, and bash commands.",
+              options: {},
+              permission: Permission.merge(
+                defaults,
+                Permission.fromConfig({
+                  "*": "allow",
                 }),
                 user,
               ),

@@ -1000,6 +1000,7 @@ export namespace Config {
           // primary
           plan: Agent.optional(),
           build: Agent.optional(),
+          yolo: Agent.optional(),
           // subagent
           general: Agent.optional(),
           explore: Agent.optional(),

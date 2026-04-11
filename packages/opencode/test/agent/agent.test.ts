@@ -23,6 +23,7 @@ test("returns default native agents when no config", async () => {
       const agents = await Agent.list()
       const names = agents.map((a) => a.name)
       expect(names).toContain("build")
+      expect(names).toContain("yolo")
       expect(names).toContain("plan")
       expect(names).toContain("general")
       expect(names).toContain("explore")
@@ -42,8 +43,9 @@ test("build agent has correct default properties", async () => {
       expect(build).toBeDefined()
       expect(build?.mode).toBe("primary")
       expect(build?.native).toBe(true)
-      expect(evalPerm(build, "edit")).toBe("allow")
-      expect(evalPerm(build, "bash")).toBe("allow")
+      expect(evalPerm(build, "edit")).toBe("ask")
+      expect(evalPerm(build, "bash")).toBe("ask")
+      expect(evalPerm(build, "write")).toBe("ask")
     },
   })
 })
@@ -59,6 +61,36 @@ test("plan agent denies edits except .opencode/plans/*", async () => {
       expect(evalPerm(plan, "edit")).toBe("deny")
       // But specific path is allowed
       expect(Permission.evaluate("edit", ".opencode/plans/foo.md", plan!.permission).action).toBe("allow")
+    },
+  })
+})
+
+test("yolo agent allows all permissions", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const yolo = await Agent.get("yolo")
+      expect(yolo).toBeDefined()
+      expect(yolo?.mode).toBe("primary")
+      expect(yolo?.native).toBe(true)
+      expect(evalPerm(yolo, "edit")).toBe("allow")
+      expect(evalPerm(yolo, "bash")).toBe("allow")
+      expect(evalPerm(yolo, "write")).toBe("allow")
+      expect(evalPerm(yolo, "read")).toBe("allow")
+      expect(evalPerm(yolo, "question")).toBe("allow")
+    },
+  })
+})
+
+test("yolo agent is included in default agent list", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agents = await Agent.list()
+      const names = agents.map((a) => a.name)
+      expect(names).toContain("yolo")
     },
   })
 })
@@ -219,8 +251,8 @@ test("agent permission config merges with defaults", async () => {
       expect(build).toBeDefined()
       // Specific pattern is denied
       expect(Permission.evaluate("bash", "rm -rf *", build!.permission).action).toBe("deny")
-      // Edit still allowed
-      expect(evalPerm(build, "edit")).toBe("allow")
+      // Edit still asks (build default)
+      expect(evalPerm(build, "edit")).toBe("ask")
     },
   })
 })
@@ -703,6 +735,7 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
     config: {
       agent: {
         build: { disable: true },
+        yolo: { disable: true },
         plan: { disable: true },
       },
     },
