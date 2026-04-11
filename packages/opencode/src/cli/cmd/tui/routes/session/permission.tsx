@@ -591,7 +591,7 @@ function Prompt<const T extends Record<string, string>>(props: {
       props.onSelect(store.selected)
     }
 
-    if (props.escapeKey && (evt.name === "escape" || keybind.match("app_exit", evt))) {
+    if (!keybind.leader && props.escapeKey && (evt.name === "escape" || keybind.match("app_exit", evt))) {
       evt.preventDefault()
       props.onSelect(props.escapeKey)
     }
