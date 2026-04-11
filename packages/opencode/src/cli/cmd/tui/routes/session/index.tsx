@@ -148,6 +148,8 @@ export function Session() {
     return messages().findLast((x) => x.role === "assistant")
   })
 
+  const idle = createMemo(() => (sync.data.session_status?.[route.sessionID]?.type ?? "idle") === "idle")
+
   const dimensions = useTerminalDimensions()
   const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
@@ -1178,6 +1180,8 @@ export function Session() {
                         message={message as UserMessage}
                         parts={sync.data.part[message.id] ?? []}
                         pending={pending()}
+                        idle={idle()}
+                        lastAssistantID={lastAssistant()?.id}
                       />
                     </Match>
                     <Match when={message.role === "assistant"}>
@@ -1269,6 +1273,8 @@ function UserMessage(props: {
   onMouseUp: () => void
   index: number
   pending?: string
+  idle?: boolean
+  lastAssistantID?: string
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1277,9 +1283,14 @@ function UserMessage(props: {
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
+  // Orphaned: session is idle, message has no following assistant response, and there's no
+  // active in-flight run showing it as "queued"
+  const orphaned = createMemo(
+    () => !queued() && props.idle && props.lastAssistantID && props.message.id > props.lastAssistantID,
+  )
   const color = createMemo(() => local.agent.color(props.message.agent))
   const queuedFg = createMemo(() => selectedForeground(theme, color()))
-  const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
+  const metadataVisible = createMemo(() => queued() || orphaned() || ctx.showTimestamps())
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
 
@@ -1328,7 +1339,7 @@ function UserMessage(props: {
               </box>
             </Show>
             <Show
-              when={queued()}
+              when={queued() || orphaned()}
               fallback={
                 <Show when={ctx.showTimestamps()}>
                   <text fg={theme.textMuted}>
@@ -1340,7 +1351,12 @@ function UserMessage(props: {
               }
             >
               <text fg={theme.textMuted}>
-                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
+                <Show
+                  when={queued()}
+                  fallback={<span style={{ bg: theme.warning, fg: theme.background, bold: true }}> UNSENT </span>}
+                >
+                  <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
+                </Show>
               </text>
             </Show>
           </box>

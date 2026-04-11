@@ -275,8 +275,21 @@ export function Prompt(props: PromptProps) {
           }, 5000)
 
           if (store.interrupt >= 2) {
-            sdk.client.session.abort({
-              sessionID: props.sessionID,
+            // Capture queued message text before abort removes it (single queued case)
+            const sid = props.sessionID
+            const msgs = sync.data.message[sid] ?? []
+            const lastAssist = msgs.findLast((x) => x.role === "assistant")
+            const queued = lastAssist ? msgs.filter((x) => x.role === "user" && x.id > lastAssist.id) : []
+            sdk.client.session.abort({ sessionID: sid }).then(() => {
+              if (queued.length !== 1) return
+              const parts = sync.data.part[queued[0].id] ?? []
+              const text = parts
+                .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text" && !p.synthetic)
+                .map((p) => p.text)
+                .join("")
+              if (!text) return
+              input.clear()
+              input.insertText(text)
             })
             setStore("interrupt", 0)
           }

@@ -150,6 +150,19 @@ export namespace SessionPrompt {
           return
         }
         yield* runner.cancel
+
+        // After cancel, find queued user messages (arrived after the last assistant).
+        // If exactly one, remove it — the TUI will restore its text to the prompt input.
+        // If multiple, leave them; the TUI will show an UNSENT badge on each.
+        const msgs = yield* MessageV2.filterCompactedEffect(sessionID)
+        const last = msgs.findLast((m) => m.info.role === "assistant")?.info as MessageV2.Assistant | undefined
+        if (last) {
+          const queued = msgs.filter((m) => m.info.role === "user" && m.info.id > last.id)
+          if (queued.length === 1) {
+            log.info("removing single queued message after cancel", { sessionID, messageID: queued[0].info.id })
+            yield* sessions.removeMessage({ sessionID, messageID: queued[0].info.id })
+          }
+        }
       })
 
       const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
