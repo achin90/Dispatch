@@ -130,11 +130,37 @@ export namespace Config {
     return {}
   }
 
+  // Normalize a permission rule value so that string "ask"/"allow"/"deny" becomes
+  // { "*": value } before a deep merge. This prevents a string rule in one config
+  // from being silently replaced by an object rule in a higher-priority config.
+  function normalize(v: unknown): Record<string, string> {
+    if (typeof v === "string") return { "*": v }
+    if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, string>
+    return {}
+  }
+
   // Custom merge function that concatenates array fields instead of replacing them
+  // and preserves string permission rules when the other config uses an object rule.
   function mergeConfigConcatArrays(target: Info, source: Info): Info {
     const merged = mergeDeep(target, source)
     if (target.instructions && source.instructions) {
       merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
+    }
+    // Fix permission merging: when one config has `"tool": "ask"` (string) and the
+    // other has `"tool": { "path/*": "deny" }` (object), mergeDeep replaces the string
+    // with the object and loses the string rule. Normalize both sides to objects first.
+    if (target.permission && source.permission) {
+      merged.permission = Object.fromEntries(
+        Array.from(new Set([...Object.keys(target.permission), ...Object.keys(source.permission)])).map((key) => {
+          const tv = (target.permission as Record<string, unknown>)[key]
+          const sv = (source.permission as Record<string, unknown>)[key]
+          if (tv === undefined) return [key, sv]
+          if (sv === undefined) return [key, tv]
+          if (typeof tv === typeof sv) return [key, (merged.permission as Record<string, unknown>)[key]]
+          // One is a string, the other is an object — normalize both to objects and merge
+          return [key, mergeDeep(normalize(tv), normalize(sv))]
+        }),
+      ) as Info["permission"]
     }
     return merged
   }
