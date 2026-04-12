@@ -1287,7 +1287,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.prompt")(
         function* (input: PromptInput) {
+          yield* elog.info("prompt effect: enter", { sessionID: input.sessionID, agent: input.agent })
+          const ctx = yield* InstanceState.context
+          yield* elog.info("prompt effect: instance context", { sessionID: input.sessionID, directory: ctx.directory, worktree: ctx.worktree })
           const session = yield* sessions.get(input.sessionID)
+          yield* elog.info("prompt effect: session found", { sessionID: input.sessionID, sessionDirectory: session.directory })
           yield* revert.cleanup(session)
           const message = yield* createUserMessage(input)
           yield* sessions.touch(input.sessionID)
@@ -1318,9 +1322,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         function* (sessionID: SessionID) {
           const ctx = yield* InstanceState.context
           const slog = elog.with({ sessionID })
+          yield* slog.info("runLoop: enter", { directory: ctx.directory, worktree: ctx.worktree })
           let structured: unknown | undefined
           let step = 0
           const session = yield* sessions.get(sessionID)
+          yield* slog.info("runLoop: session", { sessionDirectory: session.directory })
 
           while (true) {
             yield* status.set(sessionID, { type: "busy" })
@@ -1941,7 +1947,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   export type PromptInput = z.infer<typeof PromptInput>
 
   export async function prompt(input: PromptInput) {
-    return runPromise((svc) => svc.prompt(PromptInput.parse(input)))
+    log.info("prompt facade: enter", { sessionID: input.sessionID, agent: input.agent })
+    try {
+      const result = await runPromise((svc) => svc.prompt(PromptInput.parse(input)))
+      log.info("prompt facade: complete", { sessionID: input.sessionID })
+      return result
+    } catch (err) {
+      log.error("prompt facade: error", { sessionID: input.sessionID, error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined })
+      throw err
+    }
   }
 
   export async function resolvePromptParts(template: string) {

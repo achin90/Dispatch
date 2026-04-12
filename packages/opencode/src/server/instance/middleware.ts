@@ -10,6 +10,9 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 import { Session } from "@/session"
 import { SessionID } from "@/session/schema"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
+import { Log } from "@/util/log"
+
+const log = Log.create({ service: "middleware.router" })
 
 type Rule = { method?: string; path: string; exact?: boolean; action: "local" | "forward" }
 
@@ -58,12 +61,15 @@ export function WorkspaceRouterMiddleware(upgrade: UpgradeWebSocket): Middleware
     )
 
     const url = new URL(c.req.url)
+    log.info("route", { method: c.req.method, path: url.pathname, directory })
 
     const sessionWorkspaceID = await getSessionWorkspace(url)
     const workspaceID = sessionWorkspaceID || url.searchParams.get("workspace")
+    log.info("workspace resolve", { sessionWorkspaceID, workspaceID, path: url.pathname })
 
     // If no workspace is provided we use the project
     if (!workspaceID) {
+      log.info("no workspace, using directory", { directory, path: url.pathname })
       return Instance.provide({
         directory,
         init: InstanceBootstrap,

@@ -21,9 +21,12 @@ export function useEvent() {
         return
       }
 
-      if (event.directory === project.instance.directory()) {
-        handler(event.payload)
-      }
+      // Accept events from the current project directory AND from any
+      // other directory (e.g. agent sessions running in worktrees).
+      // Without this, real-time updates from agent sessions are invisible
+      // to the TUI because those sessions publish events under their
+      // worktree directory, not the main project directory.
+      handler(event.payload)
     })
   }
 

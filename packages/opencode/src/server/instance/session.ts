@@ -38,11 +38,16 @@ const latency = Log.create({ service: "submit.latency" })
  * directory the session was created in, not the TUI's startup directory.
  */
 async function withSessionDirectory<R>(sessionID: SessionID, fn: () => Promise<R>): Promise<R> {
+  log.info("withSessionDirectory: lookup", { sessionID })
   const session = await Session.get(sessionID)
+  log.info("withSessionDirectory: found", { sessionID, directory: session.directory })
   return Instance.provide({
     directory: session.directory,
     init: InstanceBootstrap,
-    fn,
+    fn: async () => {
+      log.info("withSessionDirectory: Instance.provide entered", { sessionID, directory: session.directory })
+      return fn()
+    },
   })
 }
 
@@ -860,8 +865,15 @@ export const SessionRoutes = lazy(() =>
         return stream(c, async (stream) => {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
-          const msg = await withSessionDirectory(sessionID, () => SessionPrompt.prompt({ ...body, sessionID }))
-          stream.write(JSON.stringify(msg))
+          log.info("session.prompt: start", { sessionID, agent: body.agent })
+          try {
+            const msg = await withSessionDirectory(sessionID, () => SessionPrompt.prompt({ ...body, sessionID }))
+            log.info("session.prompt: complete", { sessionID, messageID: msg.info.id })
+            stream.write(JSON.stringify(msg))
+          } catch (err) {
+            log.error("session.prompt: error", { sessionID, error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined })
+            throw err
+          }
         })
       },
     )
@@ -889,8 +901,9 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
+        log.info("session.prompt_async: start", { sessionID, agent: body.agent })
         withSessionDirectory(sessionID, () => SessionPrompt.prompt({ ...body, sessionID })).catch((err) => {
-          log.error("prompt_async failed", { sessionID, error: err })
+          log.error("prompt_async failed", { sessionID, error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined })
           Bus.publish(Session.Event.Error, {
             sessionID,
             error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
