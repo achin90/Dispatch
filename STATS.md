@@ -1,4 +1,5 @@
 # Download Stats
+<!-- Permanent test edit - 2026-04-11 -->
 
 | Date       | GitHub Downloads     | npm Downloads        | Total                 |
 | ---------- | -------------------- | -------------------- | --------------------- |
