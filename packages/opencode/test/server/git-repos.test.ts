@@ -28,10 +28,8 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
-        const response = await app.request(
-          `/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`,
-        )
+        const app = Server.Default().app
+        const response = await app.request(`/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`)
 
         expect(response.status).toBe(200)
         const body: string[] = await response.json()
@@ -58,10 +56,8 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
-        const response = await app.request(
-          `/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`,
-        )
+        const app = Server.Default().app
+        const response = await app.request(`/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`)
 
         expect(response.status).toBe(200)
         const body: string[] = await response.json()
@@ -88,10 +84,8 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
-        const response = await app.request(
-          `/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`,
-        )
+        const app = Server.Default().app
+        const response = await app.request(`/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`)
 
         expect(response.status).toBe(200)
         const body: string[] = await response.json()
@@ -115,10 +109,8 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
-        const response = await app.request(
-          `/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`,
-        )
+        const app = Server.Default().app
+        const response = await app.request(`/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`)
 
         expect(response.status).toBe(200)
         const body: string[] = await response.json()
@@ -142,10 +134,8 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
-        const response = await app.request(
-          `/experimental/git-repos?root=${encodeURIComponent(tmp.path)}&query=alpha`,
-        )
+        const app = Server.Default().app
+        const response = await app.request(`/experimental/git-repos?root=${encodeURIComponent(tmp.path)}&query=alpha`)
 
         expect(response.status).toBe(200)
         const body: string[] = await response.json()
@@ -161,7 +151,7 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
+        const app = Server.Default().app
         const response = await app.request(
           `/experimental/git-repos?root=${encodeURIComponent("/tmp/nonexistent-dir-" + Date.now())}`,
         )
@@ -188,10 +178,8 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
-        const response = await app.request(
-          `/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`,
-        )
+        const app = Server.Default().app
+        const response = await app.request(`/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`)
 
         expect(response.status).toBe(200)
         const body: string[] = await response.json()
@@ -215,10 +203,8 @@ describe("experimental/git-repos", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const app = Server.Default()
-        const response = await app.request(
-          `/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`,
-        )
+        const app = Server.Default().app
+        const response = await app.request(`/experimental/git-repos?root=${encodeURIComponent(tmp.path)}`)
 
         expect(response.status).toBe(200)
         const body: string[] = await response.json()

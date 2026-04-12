@@ -14,7 +14,7 @@ import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { NotFoundError } from "@/storage/db"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import { InstanceState } from "@/effect/instance-state"
 import { isOverflow as overflow } from "./overflow"
@@ -63,7 +63,7 @@ export namespace SessionCompaction {
     }) => Effect.Effect<void>
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/SessionCompaction") {}
+  export class Service extends Context.Service<Service, Interface>()("@opencode/SessionCompaction") {}
 
   export const layer: Layer.Layer<
     Service,
@@ -455,7 +455,7 @@ When constructing the summary, try to stick to this template:
               ],
               model,
             })
-            .pipe(Effect.onInterrupt(() => processor.abort()))
+            .pipe(Effect.onInterrupt(() => Effect.void))
         }
 
         if (result === "compact") {
@@ -566,17 +566,15 @@ When constructing the summary, try to stick to this template:
     }),
   )
 
-  export const defaultLayer = Layer.unwrap(
-    Effect.sync(() =>
-      layer.pipe(
-        Layer.provide(Provider.defaultLayer),
-        Layer.provide(Session.defaultLayer),
-        Layer.provide(SessionProcessor.defaultLayer),
-        Layer.provide(Agent.defaultLayer),
-        Layer.provide(Plugin.defaultLayer),
-        Layer.provide(Bus.layer),
-        Layer.provide(Config.defaultLayer),
-      ),
+  export const defaultLayer = Layer.suspend(() =>
+    layer.pipe(
+      Layer.provide(Provider.defaultLayer),
+      Layer.provide(Session.defaultLayer),
+      Layer.provide(SessionProcessor.defaultLayer),
+      Layer.provide(Agent.defaultLayer),
+      Layer.provide(Plugin.defaultLayer),
+      Layer.provide(Bus.layer),
+      Layer.provide(Config.defaultLayer),
     ),
   )
 

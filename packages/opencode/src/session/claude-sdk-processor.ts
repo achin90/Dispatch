@@ -18,7 +18,6 @@ import { SessionID, MessageID, PartID } from "./schema"
 import { popPendingMeta } from "./claude-sdk-permissions"
 import { assistantMessageToParts, resultMessageToMetadata, type CompletionMetadata } from "./claude-sdk-adapter"
 import { setSdkSessionID } from "./claude-sdk-session-map"
-import { SessionStatus } from "./status"
 import { SessionCompaction } from "./compaction"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
@@ -132,6 +131,7 @@ export interface ClaudeSdkProcessorInput {
   sessionID: SessionID
   abort: AbortSignal
   compaction?: CompactionRef
+  setStatus?: (sessionID: SessionID, status: { type: string; activity?: string }) => void
 }
 
 export interface ClaudeSdkProcessorResult {
@@ -187,7 +187,7 @@ export async function processClaudeSdkStream(
           if (assistant.parent_tool_use_id === null) {
             lastTurnUsage = assistant.message.usage
           }
-          await processAssistantMessage(assistant, sessionID, assistantMessage, subagentMap)
+          await processAssistantMessage(assistant, sessionID, assistantMessage, subagentMap, input.setStatus)
           break
         }
 
@@ -337,6 +337,7 @@ async function processAssistantMessage(
   sessionID: SessionID,
   assistantMessage: MessageV2.Assistant,
   subagentMap: Map<string, SubagentContext>,
+  setStatus?: ClaudeSdkProcessorInput["setStatus"],
 ): Promise<void> {
   if (msg.parent_tool_use_id === null) {
     // Top-level message — finalize running tools then persist parts
@@ -348,7 +349,7 @@ async function processAssistantMessage(
     // Update activity based on the last meaningful part
     const tool = parts.findLast((p) => p.type === "tool")
     const activity = tool ? formatActivity(tool) : "Thinking..."
-    await SessionStatus.set(sessionID, { type: "busy", activity })
+    setStatus?.(sessionID, { type: "busy", activity })
     return
   }
 

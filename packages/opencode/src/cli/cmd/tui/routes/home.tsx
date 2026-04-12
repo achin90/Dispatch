@@ -219,10 +219,10 @@ export function Home() {
     const dir = agent.worktree
       ? agent.worktree.directory
       : !agent.directory || agent.directory === "."
-        ? sync.data.path.directory
+        ? sync.path.directory
         : agent.directory.startsWith("/")
           ? agent.directory
-          : sync.data.path.directory + "/" + agent.directory
+          : sync.path.directory + "/" + agent.directory
     return dir.replace(/\/+$/, "")
   }
 
@@ -323,8 +323,9 @@ export function Home() {
 
   createEffect(on(grouped, () => fetchDiffStats()))
 
-  sdk.event.on("worktree.ready", (evt) => {
-    if (pending.delete(evt.properties.branch)) fetchDiffStats()
+  sdk.event.on("event", (evt) => {
+    if (evt.payload.type !== "worktree.ready") return
+    if (pending.delete(evt.payload.properties.branch)) fetchDiffStats()
   })
 
   // ---- GitHub PR integration ----
@@ -332,7 +333,7 @@ export function Home() {
   const base = () => `${sdk.url}/experimental`
 
   async function ghFetch<T>(path: string, opts?: RequestInit): Promise<T | null | "error"> {
-    const url = `${base()}${path}${path.includes("?") ? "&" : "?"}directory=${encodeURIComponent(sync.data.path.directory)}`
+    const url = `${base()}${path}${path.includes("?") ? "&" : "?"}directory=${encodeURIComponent(sync.path.directory)}`
     log.info("ghFetch", { method: opts?.method ?? "GET", path })
     const res = await sdk.fetch(url, opts).catch((err) => {
       log.error("ghFetch: network error", { path, err: String(err) })
@@ -491,7 +492,7 @@ export function Home() {
     dialog.clear()
     setDialogOpen(false)
     if (!name) return
-    const root = dir === "." ? sync.data.path.directory : sync.data.path.directory + "/" + dir
+    const root = dir === "." ? sync.path.directory : sync.path.directory + "/" + dir
     const result = await sdk.client.session.create({ directory: root })
     if (!result.data) return
     const wt =
@@ -513,7 +514,7 @@ export function Home() {
     const repoDir = await DialogGitRepoSelect.show(
       dialog,
       "Select Source Repository",
-      sync.data.path.directory,
+      sync.path.directory,
       "Choose the repository to create a new worktree from",
     )
     if (!repoDir) {

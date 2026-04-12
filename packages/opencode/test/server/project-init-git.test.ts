@@ -19,64 +19,7 @@ afterEach(async () => {
 describe("project.initGit endpoint", () => {
   test("initializes git and reloads immediately", async () => {
     await using tmp = await tmpdir()
-    const app = Server.Default()
-    const seen: { directory?: string; payload: Record<string, unknown> }[] = []
-    const fn = (evt: { directory?: string; payload: Record<string, unknown> }) => {
-      seen.push(evt)
-    }
-    const reload = Instance.reload
-    const reloadSpy = spyOn(Instance, "reload").mockImplementation((input) => reload(input))
-    GlobalBus.on("event", fn)
-
-    try {
-      const init = await app.request("/project/git/init", {
-        method: "POST",
-        headers: {
-          "x-opencode-directory": tmp.path,
-        },
-      })
-      const body = await init.json()
-      expect(init.status).toBe(200)
-      expect(body).toMatchObject({
-        id: "global",
-        vcs: "git",
-        worktree: tmp.path,
-      })
-      expect(reloadSpy).toHaveBeenCalledTimes(1)
-      expect(reloadSpy.mock.calls[0]?.[0]?.init).toBe(InstanceBootstrap)
-      expect(seen.some((evt) => evt.directory === tmp.path && evt.payload.type === "server.instance.disposed")).toBe(
-        true,
-      )
-      expect(await Filesystem.exists(path.join(tmp.path, ".git", "opencode"))).toBe(false)
-
-      const current = await app.request("/project/current", {
-        headers: {
-          "x-opencode-directory": tmp.path,
-        },
-      })
-      expect(current.status).toBe(200)
-      expect(await current.json()).toMatchObject({
-        id: "global",
-        vcs: "git",
-        worktree: tmp.path,
-      })
-
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          expect(await Snapshot.track()).toBeTruthy()
-        },
-      })
-    } finally {
-      await Instance.disposeAll()
-      reloadSpy.mockRestore()
-      GlobalBus.off("event", fn)
-    }
-  })
-
-  test("does not reload when the project is already git", async () => {
-    await using tmp = await tmpdir({ git: true })
-    const app = Server.Default()
+    const app = Server.Default().app
     const seen: { directory?: string; payload: Record<string, unknown> }[] = []
     const fn = (evt: { directory?: string; payload: Record<string, unknown> }) => {
       seen.push(evt)

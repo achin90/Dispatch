@@ -23,9 +23,10 @@ export function AgentSummaries() {
     }
   }
 
-  sdk.event.on("session.status", (evt) => {
-    const sid = evt.properties.sessionID
-    if (evt.properties.status.type === "busy") {
+  sdk.event.on("event", (evt) => {
+    if (evt.payload.type !== "session.status") return
+    const sid = evt.payload.properties.sessionID
+    if (evt.payload.properties.status.type === "busy") {
       sync.set(
         "agent_summary",
         produce((draft: Record<string, { text: string; ai: boolean }>) => {
@@ -41,7 +42,7 @@ export function AgentSummaries() {
       )
       return
     }
-    if (evt.properties.status.type === "idle") {
+    if (evt.payload.properties.status.type === "idle") {
       const current: AgentEntry[] = kv.get("agents", [])
       if (!current.some((a) => a.sessionID === sid)) return
       if (fetching.has(sid)) return

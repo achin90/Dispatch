@@ -1,5 +1,5 @@
 import path from "path"
-import { Ripgrep } from "../file/ripgrep"
+import { Context, Effect, Layer } from "effect"
 
 import { Instance } from "../project/instance"
 
@@ -36,98 +36,113 @@ export namespace SystemPrompt {
 
   async function worktree() {
     const dir = Instance.directory
-    const content = await Bun.file(path.join(dir, ".git")).text().catch(() => null)
+    const content = await Bun.file(path.join(dir, ".git"))
+      .text()
+      .catch(() => null)
     if (!content?.startsWith("gitdir:")) return
     const gitdir = content.replace("gitdir:", "").trim()
     const resolved = path.isAbsolute(gitdir) ? gitdir : path.resolve(dir, gitdir)
-    const head = await Bun.file(path.join(resolved, "HEAD")).text().catch(() => "")
+    const head = await Bun.file(path.join(resolved, "HEAD"))
+      .text()
+      .catch(() => "")
     const branch = head.startsWith("ref:")
-      ? head.replace("ref:", "").trim().replace(/^refs\/heads\//, "")
+      ? head
+          .replace("ref:", "")
+          .trim()
+          .replace(/^refs\/heads\//, "")
       : path.basename(dir)
     const match = resolved.match(/^(.+)\/\.git\/worktrees\//)
     const source = match ? match[1] : path.dirname(resolved)
     return { source, branch }
   }
 
-  export async function environment(model: Provider.Model) {
-    const project = Instance.project
-    const parts = [
-      [
-        `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
-        `Here is some useful information about the environment you are running in:`,
-        `<env>`,
-        `  Working directory: ${Instance.directory}`,
-        `  Workspace root folder: ${Instance.worktree}`,
-        `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
-        `  Platform: ${process.platform}`,
-        `  Today's date: ${new Date().toDateString()}`,
-        `</env>`,
-        `<directories>`,
-        `  ${
-          project.vcs === "git" && false
-            ? await Ripgrep.tree({
-                cwd: Instance.directory,
-                limit: 50,
-              })
-            : ""
-        }`,
-        `</directories>`,
-      ].join("\n"),
-    ]
-
-    const wt = await worktree()
-    if (wt) {
-      parts.push(
-        [
-          `# Worktree Agent Context`,
-          ``,
-          `You are working in a git worktree. Here are the details:`,
-          ``,
-          `- **Main worktree**: ${wt.source}`,
-          `- **Your worktree**: ${Instance.directory}`,
-          `- **Your branch**: ${wt.branch}`,
-          ``,
-          `## Working rules`,
-          ``,
-          `- Do all your work within your worktree (\`${Instance.directory}\`). Do not modify files in the main worktree directly.`,
-          `- When you are asked to merge your work back into the main branch, follow this exact process:`,
-          ``,
-          `### Merge process`,
-          ``,
-          `1. Commit all outstanding changes in your worktree`,
-          `2. Rebase your branch onto the latest main from the main worktree:`,
-          `   \`\`\`sh`,
-          `   git rebase main`,
-          `   \`\`\``,
-          `3. Resolve any conflicts if they arise`,
-          `4. Merge into main using \`git -C\` to operate on the main worktree:`,
-          `   \`\`\`sh`,
-          `   git -C ${wt.source} merge ${wt.branch}`,
-          `   \`\`\``,
-          ``,
-          `Always rebase before merging. Never merge without rebasing first.`,
-          ``,
-          `## Documentation maintenance`,
-          ``,
-          `When committing changes, update any relevant CLAUDE.md or README files to reflect the changes you made. Do NOT simply append new content — review the existing documentation and **trim, consolidate, or rewrite** sections so the files stay concise and accurate. Remove outdated information rather than leaving it alongside new content.`,
-        ].join("\n"),
-      )
-    }
-
-    return parts
+  export interface Interface {
+    readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
+    readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
   }
 
-  export async function skills(agent: Agent.Info) {
-    if (Permission.disabled(["skill"], agent.permission).has("skill")) return
+  export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
 
-    const list = await Skill.available(agent)
+  export const layer = Layer.effect(
+    Service,
+    Effect.gen(function* () {
+      const skill = yield* Skill.Service
 
-    return [
-      "Skills provide specialized instructions and workflows for specific tasks.",
-      "Use the skill tool to load a skill when a task matches its description.",
-      // the agents seem to ingest the information about skills a bit better if we present a more verbose
-      // version of them here and a less verbose version in tool description, rather than vice versa.
-      Skill.fmt(list, { verbose: true }),
-    ].join("\n")
-  }
+      return Service.of({
+        environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
+          const project = Instance.project
+          const parts = [
+            [
+              `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
+              `Here is some useful information about the environment you are running in:`,
+              `<env>`,
+              `  Working directory: ${Instance.directory}`,
+              `  Workspace root folder: ${Instance.worktree}`,
+              `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
+              `  Platform: ${process.platform}`,
+              `  Today's date: ${new Date().toDateString()}`,
+              `</env>`,
+            ].join("\n"),
+          ]
+
+          const wt = yield* Effect.promise(() => worktree())
+          if (wt) {
+            parts.push(
+              [
+                `# Worktree Agent Context`,
+                ``,
+                `You are working in a git worktree. Here are the details:`,
+                ``,
+                `- **Main worktree**: ${wt.source}`,
+                `- **Your worktree**: ${Instance.directory}`,
+                `- **Your branch**: ${wt.branch}`,
+                ``,
+                `## Working rules`,
+                ``,
+                `- Do all your work within your worktree (\`${Instance.directory}\`). Do not modify files in the main worktree directly.`,
+                `- When you are asked to merge your work back into the main branch, follow this exact process:`,
+                ``,
+                `### Merge process`,
+                ``,
+                `1. Commit all outstanding changes in your worktree`,
+                `2. Rebase your branch onto the latest main from the main worktree:`,
+                `   \`\`\`sh`,
+                `   git rebase main`,
+                `   \`\`\``,
+                `3. Resolve any conflicts if they arise`,
+                `4. Merge into main using \`git -C\` to operate on the main worktree:`,
+                `   \`\`\`sh`,
+                `   git -C ${wt.source} merge ${wt.branch}`,
+                `   \`\`\``,
+                ``,
+                `Always rebase before merging. Never merge without rebasing first.`,
+                ``,
+                `## Documentation maintenance`,
+                ``,
+                `When committing changes, update any relevant CLAUDE.md or README files to reflect the changes you made. Do NOT simply append new content — review the existing documentation and **trim, consolidate, or rewrite** sections so the files stay concise and accurate. Remove outdated information rather than leaving it alongside new content.`,
+              ].join("\n"),
+            )
+          }
+
+          return parts
+        }),
+
+        skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
+          if (Permission.disabled(["skill"], agent.permission).has("skill")) return
+
+          const list = yield* skill.available(agent)
+
+          return [
+            "Skills provide specialized instructions and workflows for specific tasks.",
+            "Use the skill tool to load a skill when a task matches its description.",
+            // the agents seem to ingest the information about skills a bit better if we present a more verbose
+            // version of them here and a less verbose version in tool description, rather than vice versa.
+            Skill.fmt(list, { verbose: true }),
+          ].join("\n")
+        }),
+      })
+    }),
+  )
+
+  export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer))
 }

@@ -4,7 +4,6 @@ import { pathToFileURL } from "url"
 import os from "os"
 import { Process } from "../util/process"
 import z from "zod"
-import { ModelsDev } from "../provider/models"
 import { mergeDeep, pipe, unique } from "remeda"
 import { Global } from "../global"
 import fsNode from "fs/promises"
@@ -37,10 +36,11 @@ import type { ConsoleState } from "./console-state"
 import { AppFileSystem } from "@/filesystem"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRuntime } from "@/effect/run-service"
-import { Duration, Effect, Layer, Option, ServiceMap } from "effect"
+import { Duration, Effect, Layer, Option, Context } from "effect"
 import { Flock } from "@/util/flock"
 import { isPathPluginSpec, parsePluginSpecifier, resolvePathPluginTarget } from "@/plugin/shared"
 import { Npm } from "@/npm"
+import { InstanceRef } from "@/effect/instance-ref"
 
 export namespace Config {
   const ModelId = z.string().meta({ $ref: "https://models.dev/model-schema.json#/$defs/Model" })
@@ -425,6 +425,10 @@ export namespace Config {
         .describe("OAuth client ID. If not provided, dynamic client registration (RFC 7591) will be attempted."),
       clientSecret: z.string().optional().describe("OAuth client secret (if required by the authorization server)"),
       scope: z.string().optional().describe("OAuth scopes to request during authorization"),
+      redirectUri: z
+        .string()
+        .optional()
+        .describe("OAuth redirect URI (default: http://127.0.0.1:19876/mcp/oauth/callback)."),
     })
     .strict()
     .meta({
@@ -1150,7 +1154,7 @@ export namespace Config {
     readonly waitForDependencies: () => Effect.Effect<void>
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Config") {}
+  export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
   function globalConfigFile() {
     const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
@@ -1351,27 +1355,31 @@ export namespace Config {
           const consoleManagedProviders = new Set<string>()
           let activeOrgName: string | undefined
 
-          const scope = (source: string): PluginScope => {
+          const scope = Effect.fnUntraced(function* (source: string) {
             if (source.startsWith("http://") || source.startsWith("https://")) return "global"
             if (source === "OPENCODE_CONFIG_CONTENT") return "local"
-            if (Instance.containsPath(source)) return "local"
+            if (yield* InstanceRef.use((ctx) => Effect.succeed(Instance.containsPath(source, ctx)))) return "local"
             return "global"
-          }
+          })
 
-          const track = (source: string, list: PluginSpec[] | undefined, kind?: PluginScope) => {
+          const track = Effect.fnUntraced(function* (
+            source: string,
+            list: PluginSpec[] | undefined,
+            kind?: PluginScope,
+          ) {
             if (!list?.length) return
-            const hit = kind ?? scope(source)
+            const hit = kind ?? (yield* scope(source))
             const plugins = deduplicatePluginOrigins([
               ...(result.plugin_origins ?? []),
               ...list.map((spec) => ({ spec, source, scope: hit })),
             ])
             result.plugin = plugins.map((item) => item.spec)
             result.plugin_origins = plugins
-          }
+          })
 
           const merge = (source: string, next: Info, kind?: PluginScope) => {
             result = mergeConfigConcatArrays(result, next)
-            track(source, next.plugin, kind)
+            return track(source, next.plugin, kind)
           }
 
           for (const [key, value] of Object.entries(auth)) {
@@ -1391,16 +1399,16 @@ export namespace Config {
                 dir: path.dirname(source),
                 source,
               })
-              merge(source, next, "global")
+              yield* merge(source, next, "global")
               log.debug("loaded remote config from well-known", { url })
             }
           }
 
           const global = yield* getGlobal()
-          merge(Global.Path.config, global, "global")
+          yield* merge(Global.Path.config, global, "global")
 
           if (Flag.OPENCODE_CONFIG) {
-            merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG))
+            yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG))
             log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
           }
 
@@ -1408,7 +1416,7 @@ export namespace Config {
             for (const file of yield* Effect.promise(() =>
               ConfigPaths.projectFiles("opencode", ctx.directory, ctx.worktree),
             )) {
-              merge(file, yield* loadFile(file), "local")
+              yield* merge(file, yield* loadFile(file), "local")
             }
           }
 
@@ -1429,7 +1437,7 @@ export namespace Config {
               for (const file of ["opencode.json", "opencode.jsonc"]) {
                 const source = path.join(dir, file)
                 log.debug(`loading config from ${source}`)
-                merge(source, yield* loadFile(source))
+                yield* merge(source, yield* loadFile(source))
                 result.agent ??= {}
                 result.mode ??= {}
                 result.plugin ??= []
@@ -1448,7 +1456,7 @@ export namespace Config {
             result.agent = mergeDeep(result.agent, yield* Effect.promise(() => loadAgent(dir)))
             result.agent = mergeDeep(result.agent, yield* Effect.promise(() => loadMode(dir)))
             const list = yield* Effect.promise(() => loadPlugin(dir))
-            track(dir, list)
+            yield* track(dir, list)
           }
 
           if (process.env.OPENCODE_CONFIG_CONTENT) {
@@ -1457,7 +1465,7 @@ export namespace Config {
               dir: ctx.directory,
               source,
             })
-            merge(source, next, "local")
+            yield* merge(source, next, "local")
             log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
           }
 
@@ -1486,7 +1494,7 @@ export namespace Config {
                 for (const providerID of Object.keys(next.provider ?? {})) {
                   consoleManagedProviders.add(providerID)
                 }
-                merge(source, next, "global")
+                yield* merge(source, next, "global")
               }
             }).pipe(
               Effect.catch((err) => {
@@ -1501,7 +1509,7 @@ export namespace Config {
           if (existsSync(managedDir)) {
             for (const file of ["opencode.json", "opencode.jsonc"]) {
               const source = path.join(managedDir, file)
-              merge(source, yield* loadFile(source), "global")
+              yield* merge(source, yield* loadFile(source), "global")
             }
           }
 

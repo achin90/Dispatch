@@ -14,6 +14,13 @@ import { WorkspaceID } from "./schema"
 import { parseSSE } from "./sse"
 
 export namespace Workspace {
+  export const ConnectionStatus = z.object({
+    workspaceID: WorkspaceID.zod,
+    status: z.enum(["connected", "connecting", "disconnected", "error"]),
+    error: z.string().optional(),
+  })
+  export type ConnectionStatus = z.infer<typeof ConnectionStatus>
+
   export const Event = {
     Ready: BusEvent.define(
       "workspace.ready",
@@ -27,6 +34,7 @@ export namespace Workspace {
         message: z.string(),
       }),
     ),
+    Status: BusEvent.define("workspace.status", ConnectionStatus),
   }
 
   export const Info = WorkspaceInfo.meta({
@@ -111,6 +119,27 @@ export namespace Workspace {
       return info
     }
   })
+  const connections = new Map<WorkspaceID, ConnectionStatus>()
+
+  function setStatus(id: WorkspaceID, s: ConnectionStatus["status"], error?: string) {
+    const prev = connections.get(id)
+    if (prev?.status === s && prev?.error === error) return
+    const next = { workspaceID: id, status: s, error }
+    connections.set(id, next)
+    GlobalBus.emit("event", {
+      directory: "global",
+      workspace: id,
+      payload: {
+        type: Event.Status.type,
+        properties: next,
+      },
+    })
+  }
+
+  export function status(): ConnectionStatus[] {
+    return [...connections.values()]
+  }
+
   const log = Log.create({ service: "workspace-sync" })
 
   async function workspaceEventLoop(space: Info, stop: AbortSignal) {

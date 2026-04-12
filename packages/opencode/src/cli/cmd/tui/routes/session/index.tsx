@@ -198,8 +198,9 @@ export function Session() {
   // Handle initial prompt from fork
   let seeded = false
   let lastSwitch: string | undefined = undefined
-  sdk.event.on("message.part.updated", (evt) => {
-    const part = evt.properties.part
+  sdk.event.on("event", (evt) => {
+    if (evt.payload.type !== "message.part.updated") return
+    const part = evt.payload.properties.part
     if (part.type !== "tool") return
     if (part.sessionID !== route.sessionID) return
     if (part.state.status !== "completed") return
@@ -1851,7 +1852,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
     const workdir = props.input.workdir
     if (!workdir || workdir === ".") return undefined
 
-    const base = sync.data.path.directory
+    const base = sync.path.directory
     if (!base) return undefined
 
     const absolute = path.resolve(base, workdir)
