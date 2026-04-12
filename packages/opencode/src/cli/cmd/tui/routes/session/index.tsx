@@ -83,11 +83,8 @@ import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
 import { TuiPluginRuntime } from "../../plugin"
-import { Log } from "@/util/log"
 
 addDefaultParsers(parsers.parsers)
-
-const log = Log.create({ service: "handoff" })
 
 const drafts = new Map<string, PromptInfo>()
 
@@ -223,7 +220,6 @@ export function Session() {
       const info = prompt.current
       if (info.input || info.parts.length) {
         drafts.set(route.sessionID, info)
-        log.info("draft saved on unmount", { id: route.sessionID, input: info.input.substring(0, 50) })
       }
     }
     prompt = r
@@ -231,13 +227,11 @@ export function Session() {
     if (seeded || !r) return
     if (route.initialPrompt) {
       seeded = true
-      r.set(route.initialPrompt)
+      r.set(route.initialPrompt, true)
     } else {
       const draft = drafts.get(route.sessionID)
-      log.info("bind restore check", { id: route.sessionID, hasDraft: !!draft, input: draft?.input?.substring(0, 50) })
       if (draft) {
-        log.info("restoring draft", { id: route.sessionID, input: draft.input.substring(0, 50) })
-        r.set(draft)
+        r.set(draft, true)
         drafts.delete(route.sessionID)
       }
     }
@@ -274,16 +268,9 @@ export function Session() {
         const info = prompt.current
         if (info.input || info.parts.length) {
           drafts.set(route.sessionID, info)
-          log.info("draft saved", { id: route.sessionID, input: info.input.substring(0, 50), parts: info.parts.length })
         } else {
           drafts.delete(route.sessionID)
-          log.info("draft cleared", { id: route.sessionID })
         }
-      } else {
-        log.info("prompt ref unavailable on dashboard nav", {
-          id: route.sessionID,
-          hasDraft: drafts.has(route.sessionID),
-        })
       }
       navigate({ type: "home" })
       return

@@ -59,7 +59,7 @@ export type PromptProps = {
 export type PromptRef = {
   focused: boolean
   current: PromptInfo
-  set(prompt: PromptInfo): void
+  set(prompt: PromptInfo, block?: boolean): void
   reset(): void
   blur(): void
   focus(): void
@@ -434,12 +434,14 @@ export function Prompt(props: PromptProps) {
     blur() {
       input.blur()
     },
-    set(prompt) {
-      restored = true
-      // Skip the next 2 onContentChange events: one from setText, one from
-      // the Enter key that navigated here (which the textarea also processes
-      // as a content change before its double-deferred onSubmit fires).
-      skip = 2
+    set(prompt, block) {
+      if (block) {
+        restored = true
+        // Skip the next 2 onContentChange events: one from setText, one from
+        // the Enter key that navigated here (which the textarea also processes
+        // as a content change before its double-deferred onSubmit fires).
+        skip = 2
+      }
       input.setText(prompt.input)
       setStore("prompt", prompt)
       restoreExtmarksFromParts(prompt.parts)
