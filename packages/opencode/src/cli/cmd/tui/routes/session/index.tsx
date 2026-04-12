@@ -236,13 +236,14 @@ export function Session() {
       const draft = drafts.get(route.sessionID)
       log.info("bind restore check", { id: route.sessionID, hasDraft: !!draft, input: draft?.input?.substring(0, 50) })
       if (draft) {
-        // Defer to next frame so the Enter key from dashboard navigation
-        // doesn't immediately submit the restored draft
+        // Defer long enough for the Enter key from dashboard navigation
+        // to fully propagate before restoring the draft, otherwise the
+        // restored text is immediately submitted.
         setTimeout(() => {
           log.info("restoring draft", { id: route.sessionID, input: draft.input.substring(0, 50) })
           r.set(draft)
           drafts.delete(route.sessionID)
-        }, 0)
+        }, 100)
       }
     }
   }
