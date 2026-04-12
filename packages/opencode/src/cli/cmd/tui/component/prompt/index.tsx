@@ -151,6 +151,7 @@ export function Prompt(props: PromptProps) {
     if (!last) return
 
     const tokens =
+      last.tokens.total ??
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
     if (tokens <= 0) return
 
@@ -415,7 +416,10 @@ export function Prompt(props: PromptProps) {
   // When a draft is restored via ref.set(), block submit until the user
   // makes a real content change.  This prevents the Enter key that
   // navigated into the session from auto-submitting the restored draft.
+  // We skip the first onContentChange after restore (triggered by setText)
+  // and only clear on the second one (actual user typing).
   let restored = false
+  let skip = 0
 
   const ref: PromptRef = {
     get focused() {
@@ -432,6 +436,10 @@ export function Prompt(props: PromptProps) {
     },
     set(prompt) {
       restored = true
+      // Skip the next 2 onContentChange events: one from setText, one from
+      // the Enter key that navigated here (which the textarea also processes
+      // as a content change before its double-deferred onSubmit fires).
+      skip = 2
       input.setText(prompt.input)
       setStore("prompt", prompt)
       restoreExtmarksFromParts(prompt.parts)
@@ -940,7 +948,11 @@ export function Prompt(props: PromptProps) {
               minHeight={1}
               maxHeight={6}
               onContentChange={() => {
-                restored = false
+                if (skip > 0) {
+                  skip--
+                } else if (restored) {
+                  restored = false
+                }
                 const value = input.plainText
                 setStore("prompt", "input", value)
                 autocomplete.onInput(value)
