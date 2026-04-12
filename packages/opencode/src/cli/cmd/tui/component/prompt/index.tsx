@@ -412,6 +412,11 @@ export function Prompt(props: PromptProps) {
     ]
   })
 
+  // When a draft is restored via ref.set(), block submit until the user
+  // makes a real content change.  This prevents the Enter key that
+  // navigated into the session from auto-submitting the restored draft.
+  let restored = false
+
   const ref: PromptRef = {
     get focused() {
       return input.focused
@@ -426,6 +431,7 @@ export function Prompt(props: PromptProps) {
       input.blur()
     },
     set(prompt) {
+      restored = true
       input.setText(prompt.input)
       setStore("prompt", prompt)
       restoreExtmarksFromParts(prompt.parts)
@@ -611,6 +617,7 @@ export function Prompt(props: PromptProps) {
       setStore("prompt", "input", input.plainText)
       syncExtmarksWithPromptParts()
     }
+    if (restored) return
     if (props.disabled) return
     if (autocomplete?.visible) return
     if (!store.prompt.input) return
@@ -933,6 +940,7 @@ export function Prompt(props: PromptProps) {
               minHeight={1}
               maxHeight={6}
               onContentChange={() => {
+                restored = false
                 const value = input.plainText
                 setStore("prompt", "input", value)
                 autocomplete.onInput(value)
