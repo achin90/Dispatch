@@ -1567,6 +1567,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
               yield* instruction.clear(msg.id)
 
+              // Before exiting, check if the user queued messages while the SDK was running.
+              // Without this the loop would always break and leave them as UNSENT.
+              const msgs2 = yield* MessageV2.filterCompactedEffect(sessionID)
+              const last = msgs2.findLast((m) => m.info.role === "assistant")
+              if (last && msgs2.some((m) => m.info.role === "user" && m.info.id > last.info.id)) continue
               if (result.outcome === "error") break
               if (result.outcome === "stop") break
               continue
