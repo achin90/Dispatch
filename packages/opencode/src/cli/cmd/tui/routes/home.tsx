@@ -747,7 +747,7 @@ export function Home() {
     const merged = await ghFetch<boolean>("/github/pr/merge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ number: pr.number }),
+      body: JSON.stringify({ number: pr.number, cwd: agent.worktree.directory }),
     })
     if (!merged) {
       toast.show({ message: "Failed to merge PR", variant: "error" })
