@@ -688,10 +688,12 @@ export const ExperimentalRoutes = lazy(() =>
         "json",
         z.object({
           number: z.number(),
+          cwd: z.string().optional(),
         }),
       ),
       async (c) => {
-        return c.json(await GitHub.merge(c.req.valid("json").number, Instance.worktree))
+        const body = c.req.valid("json")
+        return c.json(await GitHub.merge(body.number, body.cwd ?? Instance.worktree))
       },
     ),
 )
