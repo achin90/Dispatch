@@ -15,6 +15,8 @@ import { createDebouncedSignal } from "../util/signal"
 import { useToast } from "../ui/toast"
 import { DialogWorkspaceCreate, openWorkspaceSession } from "./dialog-workspace-create"
 import { Spinner } from "./spinner"
+import { useKV } from "../context/kv"
+import type { AgentEntry } from "@tui/routes/home"
 
 type WorkspaceStatus = "connected" | "connecting" | "disconnected" | "error"
 
@@ -27,6 +29,7 @@ export function DialogSessionList() {
   const { theme } = useTheme()
   const sdk = useSDK()
   const toast = useToast()
+  const kv = useKV()
   const [toDelete, setToDelete] = createSignal<string>()
   const [search, setSearch] = createDebouncedSignal("", 150)
 
@@ -133,6 +136,16 @@ export function DialogSessionList() {
         setToDelete(undefined)
       }}
       onSelect={(option) => {
+        const prev = currentSessionID()
+        if (prev && prev !== option.value) {
+          const agents: AgentEntry[] = kv.get("agents", [])
+          if (agents.some((a) => a.sessionID === prev)) {
+            kv.set(
+              "agents",
+              agents.map((a) => (a.sessionID === prev ? { ...a, sessionID: option.value } : a)),
+            )
+          }
+        }
         route.navigate({
           type: "session",
           sessionID: option.value,
