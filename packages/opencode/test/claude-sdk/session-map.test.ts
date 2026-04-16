@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { getSdkSessionID, setSdkSessionID, removeSdkSessionID } from "../../src/session/claude-sdk-session-map"
 import { Global } from "../../src/global"
-import { Filesystem } from "../../src/util/filesystem"
+import { Filesystem } from "../../src/util"
 import path from "path"
 
 // ---------------------------------------------------------------------------

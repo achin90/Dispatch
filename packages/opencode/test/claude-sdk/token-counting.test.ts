@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test"
-import { Session } from "../../src/session"
+import { Effect } from "effect"
+import { Session as SessionNs } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -21,6 +22,22 @@ import { processClaudeSdkStream } from "../../src/session/claude-sdk-processor"
 // totals, NOT accumulate per-stream-event like the AI SDK path does.
 // This test verifies the correct behavior survives upstream merges.
 // ---------------------------------------------------------------------------
+
+function run<A, E>(fx: Effect.Effect<A, E, SessionNs.Service>) {
+  return Effect.runPromise(fx.pipe(Effect.provide(SessionNs.defaultLayer)))
+}
+
+const svc = {
+  create(input?: SessionNs.CreateInput) {
+    return run(SessionNs.Service.use((svc) => svc.create(input)))
+  },
+  updateMessage<T extends MessageV2.Info>(msg: T) {
+    return run(SessionNs.Service.use((svc) => svc.updateMessage(msg)))
+  },
+  updatePart<T extends MessageV2.Part>(part: T) {
+    return run(SessionNs.Service.use((svc) => svc.updatePart(part)))
+  },
+}
 
 async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
   await using tmp = await tmpdir({ git: true })
@@ -47,11 +64,11 @@ function makeAssistant(sessionID: SessionID): MessageV2.Assistant {
 describe("claude sdk token counting", () => {
   test("tokens come from result message usage, not stream accumulation", async () => {
     await withInstance(async () => {
-      const session = await Session.create({})
+      const session = await svc.create({})
       const msg = makeAssistant(session.id)
-      await Session.updateMessage(msg)
+      await svc.updateMessage(msg)
 
-      const spy = spyOn(Session, "updatePart").mockImplementation((async (p: any) => p) as any)
+      const spy = spyOn(svc, "updatePart").mockImplementation((async (p: any) => p) as any)
 
       const sid = "token-test-session"
       const stream = messageSequence(
@@ -121,11 +138,11 @@ describe("claude sdk token counting", () => {
 
   test("context window total uses last turn usage, not cumulative", async () => {
     await withInstance(async () => {
-      const session = await Session.create({})
+      const session = await svc.create({})
       const msg = makeAssistant(session.id)
-      await Session.updateMessage(msg)
+      await svc.updateMessage(msg)
 
-      const spy = spyOn(Session, "updatePart").mockImplementation((async (p: any) => p) as any)
+      const spy = spyOn(svc, "updatePart").mockImplementation((async (p: any) => p) as any)
 
       const sid = "context-test"
       // Assistant message with per-turn usage (this is the last turn)
@@ -195,11 +212,11 @@ describe("claude sdk token counting", () => {
 
   test("tokens are not accumulated from multiple assistant messages", async () => {
     await withInstance(async () => {
-      const session = await Session.create({})
+      const session = await svc.create({})
       const msg = makeAssistant(session.id)
-      await Session.updateMessage(msg)
+      await svc.updateMessage(msg)
 
-      const spy = spyOn(Session, "updatePart").mockImplementation((async (p: any) => p) as any)
+      const spy = spyOn(svc, "updatePart").mockImplementation((async (p: any) => p) as any)
 
       const sid = "multi-turn-test"
       // Two assistant messages (simulating tool call flow) + result

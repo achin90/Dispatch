@@ -1,10 +1,10 @@
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
-import { InstanceState } from "@/effect/instance-state"
+import { InstanceState } from "@/effect"
 import { SessionID } from "./schema"
 import { Effect, Layer, Context } from "effect"
 import z from "zod"
-import { Log } from "../util/log"
+import { Log } from "../util"
 
 export namespace SessionStatus {
   export const Info = z

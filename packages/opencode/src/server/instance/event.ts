@@ -1,7 +1,8 @@
+import z from "zod"
 import { Hono } from "hono"
 import { describeRoute, resolver } from "hono-openapi"
 import { streamSSE } from "hono/streaming"
-import { Log } from "@/util/log"
+import { Log } from "@/util"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
@@ -22,7 +23,11 @@ export const EventRoutes = () =>
           description: "Event stream",
           content: {
             "text/event-stream": {
-              schema: resolver(BusEvent.payloads()),
+              schema: resolver(
+                z.union(BusEvent.payloads()).meta({
+                  ref: "Event",
+                }),
+              ),
             },
           },
         },

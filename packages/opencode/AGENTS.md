@@ -59,7 +59,7 @@ Tool use from the SDK becomes `MessageV2.ToolPart` (via adapter). The TUI render
 
 Use these rules when writing or migrating Effect code.
 
-See `specs/effect-migration.md` for the compact pattern reference and examples.
+See `specs/effect/migration.md` for the compact pattern reference and examples.
 
 ## Core
 
@@ -97,7 +97,7 @@ See `specs/effect-migration.md` for the compact pattern reference and examples.
 
 ## Effect.cached for deduplication
 
-Use `Effect.cached` when multiple concurrent callers should share a single in-flight computation rather than storing `Fiber | undefined` or `Promise | undefined` manually. See `specs/effect-migration.md` for the full pattern.
+Use `Effect.cached` when multiple concurrent callers should share a single in-flight computation rather than storing `Fiber | undefined` or `Promise | undefined` manually. See `specs/effect/migration.md` for the full pattern.
 
 ## Instance.bind — ALS for native callbacks
 

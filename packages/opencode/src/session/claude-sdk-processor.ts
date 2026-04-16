@@ -21,6 +21,7 @@ import { setSdkSessionID } from "./claude-sdk-session-map"
 import { SessionCompaction } from "./compaction"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
+import { AppRuntime } from "@/effect/app-runtime"
 
 // ---------------------------------------------------------------------------
 // Error message extraction
@@ -195,7 +196,7 @@ export async function processClaudeSdkStream(
           // All tools must be complete before the result — finalize stragglers.
           await finalizeRunningTools(assistantMessage.id)
           completionMeta = processResultMessage(msg as SDKResultMessage, assistantMessage, lastTurnUsage)
-          await Session.updateMessage(assistantMessage)
+          await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(assistantMessage)))
           break
 
         case "system": {
@@ -245,7 +246,7 @@ export async function processClaudeSdkStream(
         name: "APIError",
         data: { message: msg, isRetryable: true },
       } as MessageV2.Assistant["error"]
-      await Session.updateMessage(assistantMessage)
+      await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(assistantMessage)))
       return { outcome: "error" }
     }
   }
@@ -262,7 +263,7 @@ export async function processClaudeSdkStream(
       name: "MessageAbortedError",
       data: { message: "Stream ended without result" },
     } as MessageV2.Assistant["error"]
-    await Session.updateMessage(assistantMessage)
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(assistantMessage)))
     return { outcome: "error" }
   }
 
@@ -281,27 +282,28 @@ async function finalizeRunningTools(messageID: MessageID): Promise<void> {
   const parts = await MessageV2.parts(messageID)
   for (const part of parts) {
     if (part.type !== "tool" || part.state.status !== "running") continue
+    const runState = part.state as MessageV2.ToolStateRunning
     // Merge any pending metadata stashed by canUseTool (e.g. diffs for
     // edit/write tools). The pending map handles the race where canUseTool
     // runs before processAssistantMessage creates the ToolPart.
     const merged = {
-      ...(part.state.metadata ?? {}),
+      ...(runState.metadata ?? {}),
       ...popPendingMeta(part.callID),
     }
-    await Session.updatePart({
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...part,
       state: {
         status: "completed",
-        input: part.state.input,
+        input: runState.input,
         output: "",
-        title: part.state.title ?? "",
+        title: runState.title ?? "",
         metadata: merged,
         time: {
-          start: part.state.time.start,
+          start: runState.time.start,
           end: Date.now(),
         },
       },
-    })
+    })))
   }
 }
 
@@ -312,18 +314,19 @@ async function abortRunningTools(messageID: MessageID): Promise<void> {
   const parts = await MessageV2.parts(messageID)
   for (const part of parts) {
     if (part.type !== "tool" || part.state.status !== "running") continue
-    await Session.updatePart({
+    const runState = part.state as MessageV2.ToolStateRunning
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...part,
       state: {
         status: "error",
-        input: part.state.input,
+        input: runState.input,
         error: "Tool execution aborted",
         time: {
-          start: part.state.time.start,
+          start: runState.time.start,
           end: Date.now(),
         },
       },
-    })
+    })))
   }
 }
 
@@ -344,7 +347,7 @@ async function processAssistantMessage(
     await finalizeRunningTools(assistantMessage.id)
     const parts = assistantMessageToParts(msg, sessionID, assistantMessage.id)
     for (const part of parts) {
-      await Session.updatePart(part)
+      await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart(part)))
     }
     // Update activity based on the last meaningful part
     const tool = parts.findLast((p) => p.type === "tool")
@@ -368,7 +371,7 @@ async function processAssistantMessage(
 
   const parts = assistantMessageToParts(msg, ctx.childSessionID, ctx.childMessageID)
   for (const part of parts) {
-    await Session.updatePart(part)
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart(part)))
   }
 }
 
@@ -402,10 +405,10 @@ async function createChildSession(
   const prompt = agentPart?.state.input?.prompt as string | undefined
   const agentName = resolveAgentName(agentPart, overrideAgentName)
 
-  const childSession = await Session.create({
+  const childSession = await AppRuntime.runPromise(Session.Service.use((svc) => svc.create({
     parentID: sessionID,
     title: description ? `${description} (@${agentName} subagent)` : "Subagent",
-  })
+  })))
 
   // Create a user message with the prompt text (matches old task tool pattern)
   const userMessageID = MessageID.ascending()
@@ -420,18 +423,18 @@ async function createChildSession(
       modelID: assistantMessage.modelID,
     },
   }
-  await Session.updateMessage(userMessage)
+  await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(userMessage)))
 
   // Create text part for the user message with the prompt
   if (prompt) {
-    await Session.updatePart({
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       id: PartID.ascending(),
       sessionID: childSession.id,
       messageID: userMessageID,
       type: "text",
       text: prompt,
       time: { start: Date.now(), end: Date.now() },
-    })
+    })))
   }
 
   // Create an assistant message linked to the user message
@@ -450,7 +453,7 @@ async function createChildSession(
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   }
-  await Session.updateMessage(childMessage)
+  await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(childMessage)))
 
   // Update the parent Agent ToolPart's metadata with the child session ID
   if (agentPart) {
@@ -466,16 +469,17 @@ async function createChildSession(
  */
 async function updateAgentToolMetadata(agentPart: MessageV2.ToolPart, childSessionID: SessionID): Promise<void> {
   if (agentPart.state.status !== "running") return
-  await Session.updatePart({
+  const runState = agentPart.state as MessageV2.ToolStateRunning
+  await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
     ...agentPart,
     state: {
-      ...agentPart.state,
+      ...runState,
       metadata: {
-        ...(agentPart.state.metadata ?? {}),
+        ...(runState.metadata ?? {}),
         sessionId: childSessionID,
       },
     },
-  })
+  })))
 }
 
 /**
@@ -511,25 +515,26 @@ async function handleTaskStarted(
 
   // Update the child session title with the description and correct agent name
   if (msg.description) {
-    await Session.setTitle({
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.setTitle({
       sessionID: ctx.childSessionID,
       title: `${msg.description} (@${agentName} subagent)`,
-    })
+    })))
   }
 
   // Update the Agent ToolPart's title
   if (agentPart && agentPart.state.status === "running") {
-    await Session.updatePart({
+    const runState = agentPart.state as MessageV2.ToolStateRunning
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...agentPart,
       state: {
-        ...agentPart.state,
+        ...runState,
         title: msg.description,
         metadata: {
-          ...(agentPart.state.metadata ?? {}),
+          ...(runState.metadata ?? {}),
           sessionId: ctx.childSessionID,
         },
       },
-    })
+    })))
   }
 }
 
@@ -545,18 +550,19 @@ async function handleTaskProgress(msg: SDKTaskProgressMessage, assistantMessage:
     (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
   )
   if (agentPart && agentPart.state.status === "running") {
-    await Session.updatePart({
+    const runState = agentPart.state as MessageV2.ToolStateRunning
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...agentPart,
       state: {
-        ...agentPart.state,
-        title: msg.description ?? agentPart.state.title,
+        ...runState,
+        title: msg.description ?? runState.title,
         metadata: {
-          ...(agentPart.state.metadata ?? {}),
+          ...(runState.metadata ?? {}),
           toolUses: msg.usage.tool_uses,
           lastToolName: msg.last_tool_name,
         },
       },
-    })
+    })))
   }
 }
 
@@ -581,37 +587,38 @@ async function handleTaskNotification(
     (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
   )
   if (!agentPart || agentPart.state.status !== "running") return
+  const runState = agentPart.state as MessageV2.ToolStateRunning
 
   if (msg.status === "completed") {
-    await Session.updatePart({
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...agentPart,
       state: {
         status: "completed",
-        input: agentPart.state.input,
+        input: runState.input,
         output: msg.summary ?? "",
-        title: agentPart.state.title ?? "",
-        metadata: agentPart.state.metadata ?? {},
+        title: runState.title ?? "",
+        metadata: runState.metadata ?? {},
         time: {
-          start: agentPart.state.time.start,
+          start: runState.time.start,
           end: Date.now(),
         },
       },
-    })
+    })))
   } else {
     // failed or stopped
-    await Session.updatePart({
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...agentPart,
       state: {
         status: "error",
-        input: agentPart.state.input,
+        input: runState.input,
         error: msg.summary ?? `Task ${msg.status}`,
-        metadata: agentPart.state.metadata,
+        metadata: runState.metadata,
         time: {
-          start: agentPart.state.time.start,
+          start: runState.time.start,
           end: Date.now(),
         },
       },
-    })
+    })))
   }
 }
 
@@ -688,7 +695,7 @@ async function handleCompactBoundary(
   const summary = ref?.summary ?? "Conversation was compacted by the Claude SDK."
 
   // Create a user message with a compaction part (the boundary marker)
-  const userMsg = await Session.updateMessage({
+  const userMsg = await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage({
     id: MessageID.ascending(),
     role: "user",
     sessionID,
@@ -698,18 +705,18 @@ async function handleCompactBoundary(
       providerID: assistantMessage.providerID,
       modelID: assistantMessage.modelID,
     },
-  })
-  await Session.updatePart({
+  })))
+  await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
     id: PartID.ascending(),
     messageID: userMsg.id,
     sessionID,
     type: "compaction",
     auto: msg.compact_metadata.trigger === "auto",
-  })
+  })))
 
   // Create an assistant message with summary: true containing the summary
-  const session = await Session.get(sessionID)
-  const reply = (await Session.updateMessage({
+  const session = await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(sessionID)))
+  const reply = (await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage({
     id: MessageID.ascending(),
     role: "assistant",
     parentID: userMsg.id,
@@ -727,16 +734,16 @@ async function handleCompactBoundary(
     providerID: assistantMessage.providerID,
     time: { created: Date.now(), completed: Date.now() },
     finish: "end_turn",
-  })) as MessageV2.Assistant
+  })))) as MessageV2.Assistant
 
-  await Session.updatePart({
+  await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
     id: PartID.ascending(),
     messageID: reply.id,
     sessionID,
     type: "text",
     text: summary,
     time: { start: Date.now(), end: Date.now() },
-  })
+  })))
 
   Bus.publish(SessionCompaction.Event.Compacted, { sessionID })
 }

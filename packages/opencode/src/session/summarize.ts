@@ -2,8 +2,9 @@ import { query } from "@anthropic-ai/claude-agent-sdk"
 import bin from "@anthropic-ai/claude-agent-sdk/embed"
 import { generateText } from "ai"
 import { resolveApiKey } from "./claude-sdk-query"
-import { Provider } from "@/provider/provider"
+import { Provider } from "@/provider"
 import type { ProviderID } from "@/provider/schema"
+import { AppRuntime } from "@/effect/app-runtime"
 
 const PREFIX =
   "You are a summarizer for a developer dashboard that shows the status of AI coding agents.\n" +
@@ -58,13 +59,13 @@ export namespace Summarize {
   }
 
   export async function aisdk(input: string, providerID: ProviderID): Promise<string | undefined> {
-    const small = await Provider.getSmallModel(providerID)
+    const small = await AppRuntime.runPromise(Provider.Service.use((svc) => svc.getSmallModel(providerID)))
     if (!small) return undefined
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15000)
     try {
       const gen = await generateText({
-        model: await Provider.getLanguage(small),
+        model: await AppRuntime.runPromise(Provider.Service.use((svc) => svc.getLanguage(small))),
         prompt: input,
         maxOutputTokens: 500,
         abortSignal: controller.signal,

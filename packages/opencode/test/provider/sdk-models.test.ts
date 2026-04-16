@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Provider } from "../../src/provider/provider"
+import { SDK_MODELS, buildSdkModel } from "../../src/provider/provider"
 import { ProviderID } from "../../src/provider/schema"
 
 // ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ import { ProviderID } from "../../src/provider/schema"
 
 describe("SDK_MODELS", () => {
   test("contains all expected aliases", () => {
-    const aliases = Object.keys(Provider.SDK_MODELS)
+    const aliases = Object.keys(SDK_MODELS)
     expect(aliases).toContain("default")
     expect(aliases).toContain("sonnet")
     expect(aliases).toContain("sonnet[1m]")
@@ -24,7 +24,7 @@ describe("SDK_MODELS", () => {
   })
 
   test("each entry has required fields", () => {
-    for (const [alias, info] of Object.entries(Provider.SDK_MODELS)) {
+    for (const [alias, info] of Object.entries(SDK_MODELS)) {
       expect(info.resolves).toBeString()
       expect(info.name).toBeString()
       expect(info.context).toBeGreaterThan(0)
@@ -35,77 +35,77 @@ describe("SDK_MODELS", () => {
   })
 
   test("default resolves to opus 1M", () => {
-    expect(Provider.SDK_MODELS.default.resolves).toContain("opus")
-    expect(Provider.SDK_MODELS.default.context).toBe(1_000_000)
+    expect(SDK_MODELS.default.resolves).toContain("opus")
+    expect(SDK_MODELS.default.context).toBe(1_000_000)
   })
 
   test("haiku has reasoning disabled", () => {
-    expect(Provider.SDK_MODELS.haiku.reasoning).toBe(false)
+    expect(SDK_MODELS.haiku.reasoning).toBe(false)
   })
 
   test("sonnet variants have different context limits", () => {
-    expect(Provider.SDK_MODELS.sonnet.context).toBe(200_000)
-    expect(Provider.SDK_MODELS["sonnet[1m]"].context).toBe(1_000_000)
+    expect(SDK_MODELS.sonnet.context).toBe(200_000)
+    expect(SDK_MODELS["sonnet[1m]"].context).toBe(1_000_000)
   })
 })
 
 describe("buildSdkModel", () => {
-  const info = Provider.SDK_MODELS.default
+  const info = SDK_MODELS.default
 
   test("sets provider to anthropic", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(String(model.providerID)).toBe("anthropic")
   })
 
   test("sets model ID to alias", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(String(model.id)).toBe("default")
   })
 
   test("stores display name", () => {
-    const model = Provider.buildSdkModel("default", info, "Custom Name")
+    const model = buildSdkModel("default", info, "Custom Name")
     expect(model.name).toBe("Custom Name")
   })
 
   test("extracts family from resolved ID", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     // "claude-opus-4-6[1m]" → family "claude-opus"
     expect(model.family).toBe("claude-opus")
   })
 
   test("extracts family for sonnet", () => {
-    const model = Provider.buildSdkModel("sonnet", Provider.SDK_MODELS.sonnet, "Sonnet")
+    const model = buildSdkModel("sonnet", SDK_MODELS.sonnet, "Sonnet")
     expect(model.family).toBe("claude-sonnet")
   })
 
   test("extracts family for haiku", () => {
-    const model = Provider.buildSdkModel("haiku", Provider.SDK_MODELS.haiku, "Haiku")
+    const model = buildSdkModel("haiku", SDK_MODELS.haiku, "Haiku")
     expect(model.family).toBe("claude-haiku")
   })
 
   test("stores description in options.sdkDescription", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(model.options.sdkDescription).toBe(info.description)
   })
 
   test("sets API npm to @ai-sdk/anthropic", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(model.api.npm).toBe("@ai-sdk/anthropic")
   })
 
   test("sets api.id to resolved model", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(model.api.id).toBe(info.resolves)
   })
 
   test("sets context and output limits", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(model.limit.context).toBe(info.context)
     expect(model.limit.output).toBe(info.output)
   })
 
   test("sets capabilities correctly", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(model.capabilities.reasoning).toBe(true)
     expect(model.capabilities.temperature).toBe(true)
     expect(model.capabilities.attachment).toBe(true)
@@ -117,12 +117,12 @@ describe("buildSdkModel", () => {
   })
 
   test("haiku model has reasoning disabled", () => {
-    const model = Provider.buildSdkModel("haiku", Provider.SDK_MODELS.haiku, "Haiku")
+    const model = buildSdkModel("haiku", SDK_MODELS.haiku, "Haiku")
     expect(model.capabilities.reasoning).toBe(false)
   })
 
   test("cost is zero for SDK models", () => {
-    const model = Provider.buildSdkModel("default", info, info.name)
+    const model = buildSdkModel("default", info, info.name)
     expect(model.cost.input).toBe(0)
     expect(model.cost.output).toBe(0)
   })

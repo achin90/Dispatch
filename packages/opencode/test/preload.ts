@@ -4,20 +4,14 @@ import os from "os"
 import path from "path"
 import fs from "fs/promises"
 import { setTimeout as sleep } from "node:timers/promises"
-// afterAll intentionally not imported — see comment below about per-file scoping
+import { afterAll } from "bun:test"
 
 // Set XDG env vars FIRST, before any src/ imports
 const dir = path.join(os.tmpdir(), "opencode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
-// NOTE: Do NOT use afterAll here for cleanup. In Bun, afterAll registered in
-// preload fires after EACH test file, not once globally. Deleting the shared
-// temp dir or closing the DB singleton here would break other test files that
-// are still running. Use process exit hooks instead.
-process.on("beforeExit", async () => {
-  try {
-    const { Database } = await import("../src/storage/db")
-    Database.close()
-  } catch {}
+afterAll(async () => {
+  const { Database } = await import("../src/storage")
+  Database.close()
   const busy = (error: unknown) =>
     typeof error === "object" && error !== null && "code" in error && error.code === "EBUSY"
   const rm = async (left: number): Promise<void> => {
@@ -29,7 +23,10 @@ process.on("beforeExit", async () => {
       return rm(left - 1)
     })
   }
-  await rm(30).catch(() => {})
+
+  // Windows can keep SQLite WAL handles alive until GC finalizers run, so we
+  // force GC and retry teardown to avoid flaky EBUSY in test cleanup.
+  await rm(30)
 })
 
 process.env["XDG_DATA_HOME"] = path.join(dir, "share")
@@ -52,7 +49,7 @@ process.env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
 // Write the cache version file to prevent global/index.ts from clearing the cache
 const cacheDir = path.join(dir, "cache", "opencode")
 await fs.mkdir(cacheDir, { recursive: true })
-await fs.writeFile(path.join(cacheDir, "version"), "21")
+await fs.writeFile(path.join(cacheDir, "version"), "14")
 
 // Clear provider and server auth env vars to ensure clean test state
 delete process.env["ANTHROPIC_API_KEY"]
@@ -81,10 +78,10 @@ delete process.env["OPENCODE_SERVER_USERNAME"]
 process.env["OPENCODE_DB"] = ":memory:"
 
 // Now safe to import from src/
-const { Log } = await import("../src/util/log")
+const { Log } = await import("../src/util")
 const { initProjectors } = await import("../src/server/projectors")
 
-Log.init({
+void Log.init({
   print: false,
   dev: true,
   level: "DEBUG",

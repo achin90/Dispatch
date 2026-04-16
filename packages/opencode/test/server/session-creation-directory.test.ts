@@ -1,10 +1,25 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import { Instance } from "../../src/project/instance"
-import { Session } from "../../src/session"
-import { Log } from "../../src/util/log"
+import { Session as SessionNs } from "../../src/session"
+import type { SessionID } from "../../src/session/schema"
+import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 
 Log.init({ print: false })
+
+function run<A, E>(fx: Effect.Effect<A, E, SessionNs.Service>) {
+  return Effect.runPromise(fx.pipe(Effect.provide(SessionNs.defaultLayer)))
+}
+
+const svc = {
+  create(input?: SessionNs.CreateInput) {
+    return run(SessionNs.Service.use((svc) => svc.create(input)))
+  },
+  get(id: SessionID) {
+    return run(SessionNs.Service.use((svc) => svc.get(id)))
+  },
+}
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -24,7 +39,7 @@ describe("session creation directory", () => {
 
     const session = await Instance.provide({
       directory: tmp.path,
-      fn: () => Session.create({ title: "test" }),
+      fn: () => svc.create({ title: "test" }),
     })
 
     expect(session.directory).toBe(tmp.path)
@@ -36,12 +51,12 @@ describe("session creation directory", () => {
 
     const sessionA = await Instance.provide({
       directory: dirA.path,
-      fn: () => Session.create({ title: "agent-a" }),
+      fn: () => svc.create({ title: "agent-a" }),
     })
 
     const sessionB = await Instance.provide({
       directory: dirB.path,
-      fn: () => Session.create({ title: "agent-b" }),
+      fn: () => svc.create({ title: "agent-b" }),
     })
 
     expect(sessionA.directory).toBe(dirA.path)
@@ -56,13 +71,13 @@ describe("session creation directory", () => {
     // Create in dir A
     const session = await Instance.provide({
       directory: dirA.path,
-      fn: () => Session.create({ title: "worktree-agent" }),
+      fn: () => svc.create({ title: "worktree-agent" }),
     })
 
-    // Retrieve from dir B context — Session.get should still return dir A
+    // Retrieve from dir B context — svc.get should still return dir A
     const retrieved = await Instance.provide({
       directory: dirB.path,
-      fn: () => Session.get(session.id),
+      fn: () => svc.get(session.id),
     })
 
     expect(retrieved.directory).toBe(dirA.path)
@@ -75,13 +90,13 @@ describe("session creation directory", () => {
     // Simulate: agent creates session in worktree directory
     const agent = await Instance.provide({
       directory: worktree.path,
-      fn: () => Session.create({ title: "worktree-session" }),
+      fn: () => svc.create({ title: "worktree-session" }),
     })
 
     // Simulate: TUI reads session from its own directory
     const fromTui = await Instance.provide({
       directory: tui.path,
-      fn: () => Session.get(agent.id),
+      fn: () => svc.get(agent.id),
     })
 
     // The session must still reference the worktree, not the TUI

@@ -13,11 +13,12 @@ import { createTwoFilesPatch } from "diff"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Question } from "@/question"
-import { Filesystem } from "@/util/filesystem"
+import { Filesystem } from "@/util"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session/index"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionID, MessageID } from "@/session/schema"
+import { AppRuntime } from "@/effect/app-runtime"
 
 // ---------------------------------------------------------------------------
 // Pending metadata — diffs generated before tool parts may exist
@@ -188,10 +189,10 @@ async function question(
   }
 
   const answers = await Promise.race([
-    Question.ask({
+    AppRuntime.runPromise(Question.Service.use((svc) => svc.ask({
       sessionID: opts.sessionID,
       questions,
-    }),
+    }))),
     new Promise<never>((_, reject) => {
       signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
     }),
@@ -232,18 +233,19 @@ async function markToolDenied(messageID: MessageID, callID: string, error: strin
     const part = parts.find((p) => p.type === "tool" && p.callID === callID)
     if (!part || part.type !== "tool") return
     if (part.state.status !== "running") return
-    await Session.updatePart({
+    const runState = part.state as MessageV2.ToolStateRunning
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...part,
       state: {
         status: "error",
-        input: part.state.input,
+        input: runState.input,
         error,
         time: {
-          start: part.state.time.start,
+          start: runState.time.start,
           end: Date.now(),
         },
       },
-    })
+    })))
   } catch {
     // Best-effort: if we can't find or update the part, the denial
     // still works — the tool just won't show strikethrough styling.
@@ -260,16 +262,17 @@ async function updateToolMetadata(messageID: MessageID, callID: string, meta: Re
     const parts = await MessageV2.parts(messageID)
     const part = parts.find((p) => p.type === "tool" && p.callID === callID)
     if (!part || part.type !== "tool" || part.state.status !== "running") return
-    await Session.updatePart({
+    const runState = part.state as MessageV2.ToolStateRunning
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...part,
       state: {
-        ...part.state,
+        ...runState,
         metadata: {
-          ...(part.state.metadata ?? {}),
+          ...(runState.metadata ?? {}),
           ...meta,
         },
       },
-    })
+    })))
   } catch {
     // Best-effort
   }
@@ -328,7 +331,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
         // This ensures Permission.reply() (called by the server route when the
         // TUI responds) can find the request and resolve it.
         await Promise.race([
-          Permission.ask({
+          AppRuntime.runPromise(Permission.Service.use((svc) => svc.ask({
             id: requestID,
             sessionID: options.sessionID,
             permission,
@@ -340,7 +343,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
               messageID: toolMessageID,
               callID: callOptions.toolUseID,
             },
-          }),
+          }))),
           new Promise<never>((_, reject) => {
             signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
           }),
@@ -365,7 +368,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
           error instanceof Permission.CorrectedError ||
           error instanceof Permission.DeniedError
         if (!fromPermission) {
-          Permission.reply({ requestID, reply: "reject" }).catch(() => {})
+          AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({ requestID, reply: "reject" }))).catch(() => {})
         }
 
         const msg =

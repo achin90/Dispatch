@@ -1,5 +1,6 @@
 import { describe, test, expect, spyOn } from "bun:test"
-import { Session } from "../../src/session"
+import { Effect } from "effect"
+import { Session as SessionNs } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { Instance } from "../../src/project/instance"
@@ -23,6 +24,28 @@ import { processClaudeSdkStream } from "../../src/session/claude-sdk-processor"
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
+
+function run<A, E>(fx: Effect.Effect<A, E, SessionNs.Service>) {
+  return Effect.runPromise(fx.pipe(Effect.provide(SessionNs.defaultLayer)))
+}
+
+const svc = {
+  create(input?: SessionNs.CreateInput) {
+    return run(SessionNs.Service.use((svc) => svc.create(input)))
+  },
+  get(id: SessionID) {
+    return run(SessionNs.Service.use((svc) => svc.get(id)))
+  },
+  updateMessage<T extends MessageV2.Info>(msg: T) {
+    return run(SessionNs.Service.use((svc) => svc.updateMessage(msg)))
+  },
+  updatePart<T extends MessageV2.Part>(part: T) {
+    return run(SessionNs.Service.use((svc) => svc.updatePart(part)))
+  },
+  children(parentID: SessionID) {
+    return run(SessionNs.Service.use((svc) => svc.children(parentID)))
+  },
+}
 
 async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
   await using tmp = await tmpdir({ git: true })
@@ -59,12 +82,12 @@ describe("claude-sdk session loop", () => {
   describe("processClaudeSdkStream", () => {
     test("simple text response creates TextPart and completes", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -105,12 +128,12 @@ describe("claude-sdk session loop", () => {
 
     test("tool call creates ToolPart with running state", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -160,12 +183,12 @@ describe("claude-sdk session loop", () => {
 
     test("thinking + text creates ReasoningPart then TextPart", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -201,11 +224,11 @@ describe("claude-sdk session loop", () => {
 
     test("error result sets error on assistant message", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => part) as any)
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => part) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -231,11 +254,11 @@ describe("claude-sdk session loop", () => {
 
     test("error_max_turns result sets error outcome", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => part) as any)
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => part) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -257,12 +280,12 @@ describe("claude-sdk session loop", () => {
 
     test("abort signal stops processing cleanly", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -303,12 +326,12 @@ describe("claude-sdk session loop", () => {
 
     test("multi-turn tool calls create multiple ToolParts in order", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -348,11 +371,11 @@ describe("claude-sdk session loop", () => {
 
     test("result message updates assistant tokens and cost", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => part) as any)
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => part) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -381,12 +404,12 @@ describe("claude-sdk session loop", () => {
 
     test("unsupported message types are ignored", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -416,12 +439,12 @@ describe("claude-sdk session loop", () => {
 
     test("mixed content blocks in single assistant message all create parts", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -454,12 +477,12 @@ describe("claude-sdk session loop", () => {
 
     test("each part gets unique ID and correct session/message IDs", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(Session, "updatePart").mockImplementation((async (part: any) => {
+        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
           parts.push(part)
           return part
         }) as any)
@@ -493,9 +516,9 @@ describe("claude-sdk session loop", () => {
   describe("subagent routing", () => {
     test("subagent assistant message creates child session and routes parts", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const agentToolBlock = toolUseBlock("Agent", {
           prompt: "explore the codebase",
@@ -531,7 +554,7 @@ describe("claude-sdk session loop", () => {
           expect(metadata.sessionId).toBeDefined()
 
           // Child session should have a text part from the subagent
-          const childSessions = await Session.children(session.id)
+          const childSessions = await svc.children(session.id)
           expect(childSessions.length).toBe(1)
         }
       })
@@ -539,9 +562,9 @@ describe("claude-sdk session loop", () => {
 
     test("parent Agent ToolPart metadata gets sessionId", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const agentToolBlock = toolUseBlock("Agent", {
           prompt: "do something",
@@ -572,7 +595,7 @@ describe("claude-sdk session loop", () => {
           expect(agentPart.state.metadata?.sessionId).toBeDefined()
 
           // And the child session should exist with that ID
-          const childSession = await Session.get(agentPart.state.metadata!.sessionId as SessionID)
+          const childSession = await svc.get(agentPart.state.metadata!.sessionId as SessionID)
           expect(childSession).toBeDefined()
           expect(childSession.parentID).toBe(session.id)
         }
@@ -581,9 +604,9 @@ describe("claude-sdk session loop", () => {
 
     test("task_started creates child session and updates Agent ToolPart title", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const agentToolBlock = toolUseBlock("Agent", {
           prompt: "explore",
@@ -611,7 +634,7 @@ describe("claude-sdk session loop", () => {
         expect(agentPart).toBeDefined()
 
         // Check the child session was created with the description as title
-        const childSessions = await Session.children(session.id)
+        const childSessions = await svc.children(session.id)
         expect(childSessions.length).toBe(1)
         expect(childSessions[0]!.title).toContain("Exploring the codebase")
       })
@@ -619,9 +642,9 @@ describe("claude-sdk session loop", () => {
 
     test("task_notification completed finalizes Agent ToolPart", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const agentToolBlock = toolUseBlock("Agent", {
           prompt: "do work",
@@ -659,9 +682,9 @@ describe("claude-sdk session loop", () => {
 
     test("multiple subagents get separate child sessions", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const agent1Block = toolUseBlock("Agent", {
           prompt: "explore",
@@ -691,7 +714,7 @@ describe("claude-sdk session loop", () => {
         })
 
         // Two child sessions should have been created
-        const childSessions = await Session.children(session.id)
+        const childSessions = await svc.children(session.id)
         expect(childSessions.length).toBe(2)
 
         // Each child session should have different IDs
@@ -702,9 +725,9 @@ describe("claude-sdk session loop", () => {
 
     test("abort finalizes child session tools", async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const agentToolBlock = toolUseBlock("Agent", {
           prompt: "do work",
@@ -737,7 +760,7 @@ describe("claude-sdk session loop", () => {
         expect(assistantMsg.error).toBeDefined()
 
         // The child session should have been created
-        const childSessions = await Session.children(session.id)
+        const childSessions = await svc.children(session.id)
         expect(childSessions.length).toBe(1)
       })
     })

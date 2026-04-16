@@ -10,6 +10,7 @@ import { Permission } from "../../src/permission"
 import { Instance } from "../../src/project/instance"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
+import { AppRuntime } from "../../src/effect/app-runtime"
 
 const sid = SessionID.make("ses_test-perms")
 const mid = MessageID.make("msg_test-perms")
@@ -169,7 +170,7 @@ describe("claude-sdk permissions", () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
         let capturedPermission: string | undefined
-        let capturedPatterns: string[] | undefined
+        let capturedPatterns: readonly string[] | undefined
         let capturedSessionID: unknown
 
         // Listen for the Asked event and reply through the Permission system
@@ -177,10 +178,10 @@ describe("claude-sdk permissions", () => {
           capturedPermission = event.properties.permission
           capturedPatterns = event.properties.patterns
           capturedSessionID = event.properties.sessionID
-          Permission.reply({
+          AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
             requestID: event.properties.id,
             reply: "once",
-          })
+          })))
         })
 
         try {
@@ -200,10 +201,10 @@ describe("claude-sdk permissions", () => {
         const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
-          Permission.reply({
+          AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
             requestID: event.properties.id,
             reply: "always",
-          })
+          })))
         })
 
         try {
@@ -220,10 +221,10 @@ describe("claude-sdk permissions", () => {
         const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
-          Permission.reply({
+          AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
             requestID: event.properties.id,
             reply: "reject",
-          })
+          })))
         })
 
         try {
@@ -304,10 +305,10 @@ describe("claude-sdk permissions", () => {
             Instance.provide({
               directory: tuiDir.path,
               fn: () =>
-                Permission.reply({
+                AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
                   requestID: event.properties.id,
                   reply: "once",
-                }),
+                }))),
             })
           })
         },
@@ -341,10 +342,10 @@ describe("claude-sdk permissions", () => {
             Instance.provide({
               directory: tuiDir.path,
               fn: () =>
-                Permission.reply({
+                AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
                   requestID: event.properties.id,
                   reply: "always",
-                }),
+                }))),
             })
           })
         },
@@ -377,10 +378,10 @@ describe("claude-sdk permissions", () => {
             Instance.provide({
               directory: tuiDir.path,
               fn: () =>
-                Permission.reply({
+                AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
                   requestID: event.properties.id,
                   reply: "reject",
-                }),
+                }))),
             })
           })
         },
@@ -407,10 +408,10 @@ describe("claude-sdk permissions", () => {
 
         const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
           capturedRequest = event.properties
-          Permission.reply({
+          AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
             requestID: event.properties.id,
             reply: "once",
-          })
+          })))
         })
 
         try {

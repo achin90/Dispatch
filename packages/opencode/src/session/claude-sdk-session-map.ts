@@ -9,7 +9,7 @@
  */
 
 import { Global } from "@/global"
-import { Filesystem } from "@/util/filesystem"
+import { Filesystem } from "@/util"
 import path from "path"
 
 const filePath = () => path.join(Global.Path.state, "sdk-sessions.json")

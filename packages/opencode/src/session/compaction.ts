@@ -1,22 +1,21 @@
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
-import { Session } from "."
+import * as Session from "./session"
 import { SessionID, MessageID, PartID } from "./schema"
-import { Provider } from "../provider/provider"
+import { Provider } from "../provider"
 import { MessageV2 } from "./message-v2"
 import z from "zod"
-import { Token } from "../util/token"
-import { Log } from "../util/log"
+import { Token } from "../util"
+import { Log } from "../util"
 import { SessionProcessor } from "./processor"
-import { fn } from "@/util/fn"
 import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
-import { Config } from "@/config/config"
-import { NotFoundError } from "@/storage/db"
+import { Config } from "@/config"
+import { NotFoundError } from "@/storage"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect, Layer, Context } from "effect"
-import { makeRuntime } from "@/effect/run-service"
-import { InstanceState } from "@/effect/instance-state"
+import { InstanceState } from "@/effect"
+import { AppRuntime } from "@/effect/app-runtime"
 import { isOverflow as overflow } from "./overflow"
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
 import bin from "@anthropic-ai/claude-agent-sdk/embed"
@@ -382,16 +381,16 @@ When constructing the summary, try to stick to this template:
 
               if (boundary) {
                 const summary = ref.summary || text || "Conversation was compacted"
-                await Session.updatePart({
+                await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
                   id: PartID.ascending(),
                   messageID: msg.id,
                   sessionID: input.sessionID,
                   type: "text",
                   text: summary,
                   time: { start: Date.now(), end: Date.now() },
-                })
+                })))
                 msg.time.completed = Date.now()
-                await Session.updateMessage(msg)
+                await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
                 log.info("sdk compact succeeded")
                 return "continue" as const
               } else {
@@ -409,7 +408,7 @@ When constructing the summary, try to stick to this template:
                   data: { message: "SDK compaction did not produce a boundary" },
                 } as MessageV2.Assistant["error"]
                 msg.time.completed = Date.now()
-                await Session.updateMessage(msg)
+                await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
                 return "stop" as const
               }
             } catch (e) {
@@ -427,7 +426,7 @@ When constructing the summary, try to stick to this template:
                   data: { message: errMsg, isRetryable: false },
                 } as MessageV2.Assistant["error"]
                 msg.time.completed = Date.now()
-                await Session.updateMessage(msg)
+                await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
                 return "stop" as const
               }
             }
@@ -499,31 +498,55 @@ When constructing the summary, try to stick to this template:
           }
 
           if (!replay) {
-            const continueMsg = yield* session.updateMessage({
-              id: MessageID.ascending(),
-              role: "user",
-              sessionID: input.sessionID,
-              time: { created: Date.now() },
-              agent: userMessage.agent,
-              model: userMessage.model,
-            })
-            const text =
-              (input.overflow
-                ? "The previous request exceeded the provider's size limit due to large media attachments. The conversation was compacted and media files were removed from context. If the user was asking about attached images or files, explain that the attachments were too large to process and suggest they try again with smaller or fewer files.\n\n"
-                : "") +
-              "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
-            yield* session.updatePart({
-              id: PartID.ascending(),
-              messageID: continueMsg.id,
-              sessionID: input.sessionID,
-              type: "text",
-              synthetic: true,
-              text,
-              time: {
-                start: Date.now(),
-                end: Date.now(),
-              },
-            })
+            const info = yield* provider.getProvider(userMessage.model.providerID)
+            if (
+              (yield* plugin.trigger(
+                "experimental.compaction.autocontinue",
+                {
+                  sessionID: input.sessionID,
+                  agent: userMessage.agent,
+                  model: yield* provider.getModel(userMessage.model.providerID, userMessage.model.modelID),
+                  provider: {
+                    source: info.source,
+                    info,
+                    options: info.options,
+                  },
+                  message: userMessage,
+                  overflow: input.overflow === true,
+                },
+                { enabled: true },
+              )).enabled
+            ) {
+              const continueMsg = yield* session.updateMessage({
+                id: MessageID.ascending(),
+                role: "user",
+                sessionID: input.sessionID,
+                time: { created: Date.now() },
+                agent: userMessage.agent,
+                model: userMessage.model,
+              })
+              const text =
+                (input.overflow
+                  ? "The previous request exceeded the provider's size limit due to large media attachments. The conversation was compacted and media files were removed from context. If the user was asking about attached images or files, explain that the attachments were too large to process and suggest they try again with smaller or fewer files.\n\n"
+                  : "") +
+                "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
+              yield* session.updatePart({
+                id: PartID.ascending(),
+                messageID: continueMsg.id,
+                sessionID: input.sessionID,
+                type: "text",
+                // Internal marker for auto-compaction followups so provider plugins
+                // can distinguish them from manual post-compaction user prompts.
+                // This is not a stable plugin contract and may change or disappear.
+                metadata: { compaction_continue: true },
+                synthetic: true,
+                text,
+                time: {
+                  start: Date.now(),
+                  end: Date.now(),
+                },
+              })
+            }
           }
         }
 
@@ -576,37 +599,5 @@ When constructing the summary, try to stick to this template:
       Layer.provide(Bus.layer),
       Layer.provide(Config.defaultLayer),
     ),
-  )
-
-  const { runPromise } = makeRuntime(Service, defaultLayer)
-
-  export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
-    return runPromise((svc) => svc.isOverflow(input))
-  }
-
-  export async function prune(input: { sessionID: SessionID }) {
-    return runPromise((svc) => svc.prune(input))
-  }
-
-  export const process = fn(
-    z.object({
-      parentID: MessageID.zod,
-      messages: z.custom<MessageV2.WithParts[]>(),
-      sessionID: SessionID.zod,
-      auto: z.boolean(),
-      overflow: z.boolean().optional(),
-    }),
-    (input) => runPromise((svc) => svc.process(input)),
-  )
-
-  export const create = fn(
-    z.object({
-      sessionID: SessionID.zod,
-      agent: z.string(),
-      model: z.object({ providerID: ProviderID.zod, modelID: ModelID.zod }),
-      auto: z.boolean(),
-      overflow: z.boolean().optional(),
-    }),
-    (input) => runPromise((svc) => svc.create(input)),
   )
 }

@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test"
+import { Effect } from "effect"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, SessionID } from "../../src/session/schema"
@@ -10,6 +11,19 @@ import { resolveApiKey } from "../../src/session/claude-sdk-query"
 import { query } from "@anthropic-ai/claude-agent-sdk"
 
 const hasApiKey = !!process.env.ANTHROPIC_API_KEY
+
+function run<A, E>(fx: Effect.Effect<A, E, Session.Service>) {
+  return Effect.runPromise(fx.pipe(Effect.provide(Session.defaultLayer)))
+}
+
+const svc = {
+  create(input?: Parameters<Session.Interface["create"]>[0]) {
+    return run(Session.Service.use((s) => s.create(input)))
+  },
+  updateMessage<T extends MessageV2.Info>(msg: T) {
+    return run(Session.Service.use((s) => s.updateMessage(msg)))
+  },
+}
 
 async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
   await using tmp = await tmpdir({ git: true })
@@ -43,9 +57,9 @@ describe("claude-sdk integration", () => {
     "full round trip: query() → processClaudeSdkStream → MessageV2 parts",
     async () => {
       await withInstance(async () => {
-        const session = await Session.create({})
+        const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
-        await Session.updateMessage(assistantMsg)
+        await svc.updateMessage(assistantMsg)
 
         const apiKey = await resolveApiKey()
         expect(apiKey).toBeDefined()

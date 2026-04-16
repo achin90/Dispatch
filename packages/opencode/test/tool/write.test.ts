@@ -5,11 +5,13 @@ import fs from "fs/promises"
 import { WriteTool } from "../../src/tool/write"
 import { Instance } from "../../src/project/instance"
 import { LSP } from "../../src/lsp"
-import { AppFileSystem } from "../../src/filesystem"
+import { AppFileSystem } from "@opencode-ai/shared/filesystem"
 import { FileTime } from "../../src/file/time"
 import { Bus } from "../../src/bus"
 import { Format } from "../../src/format"
-import { Tool } from "../../src/tool/tool"
+import { Truncate } from "../../src/tool"
+import { Tool } from "../../src/tool"
+import { Agent } from "../../src/agent/agent"
 import { SessionID, MessageID } from "../../src/session/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideTmpdirInstance } from "../fixture/fixture"
@@ -38,6 +40,8 @@ const it = testEffect(
     Bus.layer,
     Format.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
+    Truncate.defaultLayer,
+    Agent.defaultLayer,
   ),
 )
 

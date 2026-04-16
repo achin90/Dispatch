@@ -1,6 +1,6 @@
 import z from "zod"
 import { execFile } from "child_process"
-import { Log } from "../util/log"
+import { Log } from "../util"
 import { git } from "../util/git"
 
 export namespace GitHub {

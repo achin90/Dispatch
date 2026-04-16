@@ -21,9 +21,10 @@ import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from
 // @anthropic-ai/sdk which is only a transitive dep.
 type MessageParam = SDKUserMessage["message"]
 import { Auth } from "@/auth"
-import { Log } from "@/util/log"
+import { Log } from "@/util"
 import { Bus } from "@/bus"
 import { MCP } from "@/mcp"
+import { AppRuntime } from "@/effect/app-runtime"
 import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge } from "./claude-sdk-permissions"
@@ -70,7 +71,7 @@ export function invalidateMcpCache() {
 
 async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
   const latency = Log.create({ service: "submit.latency" })
-  const connected = await MCP.clients()
+  const connected = await AppRuntime.runPromise(MCP.Service.use((svc) => svc.clients()))
   latency.info("[3k.2] MCP.clients() done", { ts: Date.now(), count: Object.keys(connected).length })
   const names = Object.keys(connected)
   if (!names.length) {
@@ -166,7 +167,7 @@ export async function resolveApiKey(): Promise<string | undefined> {
   }
 
   // Check auth store
-  const authInfo = await Auth.get("anthropic")
+  const authInfo = await AppRuntime.runPromise(Auth.Service.use((svc) => svc.get("anthropic")))
   if (authInfo?.type === "api") {
     return authInfo.key
   }
