@@ -3,6 +3,7 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
+import { shouldSkipKeyboard, shouldProcessEscape } from "../../guards"
 import { selectedForeground, tint, useTheme } from "../../context/theme"
 import type { QuestionAnswer, QuestionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
@@ -124,7 +125,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
   useKeyboard((evt) => {
     // Skip processing if a dialog (e.g., command palette) is open
-    if (dialog.stack.length > 0) return
+    if (shouldSkipKeyboard(dialog.stack.length)) return
 
     // When editing custom answer textarea
     if (store.editing && !confirm()) {
@@ -210,7 +211,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         evt.preventDefault()
         submit()
       }
-      if (!keybind.leader && (evt.name === "escape" || keybind.match("app_exit", evt))) {
+      if (shouldProcessEscape(keybind.leader, evt.name) || (!keybind.leader && keybind.match("app_exit", evt))) {
         evt.preventDefault()
         reject()
       }
@@ -243,7 +244,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         selectOption()
       }
 
-      if (!keybind.leader && (evt.name === "escape" || keybind.match("app_exit", evt))) {
+      if (shouldProcessEscape(keybind.leader, evt.name) || (!keybind.leader && keybind.match("app_exit", evt))) {
         evt.preventDefault()
         reject()
       }

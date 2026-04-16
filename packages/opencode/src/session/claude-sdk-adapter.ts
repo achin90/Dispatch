@@ -72,7 +72,7 @@ export function thinkingBlockToPart(
 }
 
 // Map SDK PascalCase tool names to the lowercase names the TUI expects
-function normalizeTool(name: string): string {
+export function normalizeTool(name: string): string {
   switch (name) {
     case "Read":
       return "read"
@@ -107,7 +107,7 @@ function normalizeTool(name: string): string {
 
 // Convert snake_case keys to camelCase so TUI components can access them
 // e.g. file_path → filePath, old_string → oldString, replace_all → replaceAll
-function snakeToCamel(str: string): string {
+export function snakeToCamel(str: string): string {
   return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 }
 
@@ -125,7 +125,7 @@ const TOOL_OMIT_KEYS: Record<string, string[]> = {
   grep: ["include"],
 }
 
-function normalizeInput(tool: string, raw: Record<string, unknown>): Record<string, unknown> {
+export function normalizeInput(tool: string, raw: Record<string, unknown>): Record<string, unknown> {
   const omit = TOOL_OMIT_KEYS[tool] ?? []
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(raw)) {

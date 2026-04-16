@@ -1177,3 +1177,64 @@ test("ask - abort should clear pending request", async () => {
     },
   })
 })
+
+// ---------------------------------------------------------------------------
+// fromConfig + merge: mixed string/object form tests (Dispatch regression guard)
+// ---------------------------------------------------------------------------
+
+test("fromConfig - string form expands to wildcard pattern", () => {
+  const rules = Permission.fromConfig({ bash: "allow" })
+  expect(rules).toEqual([{ permission: "bash", pattern: "*", action: "allow" }])
+})
+
+test("fromConfig - object form preserves specific patterns", () => {
+  const rules = Permission.fromConfig({ bash: { rm: "deny", ls: "allow" } })
+  expect(rules).toContainEqual({ permission: "bash", pattern: "rm", action: "deny" })
+  expect(rules).toContainEqual({ permission: "bash", pattern: "ls", action: "allow" })
+})
+
+test("fromConfig + merge - global string allow with project object deny", () => {
+  const global = Permission.fromConfig({ bash: "allow" })
+  const project = Permission.fromConfig({ bash: { rm: "deny" } })
+  const merged = Permission.merge(global, project)
+
+  // rm should be denied (project object rule is last and matches)
+  expect(Permission.evaluate("bash", "rm", merged).action).toBe("deny")
+  // other commands still allowed (global wildcard matches, no project override)
+  expect(Permission.evaluate("bash", "ls", merged).action).toBe("allow")
+})
+
+test("fromConfig + merge - global object with project string override", () => {
+  const global = Permission.fromConfig({ bash: { "rm *": "deny", "echo *": "allow" } })
+  const project = Permission.fromConfig({ bash: "allow" })
+  const merged = Permission.merge(global, project)
+
+  // project "allow" with wildcard pattern is last, overrides everything
+  expect(Permission.evaluate("bash", "rm -rf /", merged).action).toBe("allow")
+  expect(Permission.evaluate("bash", "echo hello", merged).action).toBe("allow")
+})
+
+test("fromConfig + merge - multiple permissions mixed forms", () => {
+  const global = Permission.fromConfig({ bash: "allow", edit: { "src/*": "allow" } })
+  const project = Permission.fromConfig({ bash: { rm: "deny" }, edit: "allow" })
+  const merged = Permission.merge(global, project)
+
+  expect(Permission.evaluate("bash", "ls", merged).action).toBe("allow")
+  expect(Permission.evaluate("bash", "rm", merged).action).toBe("deny")
+  // project edit: "allow" overrides global's src/* pattern
+  expect(Permission.evaluate("edit", "test/foo.ts", merged).action).toBe("allow")
+})
+
+test("fromConfig + merge - agent defaults with config overrides", () => {
+  // Simulates how agents work: defaults + agent permission + config
+  const defaults: Permission.Ruleset = [{ permission: "*", pattern: "*", action: "ask" }]
+  const agent = Permission.fromConfig({ bash: "allow", edit: "allow" })
+  const config = Permission.fromConfig({ bash: { "rm *": "deny" } })
+  const merged = Permission.merge(defaults, agent, config)
+
+  expect(Permission.evaluate("bash", "ls", merged).action).toBe("allow")
+  expect(Permission.evaluate("bash", "rm -rf /", merged).action).toBe("deny")
+  expect(Permission.evaluate("edit", "foo.ts", merged).action).toBe("allow")
+  // unknown tool still asks (from defaults)
+  expect(Permission.evaluate("webfetch", "https://example.com", merged).action).toBe("ask")
+})

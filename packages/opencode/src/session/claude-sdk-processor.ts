@@ -26,7 +26,7 @@ import { Instance } from "@/project/instance"
 // Error message extraction
 // ---------------------------------------------------------------------------
 
-function extractErrorMessage(error: unknown): string {
+export function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     // Check for HTTP status in common SDK error shapes
     const status =
@@ -43,7 +43,7 @@ function extractErrorMessage(error: unknown): string {
 // Activity formatting
 // ---------------------------------------------------------------------------
 
-function formatActivity(part: MessageV2.ToolPart): string {
+export function formatActivity(part: MessageV2.ToolPart): string {
   const name = part.tool.charAt(0).toUpperCase() + part.tool.slice(1)
   const input = part.state.input as Record<string, unknown> | undefined
   if (!input) return name

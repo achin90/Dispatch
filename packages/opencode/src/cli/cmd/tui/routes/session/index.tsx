@@ -51,6 +51,7 @@ import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import type { DialogContext } from "@tui/ui/dialog"
 import { useKeybind } from "@tui/context/keybind"
+import { shouldSave as shouldSaveDraft, resolve as resolveDraft } from "../../draft"
 import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
 import { TodoItem } from "../../component/todo-item"
@@ -218,22 +219,21 @@ export function Session() {
     // Save draft when Prompt unmounts (e.g. permission prompt shown)
     if (!r && prompt) {
       const info = prompt.current
-      if (info.input || info.parts.length) {
+      if (shouldSaveDraft(info)) {
         drafts.set(route.sessionID, info)
       }
     }
     prompt = r
     promptRef.set(r)
-    if (seeded || !r) return
-    if (route.initialPrompt) {
+    if (!r) return
+    const resolution = resolveDraft(seeded, !!route.initialPrompt, drafts.has(route.sessionID))
+    if (resolution.action === "initial") {
       seeded = true
-      r.set(route.initialPrompt, true)
-    } else {
-      const draft = drafts.get(route.sessionID)
-      if (draft) {
-        r.set(draft, true)
-        drafts.delete(route.sessionID)
-      }
+      r.set(route.initialPrompt!, resolution.block)
+    } else if (resolution.action === "draft") {
+      const draft = drafts.get(route.sessionID)!
+      r.set(draft, resolution.block)
+      drafts.delete(route.sessionID)
     }
   }
   const keybind = useKeybind()

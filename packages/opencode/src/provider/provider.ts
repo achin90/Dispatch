@@ -1030,7 +1030,7 @@ export namespace Provider {
 
   // Claude Agent SDK model metadata — maps SDK model aliases to concrete info.
   // This is the source of truth for models, replacing models.dev for the Claude SDK path.
-  const SDK_MODELS: Record<
+  export const SDK_MODELS: Record<
     string,
     {
       resolves: string
@@ -1075,7 +1075,7 @@ export namespace Provider {
     },
   }
 
-  function buildSdkModel(alias: string, info: (typeof SDK_MODELS)[string], displayName: string): Model {
+  export function buildSdkModel(alias: string, info: (typeof SDK_MODELS)[string], displayName: string): Model {
     return {
       id: ModelID.make(alias),
       providerID: ProviderID.make("anthropic"),

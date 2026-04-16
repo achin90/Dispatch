@@ -37,7 +37,7 @@ const latency = Log.create({ service: "submit.latency" })
  * This ensures that tools, system prompts, and file operations use the
  * directory the session was created in, not the TUI's startup directory.
  */
-async function withSessionDirectory<R>(sessionID: SessionID, fn: () => Promise<R>): Promise<R> {
+export async function withSessionDirectory<R>(sessionID: SessionID, fn: () => Promise<R>): Promise<R> {
   log.info("withSessionDirectory: lookup", { sessionID })
   const session = await Session.get(sessionID)
   log.info("withSessionDirectory: found", { sessionID, directory: session.directory })

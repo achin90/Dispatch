@@ -5,6 +5,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { Filesystem } from "@/util/filesystem"
 import { useLocal } from "@tui/context/local"
+import { shouldBlock as shouldBlockSubmit } from "../../draft"
 import { useTheme } from "@tui/context/theme"
 import { EmptyBorder, SplitBorder } from "@tui/component/border"
 import { useSDK } from "@tui/context/sdk"
@@ -618,10 +619,9 @@ export function Prompt(props: PromptProps) {
       setStore("prompt", "input", input.plainText)
       syncExtmarksWithPromptParts()
     }
-    if (restored) {
-      restored = false
-      return
-    }
+    const check = shouldBlockSubmit(restored)
+    restored = check.next
+    if (check.block) return
     if (props.disabled) return
     if (autocomplete?.visible) return
     if (!store.prompt.input) return

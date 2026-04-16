@@ -3,6 +3,7 @@ import { createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
+import { shouldSkipKeyboard, shouldProcessEscape } from "../../guards"
 import { useTheme, selectedForeground } from "../../context/theme"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
@@ -483,9 +484,9 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
   const dialog = useDialog()
 
   useKeyboard((evt) => {
-    if (dialog.stack.length > 0) return
+    if (shouldSkipKeyboard(dialog.stack.length)) return
 
-    if (!keybind.leader && (evt.name === "escape" || keybind.match("app_exit", evt))) {
+    if (shouldProcessEscape(keybind.leader, evt.name) || (!keybind.leader && keybind.match("app_exit", evt))) {
       evt.preventDefault()
       props.onCancel()
       return
@@ -570,7 +571,7 @@ function Prompt<const T extends Record<string, string>>(props: {
   const dialog = useDialog()
 
   useKeyboard((evt) => {
-    if (dialog.stack.length > 0) return
+    if (shouldSkipKeyboard(dialog.stack.length)) return
 
     if (evt.name === "left" || evt.name == "h") {
       evt.preventDefault()
@@ -591,7 +592,7 @@ function Prompt<const T extends Record<string, string>>(props: {
       props.onSelect(store.selected)
     }
 
-    if (!keybind.leader && props.escapeKey && (evt.name === "escape" || keybind.match("app_exit", evt))) {
+    if (props.escapeKey && (shouldProcessEscape(keybind.leader, evt.name) || (!keybind.leader && keybind.match("app_exit", evt)))) {
       evt.preventDefault()
       props.onSelect(props.escapeKey)
     }

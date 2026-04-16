@@ -25,7 +25,7 @@ export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
   const log = EffectLogger.create({ service: "session.processor" })
 
-  function formatActivity(toolName: string, input: Record<string, unknown> | undefined): string {
+  export function formatActivity(toolName: string, input: Record<string, unknown> | undefined): string {
     const name = toolName.charAt(0).toUpperCase() + toolName.slice(1)
     if (!input) return name
     const detail =
