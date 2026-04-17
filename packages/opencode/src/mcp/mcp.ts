@@ -479,6 +479,61 @@ export const layer = Layer.effect(
       })
     }
 
+    const RECONNECT_MAX_ATTEMPTS = 5
+    const RECONNECT_DELAYS = [5_000, 10_000, 30_000, 60_000, 60_000]
+
+    function setupReconnect(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape) {
+      client.onclose = () => {
+        // Don't reconnect if this client was intentionally replaced or removed
+        if (s.clients[name] !== client) return
+
+        log.warn("mcp connection closed unexpectedly", { server: name })
+        s.status[name] = { status: "failed", error: "Connection lost" }
+
+        let attempt = 0
+        const tryReconnect = async () => {
+          if (s.status[name]?.status === "connected" || s.status[name]?.status === "disabled") return
+          if (attempt >= RECONNECT_MAX_ATTEMPTS) {
+            log.error("mcp reconnection failed after max attempts", { server: name, attempts: RECONNECT_MAX_ATTEMPTS })
+            return
+          }
+
+          attempt++
+          log.info("attempting mcp reconnection", { server: name, attempt })
+
+          const reconnected = await bridge
+            .promise(
+              Effect.gen(function* () {
+                const mcp = yield* getMcpConfig(name)
+                if (!mcp) return false
+
+                const result = yield* create(name, mcp)
+                if (!result.mcpClient || !result.defs) return false
+
+                // Check if user disconnected while reconnect was in-flight
+                if (s.status[name]?.status === "disabled") {
+                  yield* Effect.tryPromise(() => result.mcpClient!.close()).pipe(Effect.ignore)
+                  return false
+                }
+
+                yield* storeClient(s, name, result.mcpClient, result.defs, mcp.timeout)
+                yield* bus.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
+                log.info("mcp reconnected successfully", { server: name, attempt })
+                return true
+              }).pipe(Effect.catch(() => Effect.succeed(false))),
+            )
+            .catch(() => false)
+          if (reconnected) return
+
+          const delay = RECONNECT_DELAYS[Math.min(attempt - 1, RECONNECT_DELAYS.length - 1)]
+          log.info("scheduling mcp reconnection retry", { server: name, attempt, delayMs: delay })
+          setTimeout(tryReconnect, delay)
+        }
+
+        setTimeout(tryReconnect, RECONNECT_DELAYS[0])
+      }
+    }
+
     const state = yield* InstanceState.make<State>(
       Effect.fn("MCP.state")(function* () {
         const cfg = yield* cfgSvc.get()
@@ -512,6 +567,7 @@ export const layer = Layer.effect(
                 s.clients[key] = result.mcpClient
                 s.defs[key] = result.defs!
                 watch(s, key, result.mcpClient, bridge, mcp.timeout)
+                setupReconnect(s, key, result.mcpClient, bridge)
               }
             }),
           { concurrency: "unbounded" },
@@ -547,6 +603,7 @@ export const layer = Layer.effect(
     function closeClient(s: State, name: string) {
       const client = s.clients[name]
       delete s.defs[name]
+      delete s.clients[name]
       if (!client) return Effect.void
       return Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
     }
@@ -564,6 +621,7 @@ export const layer = Layer.effect(
       s.clients[name] = client
       s.defs[name] = listed
       watch(s, name, client, bridge, timeout)
+      setupReconnect(s, name, client, bridge)
       return s.status[name]
     })
 
@@ -594,7 +652,6 @@ export const layer = Layer.effect(
       s.status[name] = result.status
       if (!result.mcpClient) {
         yield* closeClient(s, name)
-        delete s.clients[name]
         return result.status
       }
 
@@ -619,7 +676,6 @@ export const layer = Layer.effect(
     const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
       const s = yield* InstanceState.get(state)
       yield* closeClient(s, name)
-      delete s.clients[name]
       s.status[name] = { status: "disabled" }
     })
 
