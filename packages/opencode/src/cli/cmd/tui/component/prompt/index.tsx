@@ -284,8 +284,30 @@ export function Prompt(props: PromptProps) {
           }, 5000)
 
           if (store.interrupt >= 2) {
-            void sdk.client.session.abort({
-              sessionID: props.sessionID,
+            // Capture queued message text before abort removes it (single queued case).
+            // The backend deletes the lone queued message so the TUI must snapshot it first.
+            const msgs = sync.data.message[props.sessionID] ?? []
+            const lastAssist = msgs.findLast((x) => x.role === "assistant")
+            const queued = lastAssist
+              ? msgs.filter((x) => x.role === "user" && x.id > lastAssist.id)
+              : []
+            const restore =
+              queued.length === 1
+                ? (sync.data.part[queued[0].id] ?? []).reduce(
+                    (agg, part) => {
+                      if (part.type === "text" && !part.synthetic) agg.input += part.text
+                      if (part.type === "file") agg.parts.push(part)
+                      return agg
+                    },
+                    { input: "", parts: [] as PromptInfo["parts"] },
+                  )
+                : undefined
+            void sdk.client.session.abort({ sessionID: props.sessionID }).then(() => {
+              if (!restore) return
+              input.setText(restore.input)
+              setStore("prompt", restore)
+              restoreExtmarksFromParts(restore.parts)
+              input.gotoBufferEnd()
             })
             setStore("interrupt", 0)
           }
