@@ -41,12 +41,12 @@ These features exist only in Dispatch and must survive every upstream merge:
 
 - **Claude Agent SDK integration** — `claude-sdk-query.ts`, `claude-sdk-processor.ts`, `claude-sdk-adapter.ts`, `claude-sdk-session-map.ts`, `claude-sdk-permissions.ts`
 - **Agent dashboard / multi-agent** — `routes/home.tsx` (agent list, worktree creation, PR integration, diff stats)
-- **Worktree support** — `worktree/index.ts`, worktree agent context in `system.ts`
+- **Worktree support** — `worktree/worktree.ts` (sibling-path creation via `dirname`/`basename` of `ctx.worktree`), worktree agent context in `system.ts`
 - **Static SDK model definitions** — `provider/provider.ts` (`SDK_MODELS`, `buildSdkModel`)
 - **Activity display** — `formatActivity()` in `processor.ts`, `activity` field on `SessionStatus`
 - **Cross-directory event bridge** — `bus/global.ts` and `context/event.ts` (must accept events from all directories, not just the current project)
 - **Permission merging** — `permission/index.ts` (`merge()`, global pending map)
-- **Question global pending map** — `question/index.ts` (`globalPending` map, same pattern as permissions)
+- **Question global pending map** — `question/index.ts` (`index` map, same cross-directory pattern as permissions)
 - **Queued message handling** — `prompt/index.tsx` and `session/prompt.ts` (cancel + restore)
 - **Dashboard keybinds** — Leader key guard on escape in `permission.tsx`, `question.tsx`
 - **Yolo agent** — `agent/agent.ts` (auto-approve permissions)
@@ -120,19 +120,42 @@ grep -n "globalPending" packages/opencode/src/permission/permission.ts
 ### Question pending map scoped to InstanceState instead of global
 The same issue as permissions applies to the Question service (`question/index.ts`). Upstream stores the pending question map inside `InstanceState`, which is keyed by directory. The `ask()` call runs in the agent's directory context (via `Instance.bind` in `claude-sdk-permissions.ts`), but `reply()` runs in the TUI's directory context (via the HTTP middleware). These resolve to different `ScopedCache` entries, so `reply()` can never find the pending request.
 
-**Design** (mirrors the Permission service pattern):
-- `globalPending` (module-level `Map<QuestionID, PendingEntry>`) holds ALL pending entries across all directories.
-- Each instance tracks which entries it owns via `ownedPending: Set<QuestionID>` in the State interface, so the finalizer on instance dispose only rejects its own entries.
-- `reply()`, `reject()`, and `list()` read from `globalPending` directly — no `InstanceState.get` needed.
-- `ask()` stores in `globalPending` and records ownership in `ownedPending`.
+This affects **both single-question and multi-question prompts** — any question routed through the AskUserQuestion bridge will be invisible to `reply()`/`reject()` if the directory contexts differ.
 
-**Symptom:** The multiquestion dialog appears but pressing Enter to submit or Escape to dismiss does nothing. The HTTP reply returns 200 but the Question service logs `"reply for unknown request"`. The dialog stays visible indefinitely.
+**Design:**
+- `index` (module-level `Map<QuestionID, PendingEntry>`) holds ALL pending entries across all directories.
+- Each instance still has its own `pending` map in `InstanceState` for finalizer cleanup (reject owned entries on dispose).
+- `ask()` stores in both `pending` (per-instance) and `index` (global). Cleanup (`Effect.ensuring`) deletes from both.
+- `reply()`, `reject()`, and `list()` read from `index` directly — no `InstanceState.get` needed.
+- The finalizer iterates `state.pending.entries()` to reject owned entries and cleans them from `index`.
+
+**Symptom:** The question dialog (single or multi) appears but pressing Enter to submit or Escape to dismiss does nothing. The HTTP reply returns 200 but the Question service logs `"reply for unknown request"`. The dialog stays visible indefinitely.
 
 **Quick verification after merge:**
 ```bash
-# globalPending should exist at module level, not inside InstanceState init
-grep -n "globalPending" packages/opencode/src/question/index.ts
-# Should see: const globalPending = new Map<...>(), and uses in ask/reply/reject/list
+# index should exist at module level, not inside InstanceState init
+grep -n "const index" packages/opencode/src/question/index.ts
+# reply/reject/list should use index, not InstanceState.get
+grep -n "index.get\|index.delete\|index.values" packages/opencode/src/question/index.ts
+```
+
+### Worktree path created in central data directory instead of as sibling
+Upstream creates new worktrees under `~/.local/share/opencode/worktree/<projectId>/<slug>`. Dispatch creates them as siblings of the parent worktree so the directory structure is intuitive (e.g., `/projects/BillingService` → `/projects/BillingService-feature-name`). During merges, `makeWorktreeInfo` in `worktree/worktree.ts` can revert to using `Global.Path.data` as the root instead of `pathSvc.dirname(ctx.worktree)`.
+
+**Design:**
+- `root` = parent directory of the current worktree (`pathSvc.dirname(ctx.worktree)`)
+- `base` = `<currentWorktreeBasename>-<slugifiedName>` (or just `<currentWorktreeBasename>` when no name is given, which triggers the collision-avoidance loop to append a random slug)
+- The `Global.Path.data` import and `fs.makeDirectory` call for the central directory are not needed
+
+**Symptom:** New worktrees appear in `~/.local/share/opencode/worktree/` instead of next to the source project directory.
+
+**Quick verification after merge:**
+```bash
+# makeWorktreeInfo should use dirname/basename of ctx.worktree, NOT Global.Path.data
+grep -n "Global.Path.data" packages/opencode/src/worktree/worktree.ts
+# Should return nothing — if it matches, the regression is back
+grep -n "dirname\|basename" packages/opencode/src/worktree/worktree.ts
+# Should see pathSvc.dirname(ctx.worktree) and pathSvc.basename(ctx.worktree)
 ```
 
 ### Effect framework migrations
