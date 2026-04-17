@@ -121,6 +121,7 @@ describe("claude sdk token counting", () => {
         assistantMessage: msg,
         sessionID: session.id,
         abort: new AbortController().signal,
+        cwd: "/tmp",
       })
 
       spy.mockRestore()
@@ -196,6 +197,7 @@ describe("claude sdk token counting", () => {
         assistantMessage: msg,
         sessionID: session.id,
         abort: new AbortController().signal,
+        cwd: "/tmp",
       })
 
       spy.mockRestore()
@@ -296,6 +298,7 @@ describe("claude sdk token counting", () => {
         assistantMessage: msg,
         sessionID: session.id,
         abort: new AbortController().signal,
+        cwd: "/tmp",
       })
 
       spy.mockRestore()

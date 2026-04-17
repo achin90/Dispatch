@@ -28,7 +28,7 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge } from "./claude-sdk-permissions"
-import { getSdkSessionID } from "./claude-sdk-session-map"
+import { getSdkSessionEntry, removeSdkSessionID } from "./claude-sdk-session-map"
 import bin from "@anthropic-ai/claude-agent-sdk/embed"
 
 const log = Log.create({ service: "claude-sdk-query" })
@@ -193,57 +193,87 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
     env.ANTHROPIC_API_KEY = apiKey
   }
 
-  // Check if we have a previous SDK session UUID for this opencode session.
-  // If so, resume it so the SDK loads the full conversation history from disk.
-  const sdkSessionID = await getSdkSessionID(input.sessionID)
+  // Check if we have a previous SDK session entry for this opencode session.
+  // If so, resume it with the *original* cwd so the SDK finds its session files
+  // and loads full conversation history, even if the opencode session has since
+  // been moved to a different directory.
+  const entry = await getSdkSessionEntry(input.sessionID)
+  const currentCwd = input.cwd ?? process.cwd()
+  log.info("createClaudeSdkQuery: resume lookup", {
+    sessionID: input.sessionID,
+    sdkSessionID: entry?.uuid ?? "(none)",
+    storedCwd: entry?.cwd ?? "(none)",
+    currentCwd,
+  })
 
-  const options: Options = {
-    model: input.model,
-    systemPrompt: input.systemPrompt,
-    cwd: input.cwd ?? process.cwd(),
-    env,
-    betas: ["context-1m-2025-08-07"],
-    permissionMode: input.permissionMode ?? "default",
-    pathToClaudeCodeExecutable: bin,
-    allowedTools: input.allowedTools,
-    disallowedTools: input.disallowedTools,
-    canUseTool: createCanUseToolBridge({
-      sessionID: input.sessionID,
-      messageID: input.messageID,
-      ruleset: input.ruleset,
-    }),
-    abortController: input.abortController,
-    maxTurns: input.maxTurns,
-    ...(input.effort ? { effort: input.effort } : {}),
-    ...(sdkSessionID ? { resume: sdkSessionID } : {}),
-    ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
-    ...(input.hooks ? { hooks: input.hooks } : {}),
+  function buildOptions(resume: string | undefined, cwd: string): Options {
+    return {
+      model: input.model,
+      systemPrompt: input.systemPrompt,
+      cwd,
+      env,
+      betas: ["context-1m-2025-08-07"],
+      permissionMode: input.permissionMode ?? "default",
+      pathToClaudeCodeExecutable: bin,
+      allowedTools: input.allowedTools,
+      disallowedTools: input.disallowedTools,
+      canUseTool: createCanUseToolBridge({
+        sessionID: input.sessionID,
+        messageID: input.messageID,
+        ruleset: input.ruleset,
+      }),
+      abortController: input.abortController,
+      maxTurns: input.maxTurns,
+      ...(input.effort ? { effort: input.effort } : {}),
+      ...(resume ? { resume } : {}),
+      ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
+      ...(input.hooks ? { hooks: input.hooks } : {}),
+    }
   }
+
+  // When resuming, use the original cwd so the SDK finds its session files.
+  // For new sessions (no entry), use the current directory.
+  const resumeCwd = entry?.cwd || currentCwd
+  const options = buildOptions(entry?.uuid, entry ? resumeCwd : currentCwd)
 
   log.info("createClaudeSdkQuery: options built", {
     hasMcpServers: !!options.mcpServers,
     mcpServerNames: options.mcpServers ? Object.keys(options.mcpServers) : [],
     model: options.model,
-    hasResume: !!sdkSessionID,
+    hasResume: !!entry?.uuid,
+    cwd: options.cwd,
   })
 
   // When prompt contains image/media content blocks, wrap it as an
   // SDKUserMessage so the SDK receives the full MessageParam with images.
   // Plain strings are passed through directly.
-  const prompt: string | AsyncIterable<SDKUserMessage> =
-    typeof input.prompt === "string"
-      ? input.prompt
-      : (async function* () {
-          yield {
-            type: "user" as const,
-            message: input.prompt as MessageParam,
-            parent_tool_use_id: null,
-            session_id: sdkSessionID ?? "",
-          }
-        })()
+  function buildPrompt(resume: string | undefined): string | AsyncIterable<SDKUserMessage> {
+    if (typeof input.prompt === "string") return input.prompt
+    return (async function* () {
+      yield {
+        type: "user" as const,
+        message: input.prompt as MessageParam,
+        parent_tool_use_id: null,
+        session_id: resume ?? "",
+      }
+    })()
+  }
 
-  return query({
-    prompt,
-    options,
-  })
+  try {
+    return await query({ prompt: buildPrompt(entry?.uuid), options })
+  } catch (err) {
+    // If the SDK still can't find the session (e.g. files deleted, corrupted),
+    // clear the stale entry and retry without resume.
+    const msg = err instanceof Error ? err.message : String(err)
+    if (entry?.uuid && msg.includes("No conversation found")) {
+      log.info("createClaudeSdkQuery: stale SDK session, clearing and retrying without resume", {
+        sessionID: input.sessionID,
+        staleSdkSessionID: entry.uuid,
+        error: msg,
+      })
+      await removeSdkSessionID(input.sessionID)
+      return query({ prompt: buildPrompt(undefined), options: buildOptions(undefined, currentCwd) })
+    }
+    throw err
+  }
 }

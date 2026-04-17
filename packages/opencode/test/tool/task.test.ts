@@ -344,7 +344,16 @@ describe("tool.task", () => {
 
           const child = yield* sessions.get(result.metadata.sessionId)
           expect(child.parentID).toBe(chat.id)
-          expect(child.permission).toEqual([
+
+          // The child inherits the caller's (build agent) full permission
+          // set, then appends task-specific overrides at the end.
+          const permission = child.permission!
+          expect(permission.length).toBeGreaterThan(3)
+          expect(permission).toContainEqual({ permission: "*", pattern: "*", action: "allow" })
+          expect(permission).toContainEqual({ permission: "doom_loop", pattern: "*", action: "ask" })
+
+          // Task-specific rules at the tail: todowrite deny + primary_tools
+          expect(permission.slice(-3)).toEqual([
             {
               permission: "todowrite",
               pattern: "*",

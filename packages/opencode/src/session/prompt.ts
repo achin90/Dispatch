@@ -1573,6 +1573,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   assistantMessage: msg,
                   sessionID,
                   abort,
+                  cwd: ctx.directory,
                   compaction: compactRef,
                   setStatus: (sid, s) => run.fork(status.set(sid, s as any)),
                 }),

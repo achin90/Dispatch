@@ -8,12 +8,17 @@ import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider/models"
 import { Provider } from "../../src/provider"
+import { SDK_MODELS } from "../../src/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Filesystem } from "../../src/util"
 import { Env } from "../../src/env"
 import { Effect } from "effect"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { makeRuntime } from "../../src/effect/run-service"
+
+// Dispatch always injects SDK model aliases into the Anthropic provider.
+// Tests that check model counts or provider existence must account for these.
+const SDK_MODEL_KEYS = Object.keys(SDK_MODELS)
 
 const env = makeRuntime(Env.Service, Env.defaultLayer)
 const set = (k: string, v: string) => env.runSync((svc) => svc.set(k, v))
@@ -115,7 +120,7 @@ test("provider loaded from config with apiKey option", async () => {
   })
 })
 
-test("disabled_providers excludes provider", async () => {
+test("disabled_providers excludes provider upstream models but SDK models remain", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -134,7 +139,14 @@ test("disabled_providers excludes provider", async () => {
     },
     fn: async () => {
       const providers = await list()
-      expect(providers[ProviderID.anthropic]).toBeUndefined()
+      // Anthropic still present because SDK models are always injected
+      expect(providers[ProviderID.anthropic]).toBeDefined()
+      const models = Object.keys(providers[ProviderID.anthropic].models)
+      // Only SDK model aliases should remain — no upstream models.dev models
+      for (const key of SDK_MODEL_KEYS) {
+        expect(models).toContain(key)
+      }
+      expect(models.length).toBe(SDK_MODEL_KEYS.length)
     },
   })
 })
@@ -191,7 +203,8 @@ test("model whitelist filters models for provider", async () => {
       expect(providers[ProviderID.anthropic]).toBeDefined()
       const models = Object.keys(providers[ProviderID.anthropic].models)
       expect(models).toContain("claude-sonnet-4-20250514")
-      expect(models.length).toBe(1)
+      // Whitelisted model + SDK model aliases
+      expect(models.length).toBe(1 + SDK_MODEL_KEYS.length)
     },
   })
 })
@@ -582,7 +595,7 @@ test("model options are merged from existing model", async () => {
   })
 })
 
-test("provider removed when all models filtered out", async () => {
+test("provider kept with only SDK models when all upstream models filtered out", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -605,7 +618,10 @@ test("provider removed when all models filtered out", async () => {
     },
     fn: async () => {
       const providers = await list()
-      expect(providers[ProviderID.anthropic]).toBeUndefined()
+      // Anthropic still present because SDK models are always injected
+      expect(providers[ProviderID.anthropic]).toBeDefined()
+      const models = Object.keys(providers[ProviderID.anthropic].models)
+      expect(models.length).toBe(SDK_MODEL_KEYS.length)
     },
   })
 })
@@ -831,7 +847,7 @@ test("disabled_providers prevents loading even with env var", async () => {
   })
 })
 
-test("enabled_providers with empty array allows no providers", async () => {
+test("enabled_providers with empty array allows only SDK provider", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -851,7 +867,11 @@ test("enabled_providers with empty array allows no providers", async () => {
     },
     fn: async () => {
       const providers = await list()
-      expect(Object.keys(providers).length).toBe(0)
+      // Only anthropic remains (SDK models are always injected)
+      expect(Object.keys(providers).length).toBe(1)
+      expect(providers[ProviderID.anthropic]).toBeDefined()
+      expect(providers[ProviderID.openai]).toBeUndefined()
+      expect(Object.keys(providers[ProviderID.anthropic].models).length).toBe(SDK_MODEL_KEYS.length)
     },
   })
 })
@@ -884,7 +904,8 @@ test("whitelist and blacklist can be combined", async () => {
       const models = Object.keys(providers[ProviderID.anthropic].models)
       expect(models).toContain("claude-sonnet-4-20250514")
       expect(models).not.toContain("claude-opus-4-20250514")
-      expect(models.length).toBe(1)
+      // Whitelisted sonnet + SDK model aliases
+      expect(models.length).toBe(1 + SDK_MODEL_KEYS.length)
     },
   })
 })

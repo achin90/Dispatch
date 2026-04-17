@@ -136,11 +136,24 @@ export interface Interface {
 interface PendingEntry {
   info: Request
   deferred: Deferred.Deferred<void, RejectedError | CorrectedError>
+  // Captured from the agent's InstanceState at ask() time.
+  // reply() may run in a different directory context (the TUI's), so it
+  // must use this reference rather than resolving its own InstanceState.
+  approved: Ruleset
 }
 
+// Global pending map — NOT per-directory.
+// Permission requests from agent sessions running in different directories
+// must be resolvable from the TUI's directory context. The TUI sends
+// replies via its own directory (x-opencode-directory header), which may
+// differ from the agent's working directory where the request was created.
+const globalPending = new Map<PermissionID, PendingEntry>()
+
 interface State {
-  pending: Map<PermissionID, PendingEntry>
   approved: Ruleset
+  // Tracks which globalPending entries were created by this instance so the
+  // finalizer can reject them on dispose/reload without touching other instances.
+  ownedPending: Set<PermissionID>
 }
 
 export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
@@ -159,26 +172,29 @@ export const layer = Layer.effect(
         const row = Database.use((db) =>
           db.select().from(PermissionTable).where(eq(PermissionTable.project_id, ctx.project.id)).get(),
         )
-        const state = {
-          pending: new Map<PermissionID, PendingEntry>(),
+        const s: State = {
           approved: row?.data ?? [],
+          ownedPending: new Set<PermissionID>(),
         }
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
-            for (const item of state.pending.values()) {
-              yield* Deferred.fail(item.deferred, new RejectedError())
+            for (const id of s.ownedPending) {
+              const entry = globalPending.get(id)
+              if (!entry) continue
+              globalPending.delete(id)
+              yield* Deferred.fail(entry.deferred, new RejectedError())
             }
-            state.pending.clear()
+            s.ownedPending.clear()
           }),
         )
 
-        return state
+        return s
       }),
     )
 
     const ask = Effect.fn("Permission.ask")(function* (input: AskInput) {
-      const { approved, pending } = yield* InstanceState.get(state)
+      const { approved, ownedPending } = yield* InstanceState.get(state)
       const { ruleset, ...request } = input
       let needsAsk = false
 
@@ -204,22 +220,23 @@ export const layer = Layer.effect(
       log.info("asking", { id, permission: info.permission, patterns: info.patterns })
 
       const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
-      pending.set(id, { info, deferred })
+      globalPending.set(id, { info, deferred, approved })
+      ownedPending.add(id)
       yield* bus.publish(Event.Asked, info)
       return yield* Effect.ensuring(
         Deferred.await(deferred),
         Effect.sync(() => {
-          pending.delete(id)
+          globalPending.delete(id)
+          ownedPending.delete(id)
         }),
       )
     })
 
     const reply = Effect.fn("Permission.reply")(function* (input: ReplyInput) {
-      const { approved, pending } = yield* InstanceState.get(state)
-      const existing = pending.get(input.requestID)
+      const existing = globalPending.get(input.requestID)
       if (!existing) return
 
-      pending.delete(input.requestID)
+      globalPending.delete(input.requestID)
       yield* bus.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,
@@ -232,9 +249,9 @@ export const layer = Layer.effect(
           input.message ? new CorrectedError({ feedback: input.message }) : new RejectedError(),
         )
 
-        for (const [id, item] of pending.entries()) {
+        for (const [id, item] of globalPending.entries()) {
           if (item.info.sessionID !== existing.info.sessionID) continue
-          pending.delete(id)
+          globalPending.delete(id)
           yield* bus.publish(Event.Replied, {
             sessionID: item.info.sessionID,
             requestID: item.info.id,
@@ -248,21 +265,23 @@ export const layer = Layer.effect(
       yield* Deferred.succeed(existing.deferred, undefined)
       if (input.reply === "once") return
 
+      // Use the approved ruleset captured at ask() time from the agent's
+      // InstanceState — reply() may be running in a different directory context.
       for (const pattern of existing.info.always) {
-        approved.push({
+        existing.approved.push({
           permission: existing.info.permission,
           pattern,
           action: "allow",
         })
       }
 
-      for (const [id, item] of pending.entries()) {
+      for (const [id, item] of globalPending.entries()) {
         if (item.info.sessionID !== existing.info.sessionID) continue
         const ok = item.info.patterns.every(
-          (pattern) => evaluate(item.info.permission, pattern, approved).action === "allow",
+          (pattern) => evaluate(item.info.permission, pattern, existing.approved).action === "allow",
         )
         if (!ok) continue
-        pending.delete(id)
+        globalPending.delete(id)
         yield* bus.publish(Event.Replied, {
           sessionID: item.info.sessionID,
           requestID: item.info.id,
@@ -273,8 +292,7 @@ export const layer = Layer.effect(
     })
 
     const list = Effect.fn("Permission.list")(function* () {
-      const pending = (yield* InstanceState.get(state)).pending
-      return Array.from(pending.values(), (item) => item.info)
+      return Array.from(globalPending.values(), (item) => item.info)
     })
 
     return Service.of({ ask, reply, list })

@@ -1,4 +1,4 @@
-import { describe, test, expect, spyOn } from "bun:test"
+import { describe, test, expect } from "bun:test"
 import { Effect } from "effect"
 import { Session as SessionNs } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
@@ -86,12 +86,6 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
 
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
-
         const stream = messageSequence(
           systemMessage({ session_id: "s1" }),
           sdkAssistantMessage([textBlock("Hello world")], { session_id: "s1" }),
@@ -102,9 +96,8 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
-
-        updatePartSpy.mockRestore()
 
         expect(result.outcome).toBe("stop")
         expect(result.metadata).toBeDefined()
@@ -112,6 +105,7 @@ describe("claude-sdk session loop", () => {
         expect(result.metadata!.result).toBe("Hello world")
 
         // One TextPart created
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(1)
         expect(parts[0]!.type).toBe("text")
         if (parts[0]!.type === "text") {
@@ -131,12 +125,6 @@ describe("claude-sdk session loop", () => {
         const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
-
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -163,19 +151,22 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
-
-        updatePartSpy.mockRestore()
 
         expect(result.outcome).toBe("stop")
 
         // ToolPart + TextPart
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(2)
         expect(parts[0]!.type).toBe("tool")
         if (parts[0]!.type === "tool") {
           expect(parts[0]!.tool).toBe("read")
-          expect(parts[0]!.state.status).toBe("running")
-          expect(parts[0]!.state.input).toEqual({ filePath: "/tmp/test.ts" })
+          // DB reflects final state after full stream processing
+          expect(["running", "completed"]).toContain(parts[0]!.state.status)
+          if (parts[0]!.state.status !== "pending") {
+            expect(parts[0]!.state.input).toEqual({ filePath: "/tmp/test.ts" })
+          }
         }
         expect(parts[1]!.type).toBe("text")
       })
@@ -186,12 +177,6 @@ describe("claude-sdk session loop", () => {
         const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
-
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -205,11 +190,11 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
-        updatePartSpy.mockRestore()
-
         expect(result.outcome).toBe("stop")
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(2)
         expect(parts[0]!.type).toBe("reasoning")
         if (parts[0]!.type === "reasoning") {
@@ -228,8 +213,6 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => part) as any)
-
         const stream = messageSequence(
           systemMessage(),
           resultError("error_during_execution", ["Something broke"]),
@@ -239,9 +222,8 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
-
-        updatePartSpy.mockRestore()
 
         expect(result.outcome).toBe("error")
         expect(result.metadata).toBeDefined()
@@ -258,8 +240,6 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => part) as any)
-
         const stream = messageSequence(
           systemMessage(),
           resultError("error_max_turns", ["Exceeded max turns"]),
@@ -269,9 +249,8 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
-
-        updatePartSpy.mockRestore()
 
         expect(result.outcome).toBe("error")
         expect(result.metadata!.errors).toEqual(["Exceeded max turns"])
@@ -283,12 +262,6 @@ describe("claude-sdk session loop", () => {
         const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
-
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
 
         const controller = new AbortController()
 
@@ -307,13 +280,13 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: controller.signal,
+          cwd: "/tmp",
         })
-
-        updatePartSpy.mockRestore()
 
         // Should get error outcome since no result message was processed
         expect(result.outcome).toBe("error")
         // Only the first text part should have been created
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(1)
         expect(parts[0]!.type).toBe("text")
         if (parts[0]!.type === "text") {
@@ -330,12 +303,6 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
 
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
-
         const stream = messageSequence(
           systemMessage(),
           // First tool call
@@ -351,11 +318,11 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
-        updatePartSpy.mockRestore()
-
         expect(result.outcome).toBe("stop")
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(3)
         expect(parts[0]!.type).toBe("tool")
         if (parts[0]!.type === "tool") {
@@ -375,8 +342,6 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
 
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => part) as any)
-
         const stream = messageSequence(
           systemMessage(),
           sdkAssistantMessage([textBlock("hi")]),
@@ -390,9 +355,8 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
-
-        updatePartSpy.mockRestore()
 
         expect(result.outcome).toBe("stop")
         expect(assistantMsg.cost).toBe(0.05)
@@ -408,12 +372,6 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
 
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
-
         const stream = messageSequence(
           systemMessage(),
           // Inject fake message types that should be ignored
@@ -427,11 +385,11 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
-        updatePartSpy.mockRestore()
-
         expect(result.outcome).toBe("stop")
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(1)
         expect(parts[0]!.type).toBe("text")
       })
@@ -442,12 +400,6 @@ describe("claude-sdk session loop", () => {
         const session = await svc.create({})
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
-
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
 
         const stream = messageSequence(
           systemMessage(),
@@ -463,11 +415,11 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
-        updatePartSpy.mockRestore()
-
         expect(result.outcome).toBe("stop")
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(3)
         expect(parts[0]!.type).toBe("reasoning")
         expect(parts[1]!.type).toBe("text")
@@ -481,12 +433,6 @@ describe("claude-sdk session loop", () => {
         const assistantMsg = makeAssistantMessage(session.id)
         await svc.updateMessage(assistantMsg)
 
-        const parts: MessageV2.Part[] = []
-        const updatePartSpy = spyOn(svc, "updatePart").mockImplementation((async (part: any) => {
-          parts.push(part)
-          return part
-        }) as any)
-
         const stream = messageSequence(
           systemMessage(),
           sdkAssistantMessage([textBlock("a"), textBlock("b"), textBlock("c")]),
@@ -497,10 +443,10 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
-        updatePartSpy.mockRestore()
-
+        const parts = await MessageV2.parts(assistantMsg.id)
         expect(parts).toHaveLength(3)
         const ids = new Set(parts.map((p) => p.id))
         expect(ids.size).toBe(3)
@@ -539,6 +485,7 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
         expect(result.outcome).toBe("stop")
@@ -583,6 +530,7 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
         // Read back the Agent ToolPart from DB
@@ -626,6 +574,7 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
         // Agent ToolPart should have title from task_started
@@ -665,6 +614,7 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
         // Agent ToolPart should be completed with the summary as output
@@ -711,6 +661,7 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: new AbortController().signal,
+          cwd: "/tmp",
         })
 
         // Two child sessions should have been created
@@ -754,6 +705,7 @@ describe("claude-sdk session loop", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: controller.signal,
+          cwd: "/tmp",
         })
 
         expect(result.outcome).toBe("error")

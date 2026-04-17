@@ -116,14 +116,18 @@ describe("useEvent", () => {
     }
   })
 
-  test("ignores non-matching directory events without an active workspace", async () => {
+  test("delivers events from other directories when no workspace is active", async () => {
+    // Dispatch accepts events from ALL directories when no workspace is
+    // active so agent sessions running in worktree directories are visible
+    // to the TUI.
     const { app, emit, seen } = await mount()
 
     try {
       emit(event(vcs("other"), { directory: "/tmp/other" }))
-      await Bun.sleep(30)
 
-      expect(seen).toHaveLength(0)
+      await wait(() => seen.length === 1)
+
+      expect(seen).toEqual([vcs("other")])
     } finally {
       app.renderer.destroy()
     }

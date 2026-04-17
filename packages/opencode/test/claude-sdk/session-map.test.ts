@@ -27,7 +27,7 @@ afterEach(async () => {
 
 describe("claude-sdk session map", () => {
   test("setSdkSessionID persists and getSdkSessionID retrieves", async () => {
-    await setSdkSessionID("session-abc", "uuid-123")
+    await setSdkSessionID("session-abc", "uuid-123", "/tmp")
     const result = await getSdkSessionID("session-abc")
     expect(result).toBe("uuid-123")
   })
@@ -39,7 +39,7 @@ describe("claude-sdk session map", () => {
 
   test("removeSdkSessionID deletes the mapping", async () => {
     const key = "session-remove-" + Date.now()
-    await setSdkSessionID(key, "uuid-456")
+    await setSdkSessionID(key, "uuid-456", "/tmp")
     expect(await getSdkSessionID(key)).toBe("uuid-456")
 
     await removeSdkSessionID(key)
@@ -49,8 +49,8 @@ describe("claude-sdk session map", () => {
   test("multiple sessions can coexist", async () => {
     const a = "session-a-" + Date.now()
     const b = "session-b-" + Date.now()
-    await setSdkSessionID(a, "uuid-a")
-    await setSdkSessionID(b, "uuid-b")
+    await setSdkSessionID(a, "uuid-a", "/tmp")
+    await setSdkSessionID(b, "uuid-b", "/tmp")
 
     expect(await getSdkSessionID(a)).toBe("uuid-a")
     expect(await getSdkSessionID(b)).toBe("uuid-b")
@@ -58,17 +58,17 @@ describe("claude-sdk session map", () => {
 
   test("setSdkSessionID overwrites existing mapping", async () => {
     const key = "session-overwrite-" + Date.now()
-    await setSdkSessionID(key, "old-uuid")
-    await setSdkSessionID(key, "new-uuid")
+    await setSdkSessionID(key, "old-uuid", "/tmp")
+    await setSdkSessionID(key, "new-uuid", "/tmp")
 
     expect(await getSdkSessionID(key)).toBe("new-uuid")
   })
 
   test("persists to disk", async () => {
     const key = "session-persist-" + Date.now()
-    await setSdkSessionID(key, "uuid-disk")
+    await setSdkSessionID(key, "uuid-disk", "/tmp")
 
     const data = await Filesystem.readJson(filePath())
-    expect((data as Record<string, string>)[key]).toBe("uuid-disk")
+    expect((data as Record<string, any>)[key]).toEqual({ uuid: "uuid-disk", cwd: "/tmp" })
   })
 })

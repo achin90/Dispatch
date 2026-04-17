@@ -46,6 +46,7 @@ These features exist only in Dispatch and must survive every upstream merge:
 - **Activity display** — `formatActivity()` in `processor.ts`, `activity` field on `SessionStatus`
 - **Cross-directory event bridge** — `bus/global.ts` and `context/event.ts` (must accept events from all directories, not just the current project)
 - **Permission merging** — `permission/index.ts` (`merge()`, global pending map)
+- **Question global pending map** — `question/index.ts` (`globalPending` map, same pattern as permissions)
 - **Queued message handling** — `prompt/index.tsx` and `session/prompt.ts` (cancel + restore)
 - **Dashboard keybinds** — Leader key guard on escape in `permission.tsx`, `question.tsx`
 - **Yolo agent** — `agent/agent.ts` (auto-approve permissions)
@@ -96,6 +97,43 @@ Dispatch guards escape/app_exit handling in `permission.tsx` and `question.tsx` 
 Dispatch saves the prompt draft when permission dialogs appear (Prompt unmounts) and restores it when they dismiss (Prompt remounts). The logic uses `shouldSave()`, `resolve()`, and `shouldBlock()` from `draft.ts`. Upstream has no draft persistence across permission dialogs. The auto-submit prevention (`shouldBlock`) is critical — without it, the Enter key that navigated into the session auto-submits the restored draft.
 
 **Symptom:** Typed text disappears when a permission dialog appears. Or, restored draft auto-submits immediately without user confirmation.
+
+### Permission pending map scoped to InstanceState instead of global
+Upstream stores the pending permission map inside `InstanceState`, which is keyed by Instance directory. Dispatch needs a **module-level** `globalPending` map so the TUI (running in the main project directory) can reply to permission requests raised by agent sessions in worktree directories. Without this, pressing y/n on a permission dialog from the dashboard does nothing — the TUI's InstanceState has an empty `pending` map because the request lives in a different directory's InstanceState.
+
+**Design:**
+- `globalPending` (module-level `Map<PermissionID, PendingEntry>`) holds ALL pending entries across all directories.
+- Each `PendingEntry` captures the `approved` ruleset from the agent's InstanceState at `ask()` time, so `reply()` doesn't need to resolve its own InstanceState.
+- Each instance tracks which entries it owns via `ownedPending: Set<PermissionID>` in the State interface, so the finalizer on instance dispose only rejects its own entries.
+- `list()` reads from `globalPending` (returns all entries globally).
+- `reply()` reads from `globalPending` directly — no InstanceState.get needed.
+
+**Symptom:** Pressing y/n to approve/deny permissions from the dashboard (home screen) does nothing. The permission dialog stays visible indefinitely.
+
+**Quick verification after merge:**
+```bash
+# globalPending should exist at module level, not inside InstanceState init
+grep -n "globalPending" packages/opencode/src/permission/permission.ts
+# Should see: const globalPending = new Map<...>(), and uses in ask/reply/list
+```
+
+### Question pending map scoped to InstanceState instead of global
+The same issue as permissions applies to the Question service (`question/index.ts`). Upstream stores the pending question map inside `InstanceState`, which is keyed by directory. The `ask()` call runs in the agent's directory context (via `Instance.bind` in `claude-sdk-permissions.ts`), but `reply()` runs in the TUI's directory context (via the HTTP middleware). These resolve to different `ScopedCache` entries, so `reply()` can never find the pending request.
+
+**Design** (mirrors the Permission service pattern):
+- `globalPending` (module-level `Map<QuestionID, PendingEntry>`) holds ALL pending entries across all directories.
+- Each instance tracks which entries it owns via `ownedPending: Set<QuestionID>` in the State interface, so the finalizer on instance dispose only rejects its own entries.
+- `reply()`, `reject()`, and `list()` read from `globalPending` directly — no `InstanceState.get` needed.
+- `ask()` stores in `globalPending` and records ownership in `ownedPending`.
+
+**Symptom:** The multiquestion dialog appears but pressing Enter to submit or Escape to dismiss does nothing. The HTTP reply returns 200 but the Question service logs `"reply for unknown request"`. The dialog stays visible indefinitely.
+
+**Quick verification after merge:**
+```bash
+# globalPending should exist at module level, not inside InstanceState init
+grep -n "globalPending" packages/opencode/src/question/index.ts
+# Should see: const globalPending = new Map<...>(), and uses in ask/reply/reject/list
+```
 
 ### Effect framework migrations
 Upstream is actively migrating to Effect's `Context.Service` pattern (from the older `ServiceMap.Service`). When merging, watch for:

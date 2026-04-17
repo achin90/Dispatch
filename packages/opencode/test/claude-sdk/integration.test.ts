@@ -85,6 +85,7 @@ describe("claude-sdk integration", () => {
           assistantMessage: assistantMsg,
           sessionID: session.id,
           abort: controller.signal,
+          cwd: "/tmp",
         })
 
         // Should complete successfully

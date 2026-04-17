@@ -131,6 +131,8 @@ export interface ClaudeSdkProcessorInput {
   assistantMessage: MessageV2.Assistant
   sessionID: SessionID
   abort: AbortSignal
+  /** The cwd that was passed to the SDK query — stored alongside the session UUID. */
+  cwd: string
   compaction?: CompactionRef
   setStatus?: (sessionID: SessionID, status: { type: string; activity?: string }) => void
 }
@@ -207,7 +209,7 @@ export async function processClaudeSdkStream(
           const subtype = sysMsg.subtype as string
 
           if (subtype === "init") {
-            await setSdkSessionID(sessionID, sysMsg.session_id)
+            await setSdkSessionID(sessionID, sysMsg.session_id, input.cwd)
           } else if (subtype === "task_started") {
             await handleTaskStarted(msg as unknown as SDKTaskStartedMessage, sessionID, assistantMessage, subagentMap)
           } else if (subtype === "task_progress") {

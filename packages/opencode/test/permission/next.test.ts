@@ -896,7 +896,7 @@ it.live("reply - publishes replied event", () =>
   ),
 )
 
-it.live("permission requests stay isolated by directory", () =>
+it.live("permission requests from different directories are all visible globally", () =>
   Effect.gen(function* () {
     const one = yield* tmpdirScoped({ git: true })
     const two = yield* tmpdirScoped({ git: true })
@@ -923,16 +923,16 @@ it.live("permission requests stay isolated by directory", () =>
       ruleset: [],
     }).pipe(runTwo, Effect.forkScoped)
 
-    const onePending = yield* waitForPending(1).pipe(runOne)
-    const twoPending = yield* waitForPending(1).pipe(runTwo)
+    // globalPending: list() returns ALL pending entries regardless of directory
+    const allPending = yield* waitForPending(2).pipe(runOne)
+    expect(allPending).toHaveLength(2)
+    const ids = allPending.map((item) => item.id)
+    expect(ids).toContain(PermissionID.make("per_dir_a"))
+    expect(ids).toContain(PermissionID.make("per_dir_b"))
 
-    expect(onePending).toHaveLength(1)
-    expect(twoPending).toHaveLength(1)
-    expect(onePending[0].id).toBe(PermissionID.make("per_dir_a"))
-    expect(twoPending[0].id).toBe(PermissionID.make("per_dir_b"))
-
-    yield* reply({ requestID: onePending[0].id, reply: "reject" }).pipe(runOne)
-    yield* reply({ requestID: twoPending[0].id, reply: "reject" }).pipe(runTwo)
+    // TUI can reply to any directory's permission from any context
+    yield* reply({ requestID: PermissionID.make("per_dir_a"), reply: "reject" }).pipe(runTwo)
+    yield* reply({ requestID: PermissionID.make("per_dir_b"), reply: "reject" }).pipe(runOne)
 
     yield* Fiber.await(a)
     yield* Fiber.await(b)
