@@ -500,6 +500,7 @@ When constructing the summary, try to stick to this template:
           if (!replay) {
             const info = yield* provider.getProvider(userMessage.model.providerID)
             if (
+              info &&
               (yield* plugin.trigger(
                 "experimental.compaction.autocontinue",
                 {
