@@ -280,10 +280,13 @@ export async function processClaudeSdkStream(
  * assistant message or result, since the SDK wouldn't proceed if tools were
  * still running.
  */
-async function finalizeRunningTools(messageID: MessageID): Promise<void> {
+async function finalizeRunningTools(messageID: MessageID, opts?: { skipAgentTools?: boolean }): Promise<void> {
   const parts = await MessageV2.parts(messageID)
   for (const part of parts) {
     if (part.type !== "tool" || part.state.status !== "running") continue
+    // Agent/Task tools have their own lifecycle managed by handleTaskNotification.
+    // Skip them during mid-stream finalization — they may still be running subagents.
+    if (opts?.skipAgentTools && (part.tool === "agent" || part.tool === "task")) continue
     const runState = part.state as MessageV2.ToolStateRunning
     // Merge any pending metadata stashed by canUseTool (e.g. diffs for
     // edit/write tools). The pending map handles the race where canUseTool
@@ -345,8 +348,9 @@ async function processAssistantMessage(
   setStatus?: ClaudeSdkProcessorInput["setStatus"],
 ): Promise<void> {
   if (msg.parent_tool_use_id === null) {
-    // Top-level message — finalize running tools then persist parts
-    await finalizeRunningTools(assistantMessage.id)
+    // Top-level message — finalize running tools then persist parts.
+    // Skip Agent/Task tools since they may still be running subagents.
+    await finalizeRunningTools(assistantMessage.id, { skipAgentTools: true })
     const parts = assistantMessageToParts(msg, sessionID, assistantMessage.id)
     for (const part of parts) {
       await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart(part)))
