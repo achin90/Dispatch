@@ -59,7 +59,7 @@ export namespace Summarize {
   }
 
   export async function aisdk(input: string, providerID: ProviderID): Promise<string | undefined> {
-    const small = await AppRuntime.runPromise(Provider.Service.use((svc) => svc.getSmallModel(providerID)))
+    const small = await AppRuntime.runPromise(Provider.Service.use((svc) => svc.getSmallModel(providerID))).catch(() => undefined)
     if (!small) return undefined
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15000)

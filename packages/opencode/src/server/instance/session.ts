@@ -935,7 +935,11 @@ export const SessionRoutes = lazy(() =>
             log.info("session.prompt: complete", { sessionID, messageID: msg.info.id })
             void stream.write(JSON.stringify(msg))
           } catch (err) {
-            log.error("session.prompt: error", { sessionID, error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined })
+            log.error("session.prompt: error", {
+              sessionID,
+              error: err instanceof Error ? err.message : String(err),
+              stack: err instanceof Error ? err.stack : undefined,
+            })
             throw err
           }
         })
@@ -969,7 +973,11 @@ export const SessionRoutes = lazy(() =>
         void withSessionDirectory(sessionID, () =>
           AppRuntime.runPromise(SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID }))),
         ).catch((err) => {
-          log.error("prompt_async failed", { sessionID, error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined })
+          log.error("prompt_async failed", {
+            sessionID,
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          })
           void Bus.publish(Session.Event.Error, {
             sessionID,
             error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
@@ -1153,15 +1161,18 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
-        const msgs = await AppRuntime.runPromise(Session.Service.use((svc) => svc.messages({ sessionID }))).catch(() => [] as MessageV2.WithParts[])
+        const msgs = await AppRuntime.runPromise(Session.Service.use((svc) => svc.messages({ sessionID }))).catch(
+          () => [] as MessageV2.WithParts[],
+        )
         const last = msgs.findLast((m) => m.info.role === "assistant")
         if (!last) return c.json({ text: "", summary: false })
 
-        // Use the last text part -- it's the final output, not intermediate text
-        const text = (
-          last.parts.filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored).at(-1)
-            ?.text ?? ""
-        ).trim()
+        // Collect all non-synthetic, non-ignored text parts (aisdk streams so text is split across parts)
+        const text = last.parts
+          .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic && !p.ignored)
+          .map((p) => p.text)
+          .join("")
+          .trim()
         if (!text) return c.json({ text: "", summary: false })
 
         const lines = text.split("\n").filter((l) => l.trim())
@@ -1170,7 +1181,10 @@ export const SessionRoutes = lazy(() =>
         const truncated = lines.slice(0, 3).join("\n").substring(0, 300)
         const p = Summarize.prompt(text)
         const pid = (last.info as MessageV2.Assistant).providerID
-        const result = pid === "anthropic" ? await Summarize.anthropic(p) : await Summarize.aisdk(p, pid)
+        const result =
+          pid === "anthropic"
+            ? await Summarize.anthropic(p)
+            : await withSessionDirectory(sessionID, () => Summarize.aisdk(p, pid))
 
         return result ? c.json({ text: result, summary: true }) : c.json({ text: truncated, summary: false })
       },

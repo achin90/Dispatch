@@ -1723,7 +1723,7 @@ const layer: Layer.Layer<
         "gpt-5-nano",
       ]
       if (providerID.startsWith("opencode")) {
-        priority = ["gpt-5-nano"]
+        priority = ["big-pickle", "nemotron-3-super-free", "gpt-5-nano"]
       }
       if (providerID.startsWith("github-copilot")) {
         priority = ["gpt-5-mini", "claude-haiku-4.5", ...priority]
