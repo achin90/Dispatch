@@ -20,6 +20,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from
 // Derive MessageParam from SDKUserMessage to avoid importing from
 // @anthropic-ai/sdk which is only a transitive dep.
 type MessageParam = SDKUserMessage["message"]
+import { Effect } from "effect"
 import { Auth } from "@/auth"
 import { Log } from "@/util"
 import { Bus } from "@/bus"
@@ -66,7 +67,10 @@ let subscribed = false
 
 export function invalidateMcpCache() {
   dirty = true
-  cached = undefined
+  // Do NOT clear cached here. resolve() uses the previous cached value as a
+  // fallback for servers whose listTools() call fails (e.g. a server that is
+  // in the reconnect backoff window). Clearing it would cause those servers to
+  // disappear from the agent's tool set until the reconnect completes.
 }
 
 async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
@@ -78,8 +82,6 @@ async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
     log.info("resolveMcpServers: no connected MCP clients")
     return undefined
   }
-
-  log.info("resolveMcpServers: building SDK servers from connected clients", { names })
 
   const servers: Record<string, McpServerConfig> = {}
   for (const entry of await Promise.all(
@@ -93,7 +95,15 @@ async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
         return undefined
       })
       latency.info("[3k.4] listTools done", { ts: Date.now(), name, tools: listed?.tools?.length ?? 0 })
-      if (!listed || !listed.tools.length) return undefined
+      if (!listed) {
+        // listTools failed — the client is likely in the reconnect backoff window.
+        // Carry over the stale proxy so the server's tools remain visible to the
+        // agent (via ToolSearch) until the reconnection succeeds and produces a
+        // fresh proxy.
+        const fallback = cached?.[name]
+        return fallback !== undefined ? ([name, fallback] as const) : undefined
+      }
+      if (!listed.tools.length) return undefined
 
       // Use createSdkMcpServer to get a correctly-typed McpServerConfig.
       // Register a dummy tool so the server has tool capability, then
@@ -108,11 +118,24 @@ async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
       }))
 
       config.instance.server.setRequestHandler(CallToolRequestSchema as any, async (req: any) => {
-        const result = await client.callTool({
+        // Fetch status and clients in a single Effect run. Checking status
+        // before calling prevents raw transport errors when the server is in
+        // the reconnect backoff window — s.clients[name] is never deleted on
+        // disconnect (only replaced on reconnect), so without the status check
+        // we would call a stale closed client and get an opaque transport error.
+        const currentClient = await AppRuntime.runPromise(
+          MCP.Service.use((svc) =>
+            Effect.gen(function* () {
+              if ((yield* svc.status())[name]?.status !== "connected") return undefined
+              return (yield* svc.clients())[name]
+            }),
+          ),
+        )
+        if (!currentClient) throw new Error(`MCP server "${name}" is not connected`)
+        return (await currentClient.callTool({
           name: req.params.name,
           arguments: req.params.arguments ?? {},
-        })
-        return result as ServerResult
+        })) as ServerResult
       })
 
       log.info("resolveMcpServers: created proxy server", { name, tools: listed.tools.length })
