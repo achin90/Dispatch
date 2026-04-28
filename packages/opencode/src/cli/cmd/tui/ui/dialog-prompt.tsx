@@ -35,6 +35,8 @@ export function DialogPrompt(props: DialogPromptProps) {
       return
     }
     if (evt.name === "return") {
+      evt.preventDefault()
+      evt.stopPropagation()
       props.onConfirm?.(textarea.plainText)
     }
   })

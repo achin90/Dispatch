@@ -7,7 +7,7 @@ import { useSDK } from "../context/sdk"
 import { useKeybind } from "@tui/context/keybind"
 import { Spinner } from "@tui/component/spinner"
 import { useTuiConfig } from "../context/tui-config"
-import { Global } from "@/global"
+import { Global } from "@opencode-ai/core/global"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import path from "path"
 

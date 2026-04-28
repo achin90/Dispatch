@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
-import { Session as SessionNs } from "../../src/session"
-import { withSessionDirectory } from "../../src/server/instance/session"
-import { Log } from "../../src/util"
+import { Session as SessionNs } from "../../src/session/session"
+import { withSessionInstance } from "../../src/server/routes/instance/session"
+import * as Log from "@opencode-ai/core/util/log"
 import { tmpdir } from "../fixture/fixture"
 
 Log.init({ print: false })
@@ -24,15 +24,15 @@ afterEach(async () => {
 })
 
 // ---------------------------------------------------------------------------
-// withSessionDirectory — Dispatch regression guard
+// withSessionInstance — Dispatch regression guard
 //
 // Upstream calls SessionPrompt methods directly without directory context.
-// Dispatch wraps them with withSessionDirectory so agent sessions running in
+// Dispatch wraps them with withSessionInstance so agent sessions running in
 // worktree directories resolve paths correctly. These tests ensure the
 // wrapper survives upstream merges.
 // ---------------------------------------------------------------------------
 
-describe("withSessionDirectory", () => {
+describe("withSessionInstance", () => {
   test("runs callback in session directory context", async () => {
     await using dirA = await tmpdir({ git: true })
     await using dirB = await tmpdir({ git: true })
@@ -43,19 +43,21 @@ describe("withSessionDirectory", () => {
       fn: () => svc.create({ title: "agent-session" }),
     })
 
-    // From dir B, use withSessionDirectory — it should provide dir A
+    // From dir B, use withSessionInstance — it should provide dir A
     const resolved = await Instance.provide({
       directory: dirB.path,
       fn: () =>
-        withSessionDirectory(session.id, async () => {
-          return Instance.directory
-        }),
+        run(
+          withSessionInstance(session.id, async () => {
+            return Instance.directory
+          }),
+        ),
     })
 
     expect(resolved).toBe(dirA.path)
   })
 
-  test("abort route returns success through withSessionDirectory", async () => {
+  test("abort route returns success through withSessionInstance", async () => {
     await using dirA = await tmpdir({ git: true })
     await using dirB = await tmpdir({ git: true })
 
@@ -65,8 +67,8 @@ describe("withSessionDirectory", () => {
     })
 
     // Start server in dir B and call abort on the session from dir A.
-    // The route uses withSessionDirectory, which resolves to dirA.
-    // If withSessionDirectory is broken, the route would fail.
+    // The route uses withSessionInstance, which resolves to dirA.
+    // If withSessionInstance is broken, the route would fail.
     await Instance.provide({
       directory: dirB.path,
       fn: async () => {

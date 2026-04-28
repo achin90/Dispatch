@@ -23,7 +23,7 @@ import { withTimeout } from "@/util/timeout"
 type MessageParam = SDKUserMessage["message"]
 import { Effect } from "effect"
 import { Auth } from "@/auth"
-import { Log } from "@/util"
+import * as Log from "@opencode-ai/core/util/log"
 import { Bus } from "@/bus"
 import { MCP } from "@/mcp"
 import { AppRuntime } from "@/effect/app-runtime"

@@ -21,8 +21,9 @@ import { DialogDirectorySelect } from "@tui/component/dialog-directory-select"
 import { DialogGitRepoSelect } from "@tui/component/dialog-git-repo-select"
 import { Prompt } from "@tui/component/prompt"
 import { Installation } from "@/installation"
-import { Global } from "@/global"
-import { Locale } from "@/util"
+import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { Global } from "@opencode-ai/core/global"
+import { Locale } from "@/util/locale"
 import { Spinner } from "@tui/component/spinner"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
@@ -31,9 +32,9 @@ import { useExit } from "../context/exit"
 import { Toast, useToast } from "@tui/ui/toast"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
-import { Clipboard } from "@tui/util"
+import * as Clipboard from "@tui/util/clipboard"
 import { PtyAttach } from "../util/pty"
-import { Log } from "@/util"
+import * as Log from "@opencode-ai/core/util/log"
 
 const log = Log.create({ service: "home" })
 
@@ -1067,7 +1068,7 @@ export function Home() {
           </box>
           <box flexGrow={1} />
           <box flexShrink={0}>
-            <text fg={theme.textMuted}>{Installation.VERSION}</text>
+            <text fg={theme.textMuted}>{InstallationVersion}</text>
           </box>
         </box>
       </box>
