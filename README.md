@@ -10,9 +10,9 @@ A multi-agent dashboard built on top of [OpenCode](https://github.com/anomalyco/
 
 ## What is Dispatch?
 
-<img width="1924" height="1302" alt="image" src="https://github.com/user-attachments/assets/34c07a3c-ae83-4fbd-9281-f4a950c8ed4d" />
+<img width="700" alt="image" src="https://github.com/user-attachments/assets/34c07a3c-ae83-4fbd-9281-f4a950c8ed4d" />
 
-<video src="https://github.com/user-attachments/assets/4a1380fb-147b-443a-81d8-b15b21e6afd0" width="100%" controls />
+<video src="https://github.com/user-attachments/assets/4a1380fb-147b-443a-81d8-b15b21e6afd0" width="700" controls></video>
 
 Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard** and adds the **Claude Agent SDK** as a backend for routing Anthropic API requests, authenticating with your existing Claude Code subscription. The Vercel AI SDK is retained for other providers.
 
