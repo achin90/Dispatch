@@ -22,16 +22,57 @@ Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard**
 
 - Table view showing all active agents with columns: #, Name, Status, Activity
 - Agent registry backed by a KV store, decoupled from sessions
-- Keyboard-driven workflow:
-  - `a` -- create a new agent (spawns a new session)
-  - `j`/`k` or arrow keys -- navigate rows
-  - `Enter` -- open an agent's session
-  - `d` -- remove agent from dashboard
-  - `x` -- delete worktree and all agents in that directory
 - Live status per agent: Working (with spinner), Retrying, Waiting for user, Approve (y/n)
 - Inline permission approval: `y` to allow, `n` to reject pending tool-use requests directly from the dashboard
 - Detail row showing tool request context (bash command, diff preview, glob patterns)
 - Activity summary showing `+additions -deletions files` from the session
+
+#### Dashboard Keybindings
+
+**Navigation**
+
+| Key | Action |
+| --- | ------ |
+| `j` / `↓` | Move selection down |
+| `k` / `↑` | Move selection up |
+| `1`–`9` | Jump to agent #1–#9 |
+| `0` | Jump to agent #10 |
+| `!@#$%^&*()` | Jump to agents #11–#20 |
+
+**Agent Management**
+
+| Key | Action |
+| --- | ------ |
+| `a` | Create a new agent (prompts for directory and name) |
+| `w` | Create a new worktree agent (git worktree + session) |
+| `d` | Remove selected agent from the dashboard |
+| `x` | Delete the worktree and all agents in that directory |
+
+**Session Actions**
+
+| Key | Action |
+| --- | ------ |
+| `Enter` | Open the selected agent's session |
+| `i` | Send a message to the agent without leaving the dashboard |
+| `D` | Open diff view for the agent's directory |
+| `t` | Attach a terminal to the agent's directory |
+| `c` | Copy the agent's directory path to the clipboard |
+
+**Permission Approval**
+
+| Key | Action |
+| --- | ------ |
+| `y` | Approve the pending tool-use request |
+| `n` | Reject the pending tool-use request |
+
+**GitHub / PR** _(visible only when GitHub is authenticated)_
+
+| Key | Action |
+| --- | ------ |
+| `P` | Create a pull request for the selected worktree branch |
+| `o` | Copy the PR URL to the clipboard |
+| `M` | Merge the open PR for the selected worktree branch |
+| `r` | Refresh diff stats and PR statuses |
 
 **Claude Agent SDK backend**
 
