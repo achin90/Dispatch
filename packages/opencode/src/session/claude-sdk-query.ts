@@ -16,6 +16,7 @@ import {
   type McpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk"
 import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from "@modelcontextprotocol/sdk/types.js"
+import { withTimeout } from "@/util/timeout"
 
 // Derive MessageParam from SDKUserMessage to avoid importing from
 // @anthropic-ai/sdk which is only a transitive dep.
@@ -60,97 +61,82 @@ export interface ClaudeSdkQueryInput {
  * Results are cached globally and invalidated when MCP tools change
  * or servers connect/disconnect.
  */
-let cached: Record<string, McpServerConfig> | undefined
+// Cache tool DEFINITIONS (not proxy server objects). Each resolveMcpServers()
+// call creates fresh proxy instances from the cached defs because MCP is
+// point-to-point — sharing a proxy between SDK sessions causes the second
+// session to disconnect the first.
+type ToolDefs = Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }>
+let cachedDefs: Record<string, ToolDefs> | undefined
 let dirty = true
-let flight: Promise<Record<string, McpServerConfig> | undefined> | undefined
+let flight: Promise<Record<string, ToolDefs> | undefined> | undefined
 let subscribed = false
 
 export function invalidateMcpCache() {
   dirty = true
-  // Do NOT clear cached here. resolve() uses the previous cached value as a
+  // Do NOT clear cachedDefs here. resolveDefs() uses the previous value as a
   // fallback for servers whose listTools() call fails (e.g. a server that is
   // in the reconnect backoff window). Clearing it would cause those servers to
   // disappear from the agent's tool set until the reconnect completes.
 }
 
-async function resolve(): Promise<Record<string, McpServerConfig> | undefined> {
-  const latency = Log.create({ service: "submit.latency" })
-  const connected = await AppRuntime.runPromise(MCP.Service.use((svc) => svc.clients()))
-  latency.info("[3k.2] MCP.clients() done", { ts: Date.now(), count: Object.keys(connected).length })
-  const names = Object.keys(connected)
-  if (!names.length) {
-    log.info("resolveMcpServers: no connected MCP clients")
-    return undefined
-  }
+function createProxy(name: string, tools: ToolDefs): McpServerConfig {
+  const config = createSdkMcpServer({
+    name,
+    tools: [{ name: "__init__", description: "", inputSchema: {}, handler: async () => ({ content: [] }) }],
+  })
 
-  const servers: Record<string, McpServerConfig> = {}
+  config.instance.server.setRequestHandler(ListToolsRequestSchema as any, async () => ({
+    tools,
+  }))
+
+  config.instance.server.setRequestHandler(CallToolRequestSchema as any, async (req: any) => {
+    const currentClient = await AppRuntime.runPromise(
+      MCP.Service.use((svc) =>
+        Effect.gen(function* () {
+          if ((yield* svc.status())[name]?.status !== "connected") return undefined
+          return (yield* svc.clients())[name]
+        }),
+      ),
+    )
+    if (!currentClient) throw new Error(`MCP server "${name}" is not connected`)
+    return (await currentClient.callTool({
+      name: req.params.name,
+      arguments: req.params.arguments ?? {},
+    })) as ServerResult
+  })
+
+  return config
+}
+
+async function resolveDefs(): Promise<Record<string, ToolDefs> | undefined> {
+  const connected = await AppRuntime.runPromise(MCP.Service.use((svc) => svc.clients()))
+  if (!Object.keys(connected).length) return undefined
+
+  const defs: Record<string, ToolDefs> = {}
   for (const entry of await Promise.all(
     Object.entries(connected).map(async ([name, client]) => {
-      latency.info("[3k.3] listTools start", { ts: Date.now(), name })
-      const listed = await client.listTools().catch((err) => {
+      const listed = await withTimeout(client.listTools(), 30_000).catch((err) => {
         log.error("resolveMcpServers: listTools failed", {
           name,
           error: err instanceof Error ? err.message : String(err),
         })
         return undefined
       })
-      latency.info("[3k.4] listTools done", { ts: Date.now(), name, tools: listed?.tools?.length ?? 0 })
       if (!listed) {
-        // listTools failed — the client is likely in the reconnect backoff window.
-        // Carry over the stale proxy so the server's tools remain visible to the
-        // agent (via ToolSearch) until the reconnection succeeds and produces a
-        // fresh proxy.
-        const fallback = cached?.[name]
+        const fallback = cachedDefs?.[name]
         return fallback !== undefined ? ([name, fallback] as const) : undefined
       }
       if (!listed.tools.length) return undefined
-
-      // Use createSdkMcpServer to get a correctly-typed McpServerConfig.
-      // Register a dummy tool so the server has tool capability, then
-      // override the request handlers to proxy to the real MCP client.
-      const config = createSdkMcpServer({
-        name,
-        tools: [{ name: "__init__", description: "", inputSchema: {}, handler: async () => ({ content: [] }) }],
-      })
-
-      config.instance.server.setRequestHandler(ListToolsRequestSchema as any, async () => ({
-        tools: listed.tools,
-      }))
-
-      config.instance.server.setRequestHandler(CallToolRequestSchema as any, async (req: any) => {
-        // Fetch status and clients in a single Effect run. Checking status
-        // before calling prevents raw transport errors when the server is in
-        // the reconnect backoff window — s.clients[name] is never deleted on
-        // disconnect (only replaced on reconnect), so without the status check
-        // we would call a stale closed client and get an opaque transport error.
-        const currentClient = await AppRuntime.runPromise(
-          MCP.Service.use((svc) =>
-            Effect.gen(function* () {
-              if ((yield* svc.status())[name]?.status !== "connected") return undefined
-              return (yield* svc.clients())[name]
-            }),
-          ),
-        )
-        if (!currentClient) throw new Error(`MCP server "${name}" is not connected`)
-        return (await currentClient.callTool({
-          name: req.params.name,
-          arguments: req.params.arguments ?? {},
-        })) as ServerResult
-      })
-
-      log.info("resolveMcpServers: created proxy server", { name, tools: listed.tools.length })
-      return [name, config] as const
+      return [name, listed.tools as ToolDefs] as const
     }),
   )) {
-    if (entry) servers[entry[0]] = entry[1]
+    if (entry) defs[entry[0]] = entry[1]
   }
 
-  return Object.keys(servers).length ? servers : undefined
+  return Object.keys(defs).length ? defs : undefined
 }
 
 export async function resolveMcpServers(): Promise<Record<string, McpServerConfig> | undefined> {
-  const latency = Log.create({ service: "submit.latency" })
-  latency.info("[3k.1] resolveMcpServers entered", { ts: Date.now(), cached: !dirty })
   if (!subscribed) {
     subscribed = true
     Bus.subscribe(MCP.ToolsChanged, () => {
@@ -158,21 +144,30 @@ export async function resolveMcpServers(): Promise<Record<string, McpServerConfi
       invalidateMcpCache()
     })
   }
-  if (!dirty) return cached
 
-  // Single-flight: concurrent callers share one in-flight resolution.
-  // After it completes, re-check dirty in case ToolsChanged fired mid-flight.
-  if (!flight) {
-    flight = resolve().finally(() => {
-      flight = undefined
-    })
+  if (dirty) {
+    if (!flight) {
+      flight = resolveDefs().finally(() => {
+        flight = undefined
+      })
+    }
+    const result = await flight
+    // If ToolsChanged fired mid-flight, stay dirty so the next call re-resolves.
+    if (dirty) {
+      cachedDefs = result
+      dirty = false
+    }
   }
-  const result = await flight
-  if (!dirty) return cached
-  cached = result
-  dirty = false
-  latency.info("[3k.5] resolveMcpServers done", { ts: Date.now(), count: cached ? Object.keys(cached).length : 0 })
-  return cached
+
+  if (!cachedDefs) return undefined
+
+  // Always create fresh proxy instances — MCP is point-to-point, so sharing
+  // a proxy between SDK sessions causes the second to disconnect the first.
+  const servers: Record<string, McpServerConfig> = {}
+  for (const [name, tools] of Object.entries(cachedDefs)) {
+    servers[name] = createProxy(name, tools)
+  }
+  return servers
 }
 
 /**

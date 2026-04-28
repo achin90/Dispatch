@@ -78,6 +78,7 @@ import type {
   McpAuthStartResponses,
   McpConnectResponses,
   McpDisconnectResponses,
+  McpHealthResponses,
   McpLocalConfig,
   McpRemoteConfig,
   McpStatusResponses,
@@ -3873,6 +3874,36 @@ export class Mcp extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Health check MCP connections
+   *
+   * Ping all connected MCP servers and reconnect any that are unresponsive. Useful after process suspension.
+   */
+  public health<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<McpHealthResponses, unknown, ThrowOnError>({
+      url: "/mcp/health",
+      ...options,
+      ...params,
     })
   }
 

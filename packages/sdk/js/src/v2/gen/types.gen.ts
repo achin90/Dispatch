@@ -5227,6 +5227,25 @@ export type McpAuthAuthenticateResponses = {
 
 export type McpAuthAuthenticateResponse = McpAuthAuthenticateResponses[keyof McpAuthAuthenticateResponses]
 
+export type McpHealthData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/mcp/health"
+}
+
+export type McpHealthResponses = {
+  /**
+   * Health check completed
+   */
+  200: boolean
+}
+
+export type McpHealthResponse = McpHealthResponses[keyof McpHealthResponses]
+
 export type McpConnectData = {
   body?: never
   path: {

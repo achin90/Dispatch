@@ -12,6 +12,7 @@ interface MockClientState {
   listToolsError: string
   listPromptsShouldFail: boolean
   listResourcesShouldFail: boolean
+  pingShouldFail: boolean
   prompts: Array<{ name: string; description?: string }>
   resources: Array<{ name: string; uri: string; description?: string }>
   closed: boolean
@@ -27,6 +28,8 @@ let connectError = "Mock transport cannot connect"
 let clientCreateCount = 0
 // Tracks how many times transport.close() is called across all mock transports
 let transportCloseCount = 0
+// Tracks mock client instances so tests can trigger onerror/onclose
+const mockClients: Array<{ onerror?: (error: Error) => void; onclose?: () => void; _state?: MockClientState }> = []
 
 function getOrCreateClientState(name?: string): MockClientState {
   const key = name ?? "default"
@@ -39,6 +42,7 @@ function getOrCreateClientState(name?: string): MockClientState {
       listToolsError: "listTools failed",
       listPromptsShouldFail: false,
       listResourcesShouldFail: false,
+      pingShouldFail: false,
       prompts: [],
       resources: [],
       closed: false,
@@ -114,9 +118,14 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
   Client: class MockClient {
     _state!: MockClientState
     transport: any
+    // The real SDK chains these from transport callbacks.
+    // setupReconnect() sets onerror and onclose on the client.
+    onerror?: (error: Error) => void
+    onclose?: () => void
 
     constructor(_opts: any) {
       clientCreateCount++
+      mockClients.push(this)
     }
 
     async connect(transport: { start: () => Promise<void> }) {
@@ -152,8 +161,14 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
       return { resources: this._state?.resources ?? [] }
     }
 
+    async ping() {
+      if (this._state?.pingShouldFail) throw new Error("ping failed")
+    }
+
     async close() {
       if (this._state) this._state.closed = true
+      // Simulate the SDK behavior: closing the client fires onclose
+      this.onclose?.()
     }
   },
 }))
@@ -166,6 +181,7 @@ beforeEach(() => {
   connectError = "Mock transport cannot connect"
   clientCreateCount = 0
   transportCloseCount = 0
+  mockClients.length = 0
 })
 
 // Import after mocks
@@ -782,5 +798,131 @@ test(
       // Both StreamableHTTP and SSE transports should be closed
       expect(transportCloseCount).toBeGreaterThanOrEqual(2)
     }),
+  ),
+)
+
+// ========================================================================
+// Test: client.onerror triggers close and reconnect
+// ========================================================================
+
+test(
+  "transport error (onerror) closes client and sets status to failed",
+  withInstance(
+    { "onerror-server": { type: "local", command: ["echo", "test"] } },
+    (mcp) =>
+    Effect.gen(function* () {
+      lastCreatedClientName = "onerror-server"
+      getOrCreateClientState("onerror-server")
+
+      yield* mcp.add("onerror-server", {
+        type: "local",
+        command: ["echo", "test"],
+      })
+
+      expect((yield* mcp.status())["onerror-server"]?.status).toBe("connected")
+
+      // setupReconnect sets client.onerror — trigger it to simulate a transport error
+      const client = mockClients[mockClients.length - 1]
+      expect(client.onerror).toBeDefined()
+
+      client.onerror?.(new Error("SSE error: The operation timed out."))
+
+      // Give the async close chain a tick to propagate
+      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 50)))
+
+      // client.close() should have been called (via our onerror handler)
+      const state = getOrCreateClientState("onerror-server")
+      expect(state.closed).toBe(true)
+
+      // Status should now be failed (set by the onclose reconnect handler)
+      expect((yield* mcp.status())["onerror-server"]?.status).toBe("failed")
+    }),
+  ),
+)
+
+// ========================================================================
+// Test: healthCheck reconnects dead servers
+// ========================================================================
+
+test(
+  "healthCheck reconnects servers that fail ping",
+  withInstance(
+    {
+      "health-server": {
+        type: "local",
+        command: ["echo", "test"],
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "health-server"
+        const serverState = getOrCreateClientState("health-server")
+        serverState.tools = [
+          { name: "my_tool", description: "a tool", inputSchema: { type: "object", properties: {} } },
+        ]
+
+        yield* mcp.add("health-server", {
+          type: "local",
+          command: ["echo", "test"],
+        })
+
+        expect((yield* mcp.status())["health-server"]?.status).toBe("connected")
+        const clientCountAfterAdd = clientCreateCount
+
+        // Make ping fail to simulate a dead connection
+        serverState.pingShouldFail = true
+
+        // Reset state so the new client (created during reconnection) succeeds
+        clientStates.delete("health-server")
+        const newState = getOrCreateClientState("health-server")
+        newState.tools = [
+          { name: "my_tool", description: "a tool", inputSchema: { type: "object", properties: {} } },
+        ]
+
+        yield* mcp.healthCheck()
+
+        // A new client should have been created for the reconnection
+        expect(clientCreateCount).toBeGreaterThan(clientCountAfterAdd)
+
+        // Server should be connected again
+        expect((yield* mcp.status())["health-server"]?.status).toBe("connected")
+
+        // Tools should still work
+        const tools = yield* mcp.tools()
+        expect(Object.keys(tools).some((k) => k.includes("my_tool"))).toBe(true)
+      }),
+  ),
+)
+
+// ========================================================================
+// Test: healthCheck skips healthy servers
+// ========================================================================
+
+test(
+  "healthCheck does not reconnect servers that respond to ping",
+  withInstance(
+    { "healthy-server": { type: "local", command: ["echo", "test"] } },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "healthy-server"
+        getOrCreateClientState("healthy-server")
+
+        yield* mcp.add("healthy-server", {
+          type: "local",
+          command: ["echo", "test"],
+        })
+
+        expect((yield* mcp.status())["healthy-server"]?.status).toBe("connected")
+        const clientCountAfterAdd = clientCreateCount
+
+        // ping succeeds by default (pingShouldFail = false)
+        yield* mcp.healthCheck()
+
+        // No new client should have been created
+        expect(clientCreateCount).toBe(clientCountAfterAdd)
+
+        // Status should still be connected
+        expect((yield* mcp.status())["healthy-server"]?.status).toBe("connected")
+      }),
   ),
 )

@@ -197,6 +197,29 @@ export const McpRoutes = lazy(() =>
       },
     )
     .post(
+      "/health",
+      describeRoute({
+        summary: "Health check MCP connections",
+        description:
+          "Ping all connected MCP servers and reconnect any that are unresponsive. Useful after process suspension.",
+        operationId: "mcp.health",
+        responses: {
+          200: {
+            description: "Health check completed",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        await AppRuntime.runPromise(MCP.Service.use((mcp) => mcp.healthCheck()))
+        return c.json(true)
+      },
+    )
+    .post(
       "/:name/connect",
       describeRoute({
         description: "Connect an MCP server",

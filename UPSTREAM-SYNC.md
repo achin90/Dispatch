@@ -53,6 +53,7 @@ These features exist only in Dispatch and must survive every upstream merge:
 - **Custom commands** — `/merge` in `routes/home.tsx`
 - **Agent summaries** — `component/agent-summaries.tsx`
 - **Draft restore** — `routes/session/index.tsx` (save/restore prompt draft when permission dialog appears)
+- **MCP connection sharing + reconnect** — `mcp/mcp.ts` (`client.onerror` closes client to trigger reconnect), `claude-sdk-query.ts` (global MCP proxy cache shared across all agent sessions), `server/instance/mcp.ts` (`/mcp/health` endpoint)
 
 ## Known Pitfalls
 
@@ -156,6 +157,73 @@ grep -n "Global.Path.data" packages/opencode/src/worktree/worktree.ts
 # Should return nothing — if it matches, the regression is back
 grep -n "dirname\|basename" packages/opencode/src/worktree/worktree.ts
 # Should see pathSvc.dirname(ctx.worktree) and pathSvc.basename(ctx.worktree)
+```
+
+### MCP state is global, not per-directory (InstanceState removed)
+
+Upstream uses `InstanceState.make<State>()` in `mcp/mcp.ts` to scope MCP connections per-directory. Dispatch replaces this with a plain closure-scoped `State` object inside `Layer.effect` — making MCP connections global across all agent sessions.
+
+**Why:** The Claude Agent SDK invokes MCP tool callbacks asynchronously without preserving the AsyncLocalStorage Instance context. With per-directory state, `svc.clients()` / `svc.status()` return empty results when the ALS context is lost, causing "MCP server not connected" errors mid-session. Global state eliminates this class of bugs entirely.
+
+**What changed:**
+- `InstanceState.make<State>(...)` → plain `const s: State = {...}` in the Layer closure
+- All `yield* InstanceState.get(state)` → removed (methods access `s` directly via closure)
+- `Instance.directory` in `connectLocal` → captured once at init as `initCwd`
+- `EffectBridge.make()` in `storeClient` → reuses `initBridge` captured at init
+
+**If upstream merges reintroduce `InstanceState` for MCP:**
+```bash
+grep -n "InstanceState" packages/opencode/src/mcp/mcp.ts
+# Should return only the comment explaining why it was removed — no actual usage
+```
+
+### MCP client.onerror handler removed or not set (transport errors silently kill connections)
+
+Dispatch adds `client.onerror` in `setupReconnect()` (`mcp/mcp.ts`) that explicitly calls `client.close()` when a transport error occurs. This is critical because the MCP SDK's error path (`_onerror`) only calls `client.onerror` — it does **NOT** trigger `_onclose`. Without this handler, SSE timeouts, HTTP errors, and pipe failures fire `onerror` but the client remains in `"connected"` status with a dead stream. Tool calls silently fail and the agent sees "MCP disconnected / needs re-authentication."
+
+**Design:**
+- `setupReconnect()` sets `client.onerror = (error) => { log.error(...); client.close().catch(() => {}) }`
+- `client.close()` triggers `transport.onclose` → `client._onclose()` → `client.onclose` → reconnect logic
+- The reconnect logic in `client.onclose` handles exponential backoff (5s, 10s, 30s, 60s, 60s)
+
+**Symptom:** Remote MCP servers (Linear, Notion, Slack) disconnect silently. The agent says "MCP needs re-authentication" even though OAuth tokens are still valid. Logs show repeated `mcp remote transport error` with `SSE error: The operation timed out` but no `mcp connection closed unexpectedly` message.
+
+**Quick verification after merge:**
+```bash
+# setupReconnect should set client.onerror that calls client.close()
+grep -n "client.onerror" packages/opencode/src/mcp/mcp.ts
+# Should see: client.onerror = (error) => { ... client.close() ... }
+```
+
+### MCP proxy servers must NOT be shared between SDK sessions
+
+`claude-sdk-query.ts` caches MCP tool **definitions** (not proxy server objects). Each `resolveMcpServers()` call creates fresh `createSdkMcpServer()` instances from the cached defs. MCP is point-to-point — if two SDK sessions share the same proxy server object, the second session's connection disconnects the first, causing "tool no longer available" errors.
+
+**Symptom:** Agent A uses a groundcover tool successfully. Agent B starts and calls `resolveMcpServers()`. Agent A then loses access to the groundcover tool ("the mcp__groundcover-prod__query_metrics tool doesn't appear in the deferred tools list anymore").
+
+**Quick verification after merge:**
+```bash
+# resolveMcpServers should always create fresh proxies, never return cached McpServerConfig objects
+grep -A5 "cachedDefs\|createProxy" packages/opencode/src/session/claude-sdk-query.ts
+```
+
+### MCP connections shared globally across agent sessions (not per-directory)
+
+Dispatch shares a single pool of MCP connections across all agent sessions (including worktree agents). The `resolveMcpServers()` function in `claude-sdk-query.ts` resolves MCP clients via `AppRuntime.runPromise(MCP.Service.use((svc) => svc.clients()))` and caches them at module level. All Claude SDK sessions receive the same set of proxy MCP servers regardless of which directory they run in.
+
+Upstream likely resolves MCP per-instance since MCP state uses `InstanceState.make()`. If upstream changes MCP resolution to be instance-scoped, worktree agents in Dispatch would lose access to the parent's MCP connections.
+
+**What to watch for:**
+- Changes to `resolveMcpServers()` that scope MCP clients to a specific directory
+- Changes to `MCP.Service` that remove the global singleton nature (e.g., replacing `AppRuntime.runPromise` with instance-scoped resolution)
+- The `ToolsChanged` bus event invalidation in `claude-sdk-query.ts` (lines ~133-136) must fire globally
+
+**Quick verification after merge:**
+```bash
+# resolveMcpServers should use AppRuntime.runPromise (global), not instance-scoped
+grep -n "AppRuntime.runPromise\|MCP.Service.use" packages/opencode/src/session/claude-sdk-query.ts
+# healthCheck endpoint should exist
+grep -n "health" packages/opencode/src/server/instance/mcp.ts
 ```
 
 ### Effect framework migrations

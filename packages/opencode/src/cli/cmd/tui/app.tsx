@@ -62,6 +62,8 @@ import { TuiConfigProvider, useTuiConfig } from "./context/tui-config"
 import { TuiConfig } from "@/config"
 import { createTuiApi, TuiPluginRuntime, type RouteMap } from "./plugin"
 import { FormatError, FormatUnknownError } from "@/cli/error"
+import { AppRuntime } from "@/effect/app-runtime"
+import { MCP } from "@/mcp"
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
@@ -704,6 +706,10 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           renderer.resume()
           renderer.currentRenderBuffer.clear()
           renderer.requestRender()
+          // MCP connections may have broken during suspension (SSE timeouts,
+          // frozen stdio pipes, etc). Ping all connected servers and reconnect
+          // any that are unresponsive.
+          AppRuntime.runPromise(MCP.Service.use((mcp) => mcp.healthCheck())).catch(() => {})
         })
 
         renderer.suspend()
