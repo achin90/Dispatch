@@ -64,8 +64,9 @@ function statusbar(cols: number, rows: number, label: string, dir: string, fg: R
   const right = ` ${dir} `
   const gap = Math.max(0, cols - left.length - right.length)
   const style = ansi(fg, bg)
-  // Save cursor → move to last row → theme colors → content → reset → restore cursor
-  return `\x1b7\x1b[${rows};1H${style}${left}${" ".repeat(gap)}${right}\x1b[0m\x1b8`
+  // Save cursor → re-apply scroll region (guards against resets from shell output
+  // or full-screen programs) → move to last row → theme colors → content → reset → restore cursor
+  return `\x1b7\x1b[1;${rows - 1}r\x1b[${rows};1H${style}${left}${" ".repeat(gap)}${right}\x1b[0m\x1b8`
 }
 
 export namespace PtyAttach {
@@ -95,12 +96,18 @@ export namespace PtyAttach {
       const cols = process.stdout.columns
       const rows = process.stdout.rows
 
-      // Reset attributes, set scroll region to reserve bottom row for status bar
+      // Reset attributes
       process.stdout.write("\x1b[0m")
-      process.stdout.write(`\x1b[1;${rows - 1}r`)
 
       // Replay buffer to restore visual state
       if (session.buffer) process.stdout.write(session.buffer)
+
+      // Set scroll region to reserve bottom row for status bar.
+      // Must be applied after buffer replay: the buffer may contain \x1b[r
+      // (reset scroll region) emitted by full-screen programs (vim, less, etc.)
+      // on exit, which would otherwise leave the scroll region as full-screen
+      // and cause the statusbar to ghost-scroll on every new output line.
+      process.stdout.write(`\x1b[1;${rows - 1}r`)
 
       // Resize PTY to fit within scroll region and draw status bar
       session.proc.resize(cols, rows - 1)
