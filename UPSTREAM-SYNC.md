@@ -249,6 +249,29 @@ grep -n "client.onerror" packages/opencode/src/mcp/mcp.ts
 grep -A5 "cachedDefs\|createProxy" packages/opencode/src/session/claude-sdk-query.ts
 ```
 
+### MCP tool definitions must NOT be cleared on cache invalidation (reconnect fallback)
+
+`invalidateMcpCache()` in `claude-sdk-query.ts` must only set `dirty = true` — it must **not** clear `cachedDefs`. When an MCP server disconnects, the stale closed client remains in `s.clients` (it is only replaced on reconnect, never deleted on close). If `ToolsChanged` fires during the reconnect backoff window, `resolveDefs()` calls `listTools()` on the stale client, which fails. Without the previous `cachedDefs` as a fallback, that server is excluded from the rebuilt tool set and the next agent session has no tools for it.
+
+**Two related invariants that must both survive merges:**
+
+1. `invalidateMcpCache()` — only `dirty = true`, never `cachedDefs = undefined`
+2. `resolveDefs()` — when `listTools()` returns nothing for a server, carry over `cachedDefs?.[name]` as a fallback so tools stay visible during the backoff window
+3. `callTool` proxy handler — must check `svc.status()` before `svc.clients()`. Stale closed clients are never removed from the clients map, so without the status check you hit the dead transport and get an opaque error instead of a clear "MCP server X is not connected" message.
+
+**Symptom:** After an MCP server briefly disconnects and reconnects, the next agent session is missing tools for that server. Or: tool calls fail with an opaque transport error rather than a clear "not connected" message.
+
+**Quick verification after merge:**
+```bash
+# invalidateMcpCache should NOT clear cachedDefs
+grep -A5 "invalidateMcpCache" packages/opencode/src/session/claude-sdk-query.ts
+# Should only see: dirty = true (no cachedDefs = undefined)
+
+# callTool handler should check status before clients
+grep -A10 "CallToolRequestSchema" packages/opencode/src/session/claude-sdk-query.ts
+# Should see: svc.status() check returning undefined if not "connected"
+```
+
 ### MCP connections shared globally across agent sessions (not per-directory)
 
 Dispatch shares a single pool of MCP connections across all agent sessions (including worktree agents). The `resolveMcpServers()` function in `claude-sdk-query.ts` resolves MCP clients via `AppRuntime.runPromise(MCP.Service.use((svc) => svc.clients()))` and caches them at module level. All Claude SDK sessions receive the same set of proxy MCP servers regardless of which directory they run in.
