@@ -1237,6 +1237,7 @@ export function Session() {
                       toBottom()
                     }}
                     sessionID={route.sessionID}
+                    directory={sync.session.get(route.sessionID)?.directory}
                     right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
                   />
                 </TuiPluginRuntime.Slot>

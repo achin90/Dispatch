@@ -226,7 +226,7 @@ export function Autocomplete(props: {
   }
 
   function createFilePart(item: string, lineRange?: { startLine: number; endLine?: number }) {
-    const baseDir = (sync.path.directory || process.cwd()).replace(/\/+$/, "")
+    const baseDir = (props.directory || sync.path.directory || process.cwd()).replace(/\/+$/, "")
     const fullPath = path.isAbsolute(item) ? item : path.join(baseDir, item)
     const urlObj = pathToFileURL(fullPath)
     const filename =
@@ -263,7 +263,7 @@ export function Autocomplete(props: {
   }
 
   function normalizeMentionPath(filePath: string) {
-    const baseDir = sync.path.directory || process.cwd()
+    const baseDir = props.directory || sync.path.directory || process.cwd()
     const absolute = path.resolve(filePath)
     const relative = path.relative(baseDir, absolute)
 
