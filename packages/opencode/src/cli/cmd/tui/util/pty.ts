@@ -99,25 +99,33 @@ export namespace PtyAttach {
       // Reset attributes
       process.stdout.write("\x1b[0m")
 
-      // Replay buffer to restore visual state
-      if (session.buffer) process.stdout.write(session.buffer)
-
-      // Set scroll region to reserve bottom row for status bar.
-      // Must be applied after buffer replay: the buffer may contain \x1b[r
-      // (reset scroll region) emitted by full-screen programs (vim, less, etc.)
-      // on exit, which would otherwise leave the scroll region as full-screen
-      // and cause the statusbar to ghost-scroll on every new output line.
+      // Set scroll region and resize PTY BEFORE replaying the buffer so the
+      // cursor is constrained within the scroll region during replay.
+      // DECSTBM resets cursor to (1,1) which is correct — the full buffer
+      // replay rebuilds the visual state from scratch.
       process.stdout.write(`\x1b[1;${rows - 1}r`)
-
-      // Resize PTY to fit within scroll region and draw status bar
       session.proc.resize(cols, rows - 1)
+
+      // Replay buffer with scroll-region resets stripped (same treatment the
+      // live pipe applies) so replayed content can't widen the region back to
+      // full-screen and push the cursor onto the footer row.
+      if (session.buffer) process.stdout.write(session.buffer.replace(/\x1b\[0*;?0*r/g, ""))
+
+      // Draw status bar
       process.stdout.write(statusbar(cols, rows, opts.label, opts.dir, opts.fg, opts.bg))
 
       process.stdin.setRawMode(true)
       process.stdin.resume()
 
       session.pipe = (chunk) => {
-        process.stdout.write(chunk)
+        // Strip bare DECSTBM scroll-region resets (\x1b[r, \x1b[0r, \x1b[;r,
+        // \x1b[0;0r, etc.) before writing to the terminal.  Without this, a
+        // command like `printf '\e[r'` followed by `seq 1 500` temporarily
+        // widens the scroll region to the full screen: output in the same chunk
+        // that arrives after the reset scrolls under the footer before the
+        // post-chunk statusbar redraw can correct it.
+        const safe = chunk.replace(/\x1b\[0*;?0*r/g, "")
+        process.stdout.write(safe)
         // Redraw status bar after each output chunk in case the shell
         // clobbered it (e.g. cursor repositioning, full-screen programs)
         process.stdout.write(statusbar(process.stdout.columns, process.stdout.rows, opts.label, opts.dir, opts.fg, opts.bg))
@@ -173,7 +181,7 @@ export namespace PtyAttach {
       const resize = () => {
         const c = process.stdout.columns
         const r = process.stdout.rows
-        process.stdout.write(`\x1b[1;${r - 1}r`)
+        process.stdout.write(`\x1b7\x1b[1;${r - 1}r\x1b8`)
         session.proc.resize(c, r - 1)
         process.stdout.write(statusbar(c, r, opts.label, opts.dir, opts.fg, opts.bg))
       }

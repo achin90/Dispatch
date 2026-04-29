@@ -15,15 +15,23 @@ import {
   type SDKUserMessage,
   type McpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk"
-import { ListToolsRequestSchema, CallToolRequestSchema, type ServerResult } from "@modelcontextprotocol/sdk/types.js"
+import {
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+  type ServerResult,
+  type ListToolsRequest,
+  type CallToolRequest,
+} from "@modelcontextprotocol/sdk/types.js"
 import { withTimeout } from "@/util/timeout"
+import type { Hooks } from "@opencode-ai/plugin"
+import z from "zod"
 
 // Derive MessageParam from SDKUserMessage to avoid importing from
 // @anthropic-ai/sdk which is only a transitive dep.
 type MessageParam = SDKUserMessage["message"]
 import { Effect } from "effect"
 import { Auth } from "@/auth"
-import { Log } from "@/util"
+import * as Log from "@opencode-ai/core/util/log"
 import { Bus } from "@/bus"
 import { MCP } from "@/mcp"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -168,6 +176,89 @@ export async function resolveMcpServers(): Promise<Record<string, McpServerConfi
     servers[name] = createProxy(name, tools)
   }
   return servers
+}
+
+/**
+ * Creates an in-process MCP server that exposes plugin tools (from hooks.tool)
+ * to the Claude Agent SDK. Plugin tools come from loaded plugins like
+ * opencode-scheduler and never flow through the MCP.Service clients path,
+ * so they would otherwise be invisible to the SDK.
+ *
+ * Returns undefined if no plugin tools are registered.
+ */
+export const PLUGIN_TOOL_SERVER_NAME = "opencode-plugins"
+
+export function createPluginToolMcpServer(
+  hooks: Hooks[],
+  cwd: string,
+  worktree: string,
+): McpServerConfig | undefined {
+  const toolMap = Object.fromEntries(
+    hooks.flatMap((hook) => Object.entries(hook.tool ?? {})),
+  ) as Record<
+    string,
+    { description: string; args: Record<string, z.ZodTypeAny>; execute: (args: unknown, ctx: unknown) => Promise<unknown> }
+  >
+
+  const toolNames = Object.keys(toolMap)
+  log.info("createPluginToolMcpServer: plugin tools found", { count: toolNames.length, names: toolNames })
+
+  if (!toolNames.length) {
+    log.info("createPluginToolMcpServer: no plugin tools registered, skipping")
+    return undefined
+  }
+
+  const tools: ToolDefs = toolNames.map((name) => ({
+    name,
+    description: toolMap[name].description,
+    inputSchema: z.toJSONSchema(z.object(toolMap[name].args), { io: "input" }) as Record<string, unknown>,
+  }))
+
+  log.info("createPluginToolMcpServer: registering tools in proxy MCP server", { tools: tools.map((t) => t.name) })
+
+  const config = createSdkMcpServer({
+    name: PLUGIN_TOOL_SERVER_NAME,
+    tools: [{ name: "__init__", description: "", inputSchema: {}, handler: async () => ({ content: [] }) }],
+  })
+
+  config.instance.server.setRequestHandler(ListToolsRequestSchema, async (_req: ListToolsRequest) => {
+    log.info("createPluginToolMcpServer: listTools called", { tools: tools.map((t) => t.name) })
+    return { tools }
+  })
+
+  config.instance.server.setRequestHandler(CallToolRequestSchema, async (req: CallToolRequest): Promise<ServerResult> => {
+    const name = req.params.name
+    const def = toolMap[name]
+    if (!def) {
+      log.error("createPluginToolMcpServer: callTool for unknown tool", { name })
+      return { content: [{ type: "text", text: `Plugin tool "${name}" not found` }], isError: true }
+    }
+    log.info("createPluginToolMcpServer: executing plugin tool", { name })
+    // Most plugin tools (e.g. opencode-scheduler) don't use the context — they
+    // rely on args or process.cwd(). Provide a minimal stub so the type contract
+    // is satisfied and directory-aware tools get a useful value.
+    const executeResult = await def.execute(req.params.arguments ?? {}, {
+      sessionID: "",
+      messageID: "",
+      agent: "",
+      directory: cwd,
+      worktree,
+      abort: new AbortController().signal,
+      metadata: () => {},
+      ask: () => Effect.void,
+    }).catch((err: unknown) => {
+      log.error("createPluginToolMcpServer: plugin tool execution failed", {
+        name,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return err instanceof Error ? err.message : String(err)
+    })
+    const output = typeof executeResult === "string" ? executeResult : (executeResult as { output: string }).output ?? ""
+    log.info("createPluginToolMcpServer: plugin tool executed successfully", { name })
+    return { content: [{ type: "text", text: output }] }
+  })
+
+  return config
 }
 
 /**

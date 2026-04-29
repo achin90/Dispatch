@@ -13,8 +13,8 @@
  * The mapping is stored in `~/.local/state/opencode/sdk-sessions.json`.
  */
 
-import { Global } from "@/global"
-import { Filesystem } from "@/util"
+import { Global } from "@opencode-ai/core/global"
+import * as Filesystem from "@/util/filesystem"
 import path from "path"
 
 export interface SdkSessionEntry {

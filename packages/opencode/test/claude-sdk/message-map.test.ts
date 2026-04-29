@@ -286,7 +286,7 @@ describe("claude-sdk message mapping", () => {
   describe("Zod schema validation", () => {
     test("textBlockToPart output passes MessageV2.TextPart schema", () => {
       const part = textBlockToPart(textBlock("Hello"), sid, mid)
-      const result = MessageV2.TextPart.safeParse(part)
+      const result = MessageV2.TextPart.zod.safeParse(part)
       expect(result.success).toBe(true)
       if (!result.success) {
         throw new Error(`TextPart validation failed: ${JSON.stringify(result.error.issues)}`)
@@ -295,7 +295,7 @@ describe("claude-sdk message mapping", () => {
 
     test("thinkingBlockToPart output passes MessageV2.ReasoningPart schema", () => {
       const part = thinkingBlockToPart(thinkingBlock("thinking..."), sid, mid)
-      const result = MessageV2.ReasoningPart.safeParse(part)
+      const result = MessageV2.ReasoningPart.zod.safeParse(part)
       expect(result.success).toBe(true)
       if (!result.success) {
         throw new Error(`ReasoningPart validation failed: ${JSON.stringify(result.error.issues)}`)
@@ -304,7 +304,7 @@ describe("claude-sdk message mapping", () => {
 
     test("toolUseBlockToPart output passes MessageV2.ToolPart schema", () => {
       const part = toolUseBlockToPart(toolUseBlock("Read", { file_path: "/tmp/x" }), sid, mid)
-      const result = MessageV2.ToolPart.safeParse(part)
+      const result = MessageV2.ToolPart.zod.safeParse(part)
       expect(result.success).toBe(true)
       if (!result.success) {
         throw new Error(`ToolPart validation failed: ${JSON.stringify(result.error.issues)}`)
@@ -321,19 +321,19 @@ describe("claude-sdk message mapping", () => {
 
       expect(parts).toHaveLength(3)
 
-      const reasoningResult = MessageV2.ReasoningPart.safeParse(parts[0])
+      const reasoningResult = MessageV2.ReasoningPart.zod.safeParse(parts[0])
       expect(reasoningResult.success).toBe(true)
       if (!reasoningResult.success) {
         throw new Error(`ReasoningPart validation failed: ${JSON.stringify(reasoningResult.error.issues)}`)
       }
 
-      const textResult = MessageV2.TextPart.safeParse(parts[1])
+      const textResult = MessageV2.TextPart.zod.safeParse(parts[1])
       expect(textResult.success).toBe(true)
       if (!textResult.success) {
         throw new Error(`TextPart validation failed: ${JSON.stringify(textResult.error.issues)}`)
       }
 
-      const toolResult = MessageV2.ToolPart.safeParse(parts[2])
+      const toolResult = MessageV2.ToolPart.zod.safeParse(parts[2])
       expect(toolResult.success).toBe(true)
       if (!toolResult.success) {
         throw new Error(`ToolPart validation failed: ${JSON.stringify(toolResult.error.issues)}`)
@@ -350,7 +350,7 @@ describe("claude-sdk message mapping", () => {
         sid,
         mid,
       )
-      const result = MessageV2.ToolPart.safeParse(part)
+      const result = MessageV2.ToolPart.zod.safeParse(part)
       expect(result.success).toBe(true)
       if (!result.success) {
         throw new Error(`ToolPart validation failed: ${JSON.stringify(result.error.issues)}`)
@@ -359,7 +359,7 @@ describe("claude-sdk message mapping", () => {
 
     test("text part with empty string passes schema", () => {
       const part = textBlockToPart(textBlock(""), sid, mid)
-      const result = MessageV2.TextPart.safeParse(part)
+      const result = MessageV2.TextPart.zod.safeParse(part)
       expect(result.success).toBe(true)
     })
   })

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { Effect } from "effect"
-import { Session as SessionNs } from "../../src/session"
+import { Session as SessionNs } from "../../src/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { Instance } from "../../src/project/instance"

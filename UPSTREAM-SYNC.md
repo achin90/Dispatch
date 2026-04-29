@@ -41,7 +41,7 @@ These features exist only in Dispatch and must survive every upstream merge:
 
 - **Claude Agent SDK integration** — `claude-sdk-query.ts`, `claude-sdk-processor.ts`, `claude-sdk-adapter.ts`, `claude-sdk-session-map.ts`, `claude-sdk-permissions.ts`
 - **Agent dashboard / multi-agent** — `routes/home.tsx` (agent list, worktree creation, PR integration, diff stats)
-- **Worktree support** — `worktree/worktree.ts` (sibling-path creation via `dirname`/`basename` of `ctx.worktree`), worktree agent context in `system.ts`
+- **Worktree support** — `worktree/index.ts` (sibling-path creation via `dirname`/`basename` of `ctx.worktree`; branch name without `opencode/` prefix), worktree agent context in `system.ts`
 - **Static SDK model definitions** — `provider/provider.ts` (`SDK_MODELS`, `buildSdkModel`)
 - **Activity display** — `formatActivity()` in `processor.ts`, `activity` field on `SessionStatus`
 - **Cross-directory event bridge** — `bus/global.ts` and `context/event.ts` (must accept events from all directories, not just the current project)
@@ -153,10 +153,52 @@ Upstream creates new worktrees under `~/.local/share/opencode/worktree/<projectI
 **Quick verification after merge:**
 ```bash
 # makeWorktreeInfo should use dirname/basename of ctx.worktree, NOT Global.Path.data
-grep -n "Global.Path.data" packages/opencode/src/worktree/worktree.ts
+grep -n "Global.Path.data" packages/opencode/src/worktree/index.ts
 # Should return nothing — if it matches, the regression is back
-grep -n "dirname\|basename" packages/opencode/src/worktree/worktree.ts
+grep -n "dirname\|basename" packages/opencode/src/worktree/index.ts
 # Should see pathSvc.dirname(ctx.worktree) and pathSvc.basename(ctx.worktree)
+```
+
+### Worktree branch created with `opencode/` prefix
+
+Upstream creates the git branch for new worktrees as `opencode/<name>` (e.g. `opencode/my-feature`). Dispatch removes this prefix so branches are created as plain `<name>` (e.g. `my-feature`). During merges the `candidate()` function in `worktree/index.ts` can revert to including the prefix.
+
+**Design:**
+- `branch = name` (not `` `opencode/${name}` ``)
+
+**Quick verification after merge:**
+```bash
+grep -n "opencode/" packages/opencode/src/worktree/index.ts
+# Should return nothing from the candidate() function — only the service tag string "@opencode/Worktree"
+```
+
+### @file autocomplete resolves paths against TUI launch directory instead of session directory
+
+`createFilePart` and `normalizeMentionPath` in `prompt/autocomplete.tsx` fall back to `sync.path.directory` (the TUI's launch directory) when `props.directory` is not set. For worktree agent sessions the session's directory differs from the launch directory, so `@filename` suggestions are built against the wrong root and toasts like "cannot find file in ~/Documents" appear.
+
+**Fix (two parts):**
+
+1. In `autocomplete.tsx`, prefer `props.directory` over `sync.path.directory` in both helpers:
+   ```ts
+   // createFilePart
+   const baseDir = (props.directory || sync.path.directory || process.cwd()).replace(/\/+$/, "")
+   // normalizeMentionPath
+   const baseDir = props.directory || sync.path.directory || process.cwd()
+   ```
+
+2. In `routes/session/index.tsx`, pass the session's stored directory to `<Prompt>`:
+   ```tsx
+   directory={sync.session.get(route.sessionID)?.directory}
+   ```
+
+**Symptom:** `@UPSTREAM-SYNC.md` toast error "cannot find file in ~/Documents" when session is running in a different directory than where the TUI was launched.
+
+**Quick verification after merge:**
+```bash
+grep -n "props.directory" packages/opencode/src/cli/cmd/tui/component/prompt/autocomplete.tsx
+# Should appear in both createFilePart and normalizeMentionPath
+grep -n "directory=" packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
+# Should see directory={sync.session.get(route.sessionID)?.directory} on the <Prompt>
 ```
 
 ### MCP state is global, not per-directory (InstanceState removed)
@@ -205,6 +247,29 @@ grep -n "client.onerror" packages/opencode/src/mcp/mcp.ts
 ```bash
 # resolveMcpServers should always create fresh proxies, never return cached McpServerConfig objects
 grep -A5 "cachedDefs\|createProxy" packages/opencode/src/session/claude-sdk-query.ts
+```
+
+### MCP tool definitions must NOT be cleared on cache invalidation (reconnect fallback)
+
+`invalidateMcpCache()` in `claude-sdk-query.ts` must only set `dirty = true` — it must **not** clear `cachedDefs`. When an MCP server disconnects, the stale closed client remains in `s.clients` (it is only replaced on reconnect, never deleted on close). If `ToolsChanged` fires during the reconnect backoff window, `resolveDefs()` calls `listTools()` on the stale client, which fails. Without the previous `cachedDefs` as a fallback, that server is excluded from the rebuilt tool set and the next agent session has no tools for it.
+
+**Two related invariants that must both survive merges:**
+
+1. `invalidateMcpCache()` — only `dirty = true`, never `cachedDefs = undefined`
+2. `resolveDefs()` — when `listTools()` returns nothing for a server, carry over `cachedDefs?.[name]` as a fallback so tools stay visible during the backoff window
+3. `callTool` proxy handler — must check `svc.status()` before `svc.clients()`. Stale closed clients are never removed from the clients map, so without the status check you hit the dead transport and get an opaque error instead of a clear "MCP server X is not connected" message.
+
+**Symptom:** After an MCP server briefly disconnects and reconnects, the next agent session is missing tools for that server. Or: tool calls fail with an opaque transport error rather than a clear "not connected" message.
+
+**Quick verification after merge:**
+```bash
+# invalidateMcpCache should NOT clear cachedDefs
+grep -A5 "invalidateMcpCache" packages/opencode/src/session/claude-sdk-query.ts
+# Should only see: dirty = true (no cachedDefs = undefined)
+
+# callTool handler should check status before clients
+grep -A10 "CallToolRequestSchema" packages/opencode/src/session/claude-sdk-query.ts
+# Should see: svc.status() check returning undefined if not "connected"
 ```
 
 ### MCP connections shared globally across agent sessions (not per-directory)

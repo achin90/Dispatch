@@ -22,14 +22,16 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import { useProject } from "@tui/context/project"
 import { useEvent } from "@tui/context/event"
 import { useSDK } from "@tui/context/sdk"
-import { Binary } from "@opencode-ai/shared/util/binary"
+import { Binary } from "@opencode-ai/core/util/binary"
 import { createSimpleContext } from "./helper"
 import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, createEffect, on } from "solid-js"
-import { Log } from "@/util"
-import { ConsoleState, emptyConsoleState, type ConsoleState as ConsoleStateType } from "@/config/console-state"
+import { batch, onMount } from "solid-js"
+import * as Log from "@opencode-ai/core/util/log"
+import { emptyConsoleState, type ConsoleState } from "@/config/console-state"
+import path from "path"
+import { useKV } from "./kv"
 
 const log = Log.create({ service: "submit.latency" })
 
@@ -41,7 +43,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       provider: Provider[]
       provider_default: Record<string, string>
       provider_next: ProviderListResponse
-      console_state: ConsoleStateType
+      console_state: ConsoleState
       provider_auth: Record<string, ProviderAuthMethod[]>
       agent: Agent[]
       command: Command[]
@@ -113,6 +115,26 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const event = useEvent()
     const project = useProject()
     const sdk = useSDK()
+    const kv = useKV()
+
+    const fullSyncedSessions = new Set<string>()
+    let syncedWorkspace = project.workspace.current()
+
+    function sessionListQuery(): { scope?: "project"; path?: string } {
+      if (!kv.get("session_directory_filter_enabled", true)) return { scope: "project" }
+      if (!project.data.instance.path.worktree || !project.data.instance.path.directory) return { scope: "project" }
+      return {
+        path: path
+          .relative(path.resolve(project.data.instance.path.worktree), project.data.instance.path.directory)
+          .replaceAll("\\", "/"),
+      }
+    }
+
+    function listSessions() {
+      return sdk.client.session
+        .list({ start: Date.now() - 30 * 24 * 60 * 60 * 1000, ...sessionListQuery() })
+        .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
+    }
 
     event.subscribe((event) => {
       switch (event.type) {
@@ -357,24 +379,25 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const exit = useExit()
     const args = useArgs()
 
-    async function bootstrap() {
-      console.log("bootstrapping")
+    async function bootstrap(input: { fatal?: boolean } = {}) {
+      const fatal = input.fatal ?? true
       const workspace = project.workspace.current()
-      const start = Date.now() - 30 * 24 * 60 * 60 * 1000
-      const sessionListPromise = sdk.client.session
-        .list({ start: start })
-        .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
+      if (workspace !== syncedWorkspace) {
+        fullSyncedSessions.clear()
+        syncedWorkspace = workspace
+      }
+      const projectPromise = project.sync()
+      const sessionListPromise = projectPromise.then(() => listSessions())
 
       // blocking - include session.list when continuing a session
       const providersPromise = sdk.client.config.providers({ workspace }, { throwOnError: true })
       const providerListPromise = sdk.client.provider.list({ workspace }, { throwOnError: true })
       const consoleStatePromise = sdk.client.experimental.console
         .get({ workspace }, { throwOnError: true })
-        .then((x) => ConsoleState.parse(x.data))
+        .then((x) => x.data)
         .catch(() => emptyConsoleState)
       const agentsPromise = sdk.client.app.agents({ workspace }, { throwOnError: true })
       const configPromise = sdk.client.config.get({ workspace }, { throwOnError: true })
-      const projectPromise = project.sync()
       const blockingRequests: Promise<unknown>[] = [
         providersPromise,
         providerListPromise,
@@ -385,7 +408,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       ]
 
       await Promise.all(blockingRequests)
-        .then(() => {
+        .then(async () => {
           const providersResponse = providersPromise.then((x) => x.data!)
           const providerListResponse = providerListPromise.then((x) => x.data!)
           const consoleStateResponse = consoleStatePromise
@@ -448,20 +471,17 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             name: e instanceof Error ? e.name : undefined,
             stack: e instanceof Error ? e.stack : undefined,
           })
-          await exit(e)
+          if (fatal) {
+            await exit(e)
+          } else {
+            throw e
+          }
         })
     }
 
-    const fullSyncedSessions = new Set<string>()
-    createEffect(
-      on(
-        () => project.workspace.current(),
-        () => {
-          fullSyncedSessions.clear()
-          void bootstrap()
-        },
-      ),
-    )
+    onMount(() => {
+      void bootstrap()
+    })
 
     const result = {
       data: store,
@@ -470,6 +490,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         return store.status
       },
       get ready() {
+        if (process.env.OPENCODE_FAST_BOOT) return true
         return store.status !== "loading"
       },
       get path() {
@@ -480,6 +501,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const match = Binary.search(store.session, sessionID, (s) => s.id)
           if (match.found) return store.session[match.index]
           return undefined
+        },
+        query() {
+          return sessionListQuery()
+        },
+        async refresh() {
+          const list = await listSessions()
+          setStore("session", reconcile(list))
         },
         status(sessionID: string) {
           const session = result.session.get(sessionID)
@@ -493,12 +521,11 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
-          const workspace = project.workspace.current()
           const [session, messages, todo, diff] = await Promise.all([
-            sdk.client.session.get({ sessionID, workspace }, { throwOnError: true }),
-            sdk.client.session.messages({ sessionID, limit: 100, workspace }),
-            sdk.client.session.todo({ sessionID, workspace }),
-            sdk.client.session.diff({ sessionID, workspace }),
+            sdk.client.session.get({ sessionID }, { throwOnError: true }),
+            sdk.client.session.messages({ sessionID, limit: 100 }),
+            sdk.client.session.todo({ sessionID }),
+            sdk.client.session.diff({ sessionID }),
           ])
           setStore(
             produce((draft) => {

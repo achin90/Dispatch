@@ -12,7 +12,7 @@ import type {
   SDKResultMessage,
   SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk"
-import { Session } from "./index"
+import { Session } from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
 import { popPendingMeta } from "./claude-sdk-permissions"

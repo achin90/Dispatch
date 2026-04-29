@@ -1,6 +1,6 @@
 import z from "zod"
 import { execFile } from "child_process"
-import { Log } from "../util"
+import * as Log from "@opencode-ai/core/util/log"
 import { git } from "../util/git"
 
 export namespace GitHub {

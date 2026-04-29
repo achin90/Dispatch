@@ -2,7 +2,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk"
 import bin from "@anthropic-ai/claude-agent-sdk/embed"
 import { generateText } from "ai"
 import { resolveApiKey } from "./claude-sdk-query"
-import { Provider } from "@/provider"
+import { Provider } from "@/provider/provider"
 import type { ProviderID } from "@/provider/schema"
 import { AppRuntime } from "@/effect/app-runtime"
 

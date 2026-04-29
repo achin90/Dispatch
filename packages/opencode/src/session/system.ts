@@ -12,137 +12,137 @@ import PROMPT_KIMI from "./prompt/kimi.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
-import type { Provider } from "@/provider"
+import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
 
-export namespace SystemPrompt {
-  export function provider(model: Provider.Model) {
-    if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
-      return [PROMPT_BEAST]
-    if (model.api.id.includes("gpt")) {
-      if (model.api.id.includes("codex")) {
-        return [PROMPT_CODEX]
-      }
-      return [PROMPT_GPT]
+export function provider(model: Provider.Model) {
+  if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
+    return [PROMPT_BEAST]
+  if (model.api.id.includes("gpt")) {
+    if (model.api.id.includes("codex")) {
+      return [PROMPT_CODEX]
     }
-    if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
-    if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
-    if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
-    if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
-    return [PROMPT_DEFAULT]
+    return [PROMPT_GPT]
   }
-
-  async function worktree() {
-    const dir = Instance.directory
-    const content = await Bun.file(path.join(dir, ".git"))
-      .text()
-      .catch(() => null)
-    if (!content?.startsWith("gitdir:")) return
-    const gitdir = content.replace("gitdir:", "").trim()
-    const resolved = path.isAbsolute(gitdir) ? gitdir : path.resolve(dir, gitdir)
-    const head = await Bun.file(path.join(resolved, "HEAD"))
-      .text()
-      .catch(() => "")
-    const branch = head.startsWith("ref:")
-      ? head
-          .replace("ref:", "")
-          .trim()
-          .replace(/^refs\/heads\//, "")
-      : path.basename(dir)
-    const match = resolved.match(/^(.+)\/\.git\/worktrees\//)
-    const source = match ? match[1] : path.dirname(resolved)
-    return { source, branch }
-  }
-
-  export interface Interface {
-    readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
-    readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
-  }
-
-  export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
-
-  export const layer = Layer.effect(
-    Service,
-    Effect.gen(function* () {
-      const skill = yield* Skill.Service
-
-      return Service.of({
-        environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
-          const project = Instance.project
-          const parts = [
-            [
-              `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
-              `Here is some useful information about the environment you are running in:`,
-              `<env>`,
-              `  Working directory: ${Instance.directory}`,
-              `  Workspace root folder: ${Instance.worktree}`,
-              `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
-              `  Platform: ${process.platform}`,
-              `  Today's date: ${new Date().toDateString()}`,
-              `</env>`,
-            ].join("\n"),
-          ]
-
-          const wt = yield* Effect.promise(() => worktree())
-          if (wt) {
-            parts.push(
-              [
-                `# Worktree Agent Context`,
-                ``,
-                `You are working in a git worktree. Here are the details:`,
-                ``,
-                `- **Main worktree**: ${wt.source}`,
-                `- **Your worktree**: ${Instance.directory}`,
-                `- **Your branch**: ${wt.branch}`,
-                ``,
-                `## Working rules`,
-                ``,
-                `- Do all your work within your worktree (\`${Instance.directory}\`). Do not modify files in the main worktree directly.`,
-                `- When you are asked to merge your work back into the main branch, follow this exact process:`,
-                ``,
-                `### Merge process`,
-                ``,
-                `1. Commit all outstanding changes in your worktree`,
-                `2. Rebase your branch onto the latest main from the main worktree:`,
-                `   \`\`\`sh`,
-                `   git rebase main`,
-                `   \`\`\``,
-                `3. Resolve any conflicts if they arise`,
-                `4. Merge into main using \`git -C\` to operate on the main worktree:`,
-                `   \`\`\`sh`,
-                `   git -C ${wt.source} merge ${wt.branch}`,
-                `   \`\`\``,
-                ``,
-                `Always rebase before merging. Never merge without rebasing first.`,
-                ``,
-                `## Documentation maintenance`,
-                ``,
-                `When committing changes, update any relevant CLAUDE.md or README files to reflect the changes you made. Do NOT simply append new content — review the existing documentation and **trim, consolidate, or rewrite** sections so the files stay concise and accurate. Remove outdated information rather than leaving it alongside new content.`,
-              ].join("\n"),
-            )
-          }
-
-          return parts
-        }),
-
-        skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
-          if (Permission.disabled(["skill"], agent.permission).has("skill")) return
-
-          const list = yield* skill.available(agent)
-
-          return [
-            "Skills provide specialized instructions and workflows for specific tasks.",
-            "Use the skill tool to load a skill when a task matches its description.",
-            // the agents seem to ingest the information about skills a bit better if we present a more verbose
-            // version of them here and a less verbose version in tool description, rather than vice versa.
-            Skill.fmt(list, { verbose: true }),
-          ].join("\n")
-        }),
-      })
-    }),
-  )
-
-  export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer))
+  if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
+  if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
+  if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
+  if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
+  return [PROMPT_DEFAULT]
 }
+
+async function worktree() {
+  const dir = Instance.directory
+  const content = await Bun.file(path.join(dir, ".git"))
+    .text()
+    .catch(() => null)
+  if (!content?.startsWith("gitdir:")) return
+  const gitdir = content.replace("gitdir:", "").trim()
+  const resolved = path.isAbsolute(gitdir) ? gitdir : path.resolve(dir, gitdir)
+  const head = await Bun.file(path.join(resolved, "HEAD"))
+    .text()
+    .catch(() => "")
+  const branch = head.startsWith("ref:")
+    ? head
+        .replace("ref:", "")
+        .trim()
+        .replace(/^refs\/heads\//, "")
+    : path.basename(dir)
+  const match = resolved.match(/^(.+)\/\.git\/worktrees\//)
+  const source = match ? match[1] : path.dirname(resolved)
+  return { source, branch }
+}
+
+export interface Interface {
+  readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
+  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+}
+
+export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
+
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    const skill = yield* Skill.Service
+
+    return Service.of({
+      environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
+        const project = Instance.project
+        const parts = [
+          [
+            `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
+            `Here is some useful information about the environment you are running in:`,
+            `<env>`,
+            `  Working directory: ${Instance.directory}`,
+            `  Workspace root folder: ${Instance.worktree}`,
+            `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
+            `  Platform: ${process.platform}`,
+            `  Today's date: ${new Date().toDateString()}`,
+            `</env>`,
+          ].join("\n"),
+        ]
+
+        const wt = yield* Effect.promise(() => worktree())
+        if (wt) {
+          parts.push(
+            [
+              `# Worktree Agent Context`,
+              ``,
+              `You are working in a git worktree. Here are the details:`,
+              ``,
+              `- **Main worktree**: ${wt.source}`,
+              `- **Your worktree**: ${Instance.directory}`,
+              `- **Your branch**: ${wt.branch}`,
+              ``,
+              `## Working rules`,
+              ``,
+              `- Do all your work within your worktree (\`${Instance.directory}\`). Do not modify files in the main worktree directly.`,
+              `- When you are asked to merge your work back into the main branch, follow this exact process:`,
+              ``,
+              `### Merge process`,
+              ``,
+              `1. Commit all outstanding changes in your worktree`,
+              `2. Rebase your branch onto the latest main from the main worktree:`,
+              `   \`\`\`sh`,
+              `   git rebase main`,
+              `   \`\`\``,
+              `3. Resolve any conflicts if they arise`,
+              `4. Merge into main using \`git -C\` to operate on the main worktree:`,
+              `   \`\`\`sh`,
+              `   git -C ${wt.source} merge ${wt.branch}`,
+              `   \`\`\``,
+              ``,
+              `Always rebase before merging. Never merge without rebasing first.`,
+              ``,
+              `## Documentation maintenance`,
+              ``,
+              `When committing changes, update any relevant CLAUDE.md or README files to reflect the changes you made. Do NOT simply append new content — review the existing documentation and **trim, consolidate, or rewrite** sections so the files stay concise and accurate. Remove outdated information rather than leaving it alongside new content.`,
+            ].join("\n"),
+          )
+        }
+
+        return parts
+      }),
+
+      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
+        if (Permission.disabled(["skill"], agent.permission).has("skill")) return
+
+        const list = yield* skill.available(agent)
+
+        return [
+          "Skills provide specialized instructions and workflows for specific tasks.",
+          "Use the skill tool to load a skill when a task matches its description.",
+          // the agents seem to ingest the information about skills a bit better if we present a more verbose
+          // version of them here and a less verbose version in tool description, rather than vice versa.
+          Skill.fmt(list, { verbose: true }),
+        ].join("\n")
+      }),
+    })
+  }),
+)
+
+export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer))
+
+export * as SystemPrompt from "./system"
