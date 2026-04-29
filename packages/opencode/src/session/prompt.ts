@@ -36,7 +36,7 @@ import { ConfigMarkdown } from "@/config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { SessionProcessor } from "./processor"
-import { createClaudeSdkQuery, resolveMcpServers } from "./claude-sdk-query"
+import { createClaudeSdkQuery, resolveMcpServers, createPluginToolMcpServer, PLUGIN_TOOL_SERVER_NAME } from "./claude-sdk-query"
 import { processClaudeSdkStream, type CompactionRef } from "./claude-sdk-processor"
 import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
@@ -1482,7 +1482,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             ]
             const systemPrompt = system.join("\n\n")
 
-            const mcpServers = yield* Effect.promise(() => resolveMcpServers())
+            const hooks = yield* plugin.list()
+            log.info("claude-sdk: building plugin tool MCP server", {
+              hookCount: hooks.length,
+              toolNames: hooks.flatMap((h) => Object.keys(h.tool ?? {})),
+            })
+            const pluginToolServer = createPluginToolMcpServer(hooks, ctx.directory, ctx.worktree)
+            const mcpServersBase = yield* Effect.promise(() => resolveMcpServers())
+            log.info("claude-sdk: resolved MCP servers", {
+              mcpServerNames: Object.keys(mcpServersBase ?? {}),
+              hasPluginToolServer: pluginToolServer !== undefined,
+            })
+            const mcpServers = pluginToolServer
+              ? { ...(mcpServersBase ?? {}), [PLUGIN_TOOL_SERVER_NAME]: pluginToolServer }
+              : mcpServersBase
 
             // Shared ref: the PostCompact hook writes the summary here,
             // processClaudeSdkStream reads it when handling compact_boundary.
