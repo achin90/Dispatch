@@ -1,5 +1,6 @@
 import { cmd } from "@/cli/cmd/cmd"
 import { tui } from "./app"
+import { flushKV } from "./context/kv"
 import { Rpc } from "@/util/rpc"
 import { type rpc } from "./worker"
 import path from "path"
@@ -247,6 +248,7 @@ export const TuiThreadCommand = cmd({
           },
         })
       } finally {
+        await flushKV()
         await stop()
       }
     } finally {
