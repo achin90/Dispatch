@@ -2,9 +2,11 @@
 
 You are merging the current worktree branch back into the branch it was created from.
 
+If a target branch was specified by the user, use that instead of auto-detecting the parent: $ARGUMENTS
+
 ## Step 1: Identify the parent branch
 
-Determine which branch this worktree was branched off from:
+Determine which branch this worktree was branched off from. If the user specified a target branch above, skip the auto-detection and use that branch as the parent.
 
 ```sh
 # Get the current branch

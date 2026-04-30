@@ -1,5 +1,7 @@
 # Code Review Instructions
 
+Additional instructions from the user: $ARGUMENTS
+
 ## Step 1: Gather context
 
 Launch a haiku agent to return a list of file paths (not their contents) for all relevant CLAUDE.md files including:
