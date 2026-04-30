@@ -97,7 +97,23 @@ Dispatch guards escape/app_exit handling in `permission.tsx` and `question.tsx` 
 ### Draft save/restore logic lost or broken
 Dispatch saves the prompt draft when permission dialogs appear (Prompt unmounts) and restores it when they dismiss (Prompt remounts). The logic uses `shouldSave()`, `resolve()`, and `shouldBlock()` from `draft.ts`. Upstream has no draft persistence across permission dialogs. The auto-submit prevention (`shouldBlock`) is critical — without it, the Enter key that navigated into the session auto-submits the restored draft.
 
-**Symptom:** Typed text disappears when a permission dialog appears. Or, restored draft auto-submits immediately without user confirmation.
+**Two restore paths — both must set `restored = true`:**
+
+1. **`bind` path** (`session/index.tsx`): `resolveDraft` returns `{ action: "draft", block: true }` → `r.set(draft, true)` → sets `restored = true` in the Prompt closure.
+2. **`stashed` path** (`prompt/index.tsx` `onMount`): upstream's module-level `stashed` variable restores content when the Prompt remounts. This path must also set `restored = true` before calling `input.setText`.
+
+In `@opentui/solid`'s custom renderer the ref callback (which calls `bind`) may fire **after** `onMount` rather than during the render phase. If `onMount` consumes `stashed` without setting `restored = true`, the Enter key that triggered navigation auto-submits the restored draft before `bind` has a chance to set the flag.
+
+**Fix:** In `prompt/index.tsx` `onMount`, set `restored = true` before restoring from `stashed`:
+```ts
+if (saved && saved.prompt.input) {
+  restored = true  // ← must be here
+  input.setText(saved.prompt.input)
+  ...
+}
+```
+
+**Symptom:** Typed text disappears when a permission dialog appears. Or, restored draft auto-submits immediately without user confirmation (pressing Enter in the home dashboard to re-enter a session auto-sends the draft).
 
 ### Permission pending map scoped to InstanceState instead of global
 Upstream stores the pending permission map inside `InstanceState`, which is keyed by Instance directory. Dispatch needs a **module-level** `globalPending` map so the TUI (running in the main project directory) can reply to permission requests raised by agent sessions in worktree directories. Without this, pressing y/n on a permission dialog from the dashboard does nothing — the TUI's InstanceState has an empty `pending` map because the request lives in a different directory's InstanceState.

@@ -510,6 +510,9 @@ export function Prompt(props: PromptProps) {
     stashed = undefined
     if (store.prompt.input) return
     if (saved && saved.prompt.input) {
+      // Mark as restored so shouldBlock() prevents the Enter key that triggered
+      // navigation from auto-submitting the restored draft.
+      restored = true
       input.setText(saved.prompt.input)
       setStore("prompt", saved.prompt)
       restoreExtmarksFromParts(saved.prompt.parts)
