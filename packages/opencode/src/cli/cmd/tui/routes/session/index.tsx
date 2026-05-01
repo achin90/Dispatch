@@ -582,11 +582,17 @@ export function Session() {
         name: "undo",
       },
       onSelect: async (dialog) => {
-        const status = sync.data.session_status?.[route.sessionID]
-        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
         const revert = session()?.revert?.messageID
         const message = messages().findLast((x) => (!revert || x.id < revert) && x.role === "user")
         if (!message) return
+        // Only abort the agent if the message being undone is not queued.
+        // A queued message sits after the in-progress assistant message, so
+        // removing it should not interrupt the running agent.
+        const isQueued = pending() && message.id > pending()!
+        if (!isQueued) {
+          const status = sync.data.session_status?.[route.sessionID]
+          if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
+        }
         void sdk.client.session
           .revert({
             sessionID: route.sessionID,
