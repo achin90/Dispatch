@@ -3,7 +3,7 @@ import { Filesystem } from "@/util/filesystem"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { rename, rm } from "fs/promises"
 import { createSignal, type Setter } from "solid-js"
-import { createStore, unwrap } from "solid-js/store"
+import { createStore } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import * as Log from "@opencode-ai/core/util/log"
 import type { AgentEntry } from "../routes/home"
@@ -83,16 +83,27 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
       },
       set(key: string, value: any) {
         setStore(key, value)
-        const snapshot = structuredClone(unwrap(store))
+        // Clone only the value being set — the rest will be read from disk
+        // under the lock so concurrent processes never clobber each other's keys.
+        const clonedValue = structuredClone(value)
         if (key === "agents" && Array.isArray(value)) {
           log.info("set agents", { count: value.length, ids: value.map((a: AgentEntry) => a.id).join(",") })
         } else {
           log.info("set", { key })
         }
         write = _pendingWrite = write
-          .then(() => Flock.withLock(lock, () => writeSnapshot(snapshot)))
+          .then(() =>
+            Flock.withLock(lock, () =>
+              Filesystem.readJson<Record<string, any>>(filePath)
+                .catch((): Record<string, any> => ({}))
+                .then((disk) => {
+                  disk[key] = clonedValue
+                  return writeSnapshot(disk)
+                }),
+            ),
+          )
           .then(() => {
-            if (key === "agents") return log.info("written agents", { count: snapshot["agents"]?.length ?? 0 })
+            if (key === "agents") return log.info("written agents", { count: Array.isArray(clonedValue) ? clonedValue.length : 0 })
             log.info("written", { key })
           })
           .catch((error) => {
