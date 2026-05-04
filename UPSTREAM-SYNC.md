@@ -307,6 +307,27 @@ grep -n "AppRuntime.runPromise\|MCP.Service.use" packages/opencode/src/session/c
 grep -n "health" packages/opencode/src/server/instance/mcp.ts
 ```
 
+### Upstream update check fires for Dispatch users
+
+`cli/upgrade.ts` → `upgrade()` fetches the latest version from `https://api.github.com/repos/anomalyco/opencode/releases/latest` and shows an "Update Available" dialog. Dispatch is a fork — this check should never run.
+
+**Fix:** The function has an unconditional `return` at the top with a comment:
+```ts
+export async function upgrade() {
+  // Dispatch is a fork — do not check upstream opencode for updates.
+  return
+  ...
+}
+```
+
+**Symptom:** Users see "A new release v1.x.y is available. Would you like to update now?" on startup even though they are running Dispatch.
+
+**Quick verification after merge:**
+```bash
+grep -n "Dispatch is a fork" packages/opencode/src/cli/upgrade.ts
+# Should return the comment on the early-return line
+```
+
 ### Effect framework migrations
 Upstream is actively migrating to Effect's `Context.Service` pattern (from the older `ServiceMap.Service`). When merging, watch for:
 - `ServiceMap` imports that need to become `Context`
