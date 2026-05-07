@@ -99,22 +99,50 @@ Dispatch saves the prompt draft when permission dialogs appear (Prompt unmounts)
 
 **Single restore path via `bind` in `session/index.tsx`:**
 
-Draft persistence is handled entirely by the session route's `bind` callback and its module-level `drafts` Map (keyed by `route.sessionID`). The Prompt component itself has NO draft stash logic — upstream's module-level `stashed` variable has been removed.
+Draft persistence is handled entirely by the session route's `bind` callback and its module-level `drafts` Map. The Prompt component itself has NO draft stash logic — upstream's module-level `stashed` variable has been removed.
 
-- When Prompt unmounts (e.g., permission dialog or navigating home), `bind(undefined)` saves the current prompt to `drafts.set(route.sessionID, info)`.
+- When Prompt unmounts (e.g., permission dialog or navigating home), `bind(undefined)` saves the current prompt using `boundSessionID` (see below).
 - When Prompt remounts, `bind(r)` calls `resolveDraft(...)` → `r.set(draft, true)` → sets `restored = true` in the Prompt closure, preventing auto-submit.
 
 **Why Prompt has no stash:** Upstream uses a module-level `let stashed` variable in the Prompt component. This causes drafts to leak between sessions because: (1) it's a single global slot shared by all Prompt instances, and (2) `props.sessionID` is a reactive SolidJS getter that may reflect the new route by the time `onCleanup` fires. The session route's `bind`/`drafts` mechanism is already per-session and doesn't have this problem.
 
+**Critical: use `boundSessionID`, not `route.sessionID`, when saving drafts on unmount.**
+
+`route.sessionID` is a reactive SolidJS getter. When the user navigates away, the route store updates synchronously — meaning by the time `bind(undefined)` fires during Prompt cleanup, `route.sessionID` already returns `null` (the new route has no session). Drafts saved under `null` are never found on re-entry.
+
+The fix is a `let boundSessionID` variable that is captured when the Prompt mounts (`bind(r)` with a valid ref) and used when it unmounts:
+
+```ts
+let boundSessionID: string | undefined
+
+const bind = (r: PromptRef | undefined) => {
+  if (!r && prompt && boundSessionID) {
+    // use boundSessionID — route.sessionID is already null here
+    if (shouldSaveDraft(info)) drafts.set(boundSessionID, info)
+  }
+  prompt = r
+  promptRef.set(r)
+  if (!r) return
+  boundSessionID = route.sessionID  // capture at mount time, while route is still valid
+  ...
+}
+```
+
+The same applies to the dashboard keybind handler — use `boundSessionID ?? route.sessionID` there too.
+
 **If upstream re-adds a `stashed` variable to `prompt/index.tsx`, remove it.** All draft save/restore should go through the session route's `bind` callback.
 
-**Symptom if broken:** Typed text disappears when a permission dialog appears. Or, restored draft auto-submits immediately without user confirmation. Or, draft text from one agent session appears in a different agent session.
+**Symptom if broken:** Typed text disappears when a permission dialog appears. Or, restored draft auto-submits immediately without user confirmation. Or, draft text from one agent session appears in a different agent session. Or, draft is never restored when re-entering an agent (draft saved under `null` key).
 
 **Quick verification after merge:**
 ```bash
 # Prompt component should NOT have any stash logic
 grep -n "stashed\|stashedBy" packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
 # Should return NO matches
+
+# session/index.tsx should use boundSessionID (not route.sessionID) in the bind unmount path
+grep -n "boundSessionID" packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
+# Should show boundSessionID used in both bind() and the dashboard keybind handler
 ```
 
 ### Permission pending map scoped to InstanceState instead of global
