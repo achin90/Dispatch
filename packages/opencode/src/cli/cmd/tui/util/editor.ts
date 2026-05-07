@@ -28,8 +28,8 @@ export async function open(opts: { value: string; renderer: CliRenderer }): Prom
     const content = await Filesystem.readText(filepath)
     return content || undefined
   } finally {
-    opts.renderer.currentRenderBuffer.clear()
     opts.renderer.resume()
+    opts.renderer.currentRenderBuffer.clear()
     opts.renderer.requestRender()
   }
 }
