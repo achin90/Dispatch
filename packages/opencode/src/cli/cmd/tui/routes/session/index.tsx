@@ -250,17 +250,21 @@ export function Session() {
   let seeded = false
   let scroll: ScrollBoxRenderable
   let prompt: PromptRef | undefined
+  let boundSessionID: string | undefined
   const bind = (r: PromptRef | undefined) => {
-    // Save draft when Prompt unmounts (e.g. permission prompt shown)
-    if (!r && prompt) {
+    // Save draft when Prompt unmounts (e.g. permission prompt shown).
+    // Use boundSessionID because route.sessionID may already reflect the
+    // new route by the time cleanup fires (SolidJS reactive getter).
+    if (!r && prompt && boundSessionID) {
       const info = prompt.current
       if (shouldSaveDraft(info)) {
-        drafts.set(route.sessionID, info)
+        drafts.set(boundSessionID, info)
       }
     }
     prompt = r
     promptRef.set(r)
     if (!r) return
+    boundSessionID = route.sessionID
     const resolution = resolveDraft(seeded, !!route.prompt, drafts.has(route.sessionID))
     if (resolution.action === "initial") {
       seeded = true
@@ -316,12 +320,13 @@ export function Session() {
 
   useKeyboard((evt) => {
     if (keybind.match("dashboard", evt)) {
+      const sid = boundSessionID ?? route.sessionID
       if (prompt) {
         const info = prompt.current
         if (info.input || info.parts.length) {
-          drafts.set(route.sessionID, info)
+          drafts.set(sid, info)
         } else {
-          drafts.delete(route.sessionID)
+          drafts.delete(sid)
         }
       }
       navigate({ type: "home" })

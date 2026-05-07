@@ -97,23 +97,25 @@ Dispatch guards escape/app_exit handling in `permission.tsx` and `question.tsx` 
 ### Draft save/restore logic lost or broken
 Dispatch saves the prompt draft when permission dialogs appear (Prompt unmounts) and restores it when they dismiss (Prompt remounts). The logic uses `shouldSave()`, `resolve()`, and `shouldBlock()` from `draft.ts`. Upstream has no draft persistence across permission dialogs. The auto-submit prevention (`shouldBlock`) is critical — without it, the Enter key that navigated into the session auto-submits the restored draft.
 
-**Two restore paths — both must set `restored = true`:**
+**Single restore path via `bind` in `session/index.tsx`:**
 
-1. **`bind` path** (`session/index.tsx`): `resolveDraft` returns `{ action: "draft", block: true }` → `r.set(draft, true)` → sets `restored = true` in the Prompt closure.
-2. **`stashed` path** (`prompt/index.tsx` `onMount`): upstream's module-level `stashed` variable restores content when the Prompt remounts. This path must also set `restored = true` before calling `input.setText`.
+Draft persistence is handled entirely by the session route's `bind` callback and its module-level `drafts` Map (keyed by `route.sessionID`). The Prompt component itself has NO draft stash logic — upstream's module-level `stashed` variable has been removed.
 
-In `@opentui/solid`'s custom renderer the ref callback (which calls `bind`) may fire **after** `onMount` rather than during the render phase. If `onMount` consumes `stashed` without setting `restored = true`, the Enter key that triggered navigation auto-submits the restored draft before `bind` has a chance to set the flag.
+- When Prompt unmounts (e.g., permission dialog or navigating home), `bind(undefined)` saves the current prompt to `drafts.set(route.sessionID, info)`.
+- When Prompt remounts, `bind(r)` calls `resolveDraft(...)` → `r.set(draft, true)` → sets `restored = true` in the Prompt closure, preventing auto-submit.
 
-**Fix:** In `prompt/index.tsx` `onMount`, set `restored = true` before restoring from `stashed`:
-```ts
-if (saved && saved.prompt.input) {
-  restored = true  // ← must be here
-  input.setText(saved.prompt.input)
-  ...
-}
+**Why Prompt has no stash:** Upstream uses a module-level `let stashed` variable in the Prompt component. This causes drafts to leak between sessions because: (1) it's a single global slot shared by all Prompt instances, and (2) `props.sessionID` is a reactive SolidJS getter that may reflect the new route by the time `onCleanup` fires. The session route's `bind`/`drafts` mechanism is already per-session and doesn't have this problem.
+
+**If upstream re-adds a `stashed` variable to `prompt/index.tsx`, remove it.** All draft save/restore should go through the session route's `bind` callback.
+
+**Symptom if broken:** Typed text disappears when a permission dialog appears. Or, restored draft auto-submits immediately without user confirmation. Or, draft text from one agent session appears in a different agent session.
+
+**Quick verification after merge:**
+```bash
+# Prompt component should NOT have any stash logic
+grep -n "stashed\|stashedBy" packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx
+# Should return NO matches
 ```
-
-**Symptom:** Typed text disappears when a permission dialog appears. Or, restored draft auto-submits immediately without user confirmation (pressing Enter in the home dashboard to re-enter a session auto-sends the draft).
 
 ### Permission pending map scoped to InstanceState instead of global
 Upstream stores the pending permission map inside `InstanceState`, which is keyed by Instance directory. Dispatch needs a **module-level** `globalPending` map so the TUI (running in the main project directory) can reply to permission requests raised by agent sessions in worktree directories. Without this, pressing y/n on a permission dialog from the dashboard does nothing — the TUI's InstanceState has an empty `pending` map because the request lives in a different directory's InstanceState.

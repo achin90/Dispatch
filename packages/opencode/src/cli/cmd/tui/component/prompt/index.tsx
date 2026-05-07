@@ -15,7 +15,7 @@ import { useSync } from "@tui/context/sync"
 import { useEvent } from "@tui/context/event"
 import { useEditorContext } from "@tui/context/editor"
 import { MessageID, PartID } from "@/session/schema"
-import { createStore, produce, unwrap } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
 import { assign } from "./part"
@@ -87,7 +87,6 @@ function fadeColor(color: RGBA, alpha: number) {
   return RGBA.fromValues(color.r, color.g, color.b, color.a * alpha)
 }
 
-let stashed: { prompt: PromptInfo; cursor: number } | undefined
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -505,25 +504,7 @@ export function Prompt(props: PromptProps) {
     },
   }
 
-  onMount(() => {
-    const saved = stashed
-    stashed = undefined
-    if (store.prompt.input) return
-    if (saved && saved.prompt.input) {
-      // Mark as restored so shouldBlock() prevents the Enter key that triggered
-      // navigation from auto-submitting the restored draft.
-      restored = true
-      input.setText(saved.prompt.input)
-      setStore("prompt", saved.prompt)
-      restoreExtmarksFromParts(saved.prompt.parts)
-      input.cursorOffset = saved.cursor
-    }
-  })
-
   onCleanup(() => {
-    if (store.prompt.input) {
-      stashed = { prompt: unwrap(store.prompt), cursor: input.cursorOffset }
-    }
     props.ref?.(undefined)
   })
 
