@@ -22,6 +22,9 @@ import { SessionCompaction } from "./compaction"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
 import { AppRuntime } from "@/effect/app-runtime"
+import * as Log from "@opencode-ai/core/util/log"
+
+const log = Log.create({ service: "claude-sdk-processor" })
 
 // ---------------------------------------------------------------------------
 // Error message extraction
@@ -189,6 +192,17 @@ export async function processClaudeSdkStream(
           // Only track top-level messages (not subagent) for context size
           if (assistant.parent_tool_use_id === null) {
             lastTurnUsage = assistant.message.usage
+          }
+          // Log any ExitPlanMode tool use so we can confirm it appears in the stream
+          for (const block of assistant.message.content) {
+            if (block.type === "tool_use") {
+              log.info("processClaudeSdkStream: tool_use in assistant message", {
+                toolName: block.name,
+                toolUseId: block.id,
+                isExitPlanMode: block.name === "ExitPlanMode",
+                parentToolUseId: assistant.parent_tool_use_id,
+              })
+            }
           }
           await processAssistantMessage(assistant, sessionID, assistantMessage, subagentMap, input.setStatus)
           break

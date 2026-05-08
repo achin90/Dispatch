@@ -39,6 +39,7 @@ import { SessionProcessor } from "./processor"
 import { createClaudeSdkQuery, resolveMcpServers, createPluginToolMcpServer, PLUGIN_TOOL_SERVER_NAME } from "./claude-sdk-query"
 import { processClaudeSdkStream, type CompactionRef } from "./claude-sdk-processor"
 import { Tool } from "@/tool/tool"
+import { Question } from "@/question"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
@@ -105,6 +106,7 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const scope = yield* Scope.Scope
     const instruction = yield* Instruction.Service
+    const question = yield* Question.Service
     const state = yield* SessionRunState.Service
     const revert = yield* SessionRevert.Service
     const summary = yield* SessionSummary.Service
@@ -1545,6 +1547,52 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             yield* instruction.clear(msg.id)
 
+            // If the plan agent's turn included an ExitPlanMode tool call, ask the user
+            // which agent to switch to and create a synthetic user message so the loop
+            // continues with the new agent. ExitPlanMode bypasses canUseTool, so we
+            // detect it here after the SDK turn completes.
+            if (agent.name === "plan") {
+              const assistantParts = MessageV2.parts(msg.id)
+              if (assistantParts.some((p) => p.type === "tool" && p.tool === "exitplanmode")) {
+                log.info("runLoop: ExitPlanMode detected in plan agent turn, asking user to switch agent")
+                const answers = yield* question.ask({
+                  sessionID,
+                  questions: [{
+                    question: "Plan is complete. Which agent would you like to switch to?",
+                    header: "Switch Agent",
+                    options: [
+                      { label: "Build", description: "Default agent. Asks for permission on edits and bash commands" },
+                      { label: "Yolo", description: "Auto-approves all tool calls without asking" },
+                      { label: "Stay in Plan", description: "Continue refining the plan" },
+                    ],
+                  }],
+                }).pipe(Effect.catch(() => Effect.succeed(null as null)))
+
+                if (answers && answers[0]?.[0] !== "Stay in Plan") {
+                  const selectedAgent = answers[0]?.[0] === "Yolo" ? "yolo" : "build"
+                  const switchModel = lastUser.model ?? (yield* provider.defaultModel())
+                  const switchMsg: MessageV2.User = {
+                    id: MessageID.ascending(),
+                    sessionID,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: selectedAgent,
+                    model: switchModel,
+                  }
+                  yield* sessions.updateMessage(switchMsg)
+                  yield* sessions.updatePart({
+                    id: PartID.ascending(),
+                    messageID: switchMsg.id,
+                    sessionID,
+                    type: "text",
+                    text: "The plan has been approved, you can now edit files. Execute the plan",
+                    synthetic: true,
+                  } satisfies MessageV2.TextPart)
+                  log.info("runLoop: switched agent after ExitPlanMode", { selectedAgent })
+                }
+              }
+            }
+
             // Before exiting, check if the user queued messages while the SDK was running.
             // Without this the loop would always break and leave them as UNSENT.
             const msgs2 = yield* MessageV2.filterCompactedEffect(sessionID)
@@ -1841,6 +1889,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Truncate.defaultLayer),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Config.defaultLayer),
+    Layer.provide(Question.defaultLayer),
     Layer.provide(Instruction.defaultLayer),
     Layer.provide(AppFileSystem.defaultLayer),
     Layer.provide(Plugin.defaultLayer),

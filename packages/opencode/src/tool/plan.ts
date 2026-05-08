@@ -36,19 +36,21 @@ export const PlanExitTool = Tool.define(
             sessionID: ctx.sessionID,
             questions: [
               {
-                question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
-                header: "Build Agent",
+                question: `Plan at ${plan} is complete. Which agent would you like to switch to?`,
+                header: "Switch Agent",
                 custom: false,
                 options: [
-                  { label: "Yes", description: "Switch to build agent and start implementing the plan" },
-                  { label: "No", description: "Stay with plan agent to continue refining the plan" },
+                  { label: "Build", description: "Default agent. Asks for permission on edits and bash commands" },
+                  { label: "Yolo", description: "Auto-approves all tool calls without asking" },
+                  { label: "Stay in Plan", description: "Continue refining the plan" },
                 ],
               },
             ],
             tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
           })
 
-          if (answers[0]?.[0] === "No") yield* new Question.RejectedError()
+          if (answers[0]?.[0] === "Stay in Plan") yield* new Question.RejectedError()
+          const selectedAgent = answers[0]?.[0] === "Yolo" ? "yolo" : "build"
 
           const model = getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
 
@@ -57,7 +59,7 @@ export const PlanExitTool = Tool.define(
             sessionID: ctx.sessionID,
             role: "user",
             time: { created: Date.now() },
-            agent: "build",
+            agent: selectedAgent,
             model,
           }
           yield* session.updateMessage(msg)
@@ -71,8 +73,8 @@ export const PlanExitTool = Tool.define(
           } satisfies MessageV2.TextPart)
 
           return {
-            title: "Switching to build agent",
-            output: "User approved switching to build agent. Wait for further instructions.",
+            title: `Switching to ${selectedAgent} agent`,
+            output: `User approved switching to ${selectedAgent} agent. Wait for further instructions.`,
             metadata: {},
           }
         }).pipe(Effect.orDie),

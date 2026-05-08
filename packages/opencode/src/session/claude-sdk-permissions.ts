@@ -10,6 +10,7 @@
 
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk"
 import { createTwoFilesPatch } from "diff"
+import * as Log from "@opencode-ai/core/util/log"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Question } from "@/question"
@@ -17,8 +18,11 @@ import * as Filesystem from "@/util/filesystem"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
-import { SessionID, MessageID } from "@/session/schema"
+import { SessionID, MessageID, PartID } from "@/session/schema"
+import { Provider } from "@/provider/provider"
 import { AppRuntime } from "@/effect/app-runtime"
+
+const log = Log.create({ service: "claude-sdk-permissions" })
 
 // ---------------------------------------------------------------------------
 // Pending metadata — diffs generated before tool parts may exist
@@ -213,6 +217,81 @@ async function question(
 }
 
 // ---------------------------------------------------------------------------
+// ExitPlanMode bridge — switches agent when the SDK exits plan mode
+// ---------------------------------------------------------------------------
+
+/**
+ * When the SDK calls ExitPlanMode, ask the user which agent to switch to
+ * and create a synthetic user message so the main loop picks up the new agent.
+ */
+async function exitPlanMode(
+  opts: CanUseToolBridgeOptions,
+  signal: AbortSignal,
+): Promise<PermissionResult> {
+  log.info("exitPlanMode: called via canUseTool", { sessionID: opts.sessionID })
+  const answers = await Promise.race([
+    AppRuntime.runPromise(Question.Service.use((svc) => svc.ask({
+      sessionID: opts.sessionID,
+      questions: [{
+        question: "Plan is complete. Which agent would you like to switch to?",
+        header: "Switch Agent",
+        options: [
+          { label: "Build", description: "Default agent. Asks for permission on edits and bash commands" },
+          { label: "Yolo", description: "Auto-approves all tool calls without asking" },
+          { label: "Stay in Plan", description: "Continue refining the plan" },
+        ],
+      }],
+    }))),
+    new Promise<never>((_, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
+    }),
+  ]).catch(() => null)
+
+  if (!answers || answers[0]?.[0] === "Stay in Plan") {
+    log.info("exitPlanMode: user dismissed or chose to stay in plan mode")
+    return { behavior: "deny", message: "User chose to stay in plan mode" }
+  }
+
+  const selectedAgent = answers[0]?.[0] === "Yolo" ? "yolo" : "build"
+  log.info("exitPlanMode: user selected agent", { selectedAgent })
+
+  // Get model info from the latest user message
+  let model: MessageV2.User["model"] | undefined
+  for (const item of MessageV2.stream(opts.sessionID)) {
+    if (item.info.role === "user" && item.info.model) {
+      model = item.info.model
+      break
+    }
+  }
+  if (!model) {
+    model = await AppRuntime.runPromise(Provider.Service.use((svc) => svc.defaultModel()))
+  }
+
+  // Create synthetic user message to switch agent
+  const msgId = MessageID.ascending()
+  await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage({
+    id: msgId,
+    sessionID: opts.sessionID,
+    role: "user",
+    time: { created: Date.now() },
+    agent: selectedAgent,
+    model,
+  } satisfies MessageV2.User)))
+
+  await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
+    id: PartID.ascending(),
+    messageID: msgId,
+    sessionID: opts.sessionID,
+    type: "text",
+    text: "The plan has been approved, you can now edit files. Execute the plan",
+    synthetic: true,
+  } satisfies MessageV2.TextPart)))
+
+  log.info("exitPlanMode: synthetic user message created", { msgId, selectedAgent })
+  return { behavior: "allow" }
+}
+
+// ---------------------------------------------------------------------------
 // Create canUseTool callback
 // ---------------------------------------------------------------------------
 
@@ -298,6 +377,8 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
         return { behavior: "deny", message: "Request aborted" }
       }
 
+      log.info("canUseTool: received tool call", { toolName, sessionID: options.sessionID })
+
       // ------------------------------------------------------------------
       // AskUserQuestion: route through the Question system instead of
       // the generic permission flow. The SDK expects answers to be
@@ -305,6 +386,14 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       // ------------------------------------------------------------------
       if (toolName === "AskUserQuestion") {
         return question(input, options, signal)
+      }
+
+      // ------------------------------------------------------------------
+      // ExitPlanMode: ask the user which agent to switch to and create a
+      // synthetic user message so the main loop picks up the new agent.
+      // ------------------------------------------------------------------
+      if (toolName === "ExitPlanMode") {
+        return exitPlanMode(options, signal)
       }
 
       const patterns = extractPatterns(toolName, input)

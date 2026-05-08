@@ -225,7 +225,7 @@ export const layer: Layer.Layer<
             tool.skill,
             tool.patch,
             ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
-            ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
+            tool.plan,
           ],
           task: tool.task,
           read: tool.read,
