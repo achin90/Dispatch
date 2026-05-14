@@ -10,6 +10,7 @@
 
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk"
 import { createTwoFilesPatch } from "diff"
+import path from "path"
 import * as Log from "@opencode-ai/core/util/log"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
@@ -107,6 +108,94 @@ export function derivePermissionName(toolName: string): string {
     default:
       // MCP tools come as "mcp__server__tool" — pass through as-is
       return toolName.toLowerCase()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// File path helpers — normalise SDK patterns to match standard tool behaviour
+// ---------------------------------------------------------------------------
+
+const FILE_TOOLS = new Set(["Read", "Write", "Edit", "NotebookEdit"])
+
+/** Extract the file path from a file-based tool's input, if present. */
+function extractFilePath(toolName: string, input: Record<string, unknown>): string | undefined {
+  if (!FILE_TOOLS.has(toolName)) return undefined
+  const raw = toolName === "NotebookEdit" ? input.notebook_path : input.file_path
+  return typeof raw === "string" ? raw : undefined
+}
+
+/**
+ * Normalise patterns for a file-based tool so the permission system sees the
+ * same relative-path format the standard (AI SDK) tool path produces.
+ *
+ * Standard tools call:
+ *   ctx.ask({ permission: "edit", patterns: [path.relative(Instance.worktree, filePath)] })
+ *
+ * Without normalisation the SDK bridge would pass the raw absolute path,
+ * which doesn't match relative-path permission rules in the agent config.
+ */
+function normaliseFilePatterns(toolName: string, patterns: string[]): string[] {
+  if (!FILE_TOOLS.has(toolName)) return patterns
+  return patterns.map((p) => (path.isAbsolute(p) ? path.relative(Instance.worktree, p) : p))
+}
+
+/**
+ * Check external_directory permission for a file outside the project boundary.
+ * Mirrors the gate in tool/external-directory.ts that standard tools run.
+ * Returns null when the file is inside the project or permission is granted;
+ * returns a deny PermissionResult when the check fails.
+ */
+async function checkExternalDirectory(
+  filePath: string,
+  opts: CanUseToolBridgeOptions,
+  signal: AbortSignal,
+): Promise<PermissionResult | null> {
+  if (Instance.containsPath(filePath)) return null
+
+  const dir = path.dirname(filePath)
+  const glob = path.join(dir, "*")
+  const requestID = PermissionID.ascending()
+
+  try {
+    await Promise.race([
+      AppRuntime.runPromise(
+        Permission.Service.use((svc) =>
+          svc.ask({
+            id: requestID,
+            sessionID: opts.sessionID,
+            permission: "external_directory",
+            patterns: [glob],
+            metadata: { filepath: filePath, parentDir: dir },
+            always: [glob],
+            ruleset: opts.ruleset ?? [],
+          }),
+        ),
+      ),
+      new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
+      }),
+    ])
+    return null
+  } catch (error) {
+    // Clean up the pending permission entry if abort won the race
+    // (same pattern as createCanUseToolBridge's catch block)
+    const fromPermission =
+      error instanceof Permission.DeniedError ||
+      error instanceof Permission.RejectedError ||
+      error instanceof Permission.CorrectedError
+    if (!fromPermission) {
+      AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({ requestID, reply: "reject" }))).catch(() => {})
+    }
+
+    const msg =
+      error instanceof Permission.DeniedError
+        ? "Permission denied by ruleset: external directory"
+        : error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
+          ? "User rejected permission"
+          : error instanceof Error
+            ? error.message
+            : "Permission denied"
+    return { behavior: "deny", message: msg }
   }
 }
 
@@ -396,9 +485,28 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
         return exitPlanMode(options, signal)
       }
 
-      const patterns = extractPatterns(toolName, input)
+      const rawPatterns = extractPatterns(toolName, input)
       const permission = derivePermissionName(toolName)
       const requestID = PermissionID.ascending()
+
+      // Gate 1: external_directory check for file-based tools outside the
+      // project boundary — mirrors assertExternalDirectoryEffect in the
+      // standard tool path.
+      const filePath = extractFilePath(toolName, input)
+      if (filePath) {
+        const denied = await checkExternalDirectory(filePath, options, signal)
+        if (denied) {
+          const denyMsg = denied.behavior === "deny" ? (denied.message ?? "Permission denied") : "Permission denied"
+          await markToolDenied(options.messageID, callOptions.toolUseID, denyMsg)
+          return denied
+        }
+      }
+
+      // Gate 2: tool-specific permission check.
+      // Normalise file-based patterns to relative paths so the same
+      // permission rules work in both the Claude SDK and standard tool paths.
+      const patterns = normaliseFilePatterns(toolName, rawPatterns)
+      log.info("canUseTool: permission check", { toolName, permission, patterns, rawPatterns, rulesetLength: options.ruleset?.length ?? 0 })
 
       // Generate diff metadata for edit/write tools
       const diffInfo = await generateEditDiff(toolName, input)

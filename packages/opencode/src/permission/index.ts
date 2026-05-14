@@ -202,9 +202,14 @@ export const layer = Layer.effect(
         const rule = evaluate(request.permission, pattern, ruleset, approved)
         log.info("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
-          return yield* new DeniedError({
-            ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
+          const relevant = ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission))
+          log.info("denied", {
+            permission: request.permission,
+            pattern,
+            matchedRule: `${rule.permission}:${rule.pattern}=${rule.action}`,
+            relevantRules: relevant.map((r) => `${r.permission}:${r.pattern}=${r.action}`),
           })
+          return yield* new DeniedError({ ruleset: relevant })
         }
         if (rule.action === "allow") continue
         needsAsk = true

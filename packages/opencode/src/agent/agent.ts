@@ -134,11 +134,13 @@ export const layer = Layer.effect(
                 plan_exit: "allow",
                 external_directory: {
                   [path.join(Global.Path.data, "plans", "*")]: "allow",
+                  [path.join(Global.Path.config, "plans", "*")]: "allow",
                 },
                 edit: {
                   "*": "deny",
                   [path.join(".opencode", "plans", "*.md")]: "allow",
-                  [path.relative(ctx.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+                  [path.relative(ctx.worktree, path.join(Global.Path.data, "plans", "*.md"))]: "allow",
+                  [path.relative(ctx.worktree, path.join(Global.Path.config, "plans", "*.md"))]: "allow",
                 },
               }),
               user,
