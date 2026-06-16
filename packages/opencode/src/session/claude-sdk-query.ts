@@ -39,7 +39,7 @@ import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge } from "./claude-sdk-permissions"
 import { getSdkSessionEntry, removeSdkSessionID } from "./claude-sdk-session-map"
-import bin from "@anthropic-ai/claude-agent-sdk/embed"
+import bin from "./claude-sdk-bin"
 
 const log = Log.create({ service: "claude-sdk-query" })
 
@@ -323,7 +323,7 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
       env,
       betas: ["context-1m-2025-08-07"],
       permissionMode: input.permissionMode ?? "default",
-      pathToClaudeCodeExecutable: bin,
+      ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       canUseTool: createCanUseToolBridge({

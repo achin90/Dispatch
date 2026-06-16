@@ -1,10 +1,10 @@
 import { query } from "@anthropic-ai/claude-agent-sdk"
-import bin from "@anthropic-ai/claude-agent-sdk/embed"
 import { generateText } from "ai"
 import { resolveApiKey } from "./claude-sdk-query"
 import { Provider } from "@/provider/provider"
 import type { ProviderID } from "@/provider/schema"
 import { AppRuntime } from "@/effect/app-runtime"
+import bin from "./claude-sdk-bin"
 
 const PREFIX =
   "You are a summarizer for a developer dashboard that shows the status of AI coding agents.\n" +
@@ -39,7 +39,7 @@ export namespace Summarize {
           tools: [],
           env,
           abortController: controller,
-          pathToClaudeCodeExecutable: bin,
+          ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
         },
       })) {
         if (evt.type === "assistant") {

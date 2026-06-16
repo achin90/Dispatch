@@ -20,8 +20,8 @@ import { isOverflow as overflow, usable } from "./overflow"
 import { makeRuntime } from "@/effect/run-service"
 import { fn } from "@/util/fn"
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
-import bin from "@anthropic-ai/claude-agent-sdk/embed"
 import type { SDKAssistantMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk"
+import bin from "./claude-sdk-bin"
 import { resolveApiKey } from "./claude-sdk-query"
 import { resultMessageToMetadata } from "./claude-sdk-adapter"
 import { getSdkSessionID, removeSdkSessionID } from "./claude-sdk-session-map"
@@ -490,7 +490,7 @@ export const layer: Layer.Layer<
               env,
               resume: sdkSession,
               maxTurns: 1,
-              pathToClaudeCodeExecutable: bin,
+              ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
               hooks: {
                 PostCompact: [
                   {

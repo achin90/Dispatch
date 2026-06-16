@@ -168,6 +168,11 @@ const binaries: Record<string, string> = {}
 if (!skipInstall) {
   await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
   await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
+  // Install every platform's native Claude CLI binary so compiled targets can
+  // embed the matching one via `import ... with { type: 'file' }`. The SDK lists
+  // each platform binary under `optionalDependencies`; --os="*" --cpu="*" pulls
+  // them all instead of just the current host's.
+  await $`bun install --os="*" --cpu="*" @anthropic-ai/claude-agent-sdk@${pkg.devDependencies["@anthropic-ai/claude-agent-sdk"]}`
 }
 for (const item of targets) {
   const name = [
@@ -192,6 +197,13 @@ for (const item of targets) {
   const bunfsRoot = item.os === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/"
   const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
 
+  // Per-target shim that embeds the matching Claude CLI binary into $bunfs.
+  // src/session/claude-sdk-bin.ts imports this at runtime and runs
+  // extractFromBunfs() on the embedded path so the SDK can spawn it.
+  const sdkPlatformPkg = `@anthropic-ai/claude-agent-sdk-${item.os}-${item.arch}${item.abi === "musl" ? "-musl" : ""}`
+  const sdkBinFile = item.os === "win32" ? "claude.exe" : "claude"
+  const claudeSdkBinShim = `import binPath from '${sdkPlatformPkg}/${sdkBinFile}' with { type: 'file' }\nexport default binPath\n`
+
   await Bun.build({
     conditions: ["browser"],
     tsconfig: "./tsconfig.json",
@@ -210,7 +222,10 @@ for (const item of targets) {
       execArgv: [`--user-agent=dispatch/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
-    files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
+    files: {
+      ...(embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {}),
+      "claude-sdk-bin.gen.ts": claudeSdkBinShim,
+    },
     entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : [])],
     define: {
       OPENCODE_VERSION: `'${Script.version}'`,

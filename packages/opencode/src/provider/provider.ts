@@ -981,11 +981,27 @@ export const SDK_MODELS: Record<
   }
 > = {
   default: {
+    resolves: "claude-opus-4-7[1m]",
+    name: "Opus 4.7 (1M context)",
+    context: 1_000_000,
+    output: 64_000,
+    description: "Most capable for complex work",
+    reasoning: true,
+  },
+  "opus-4-6": {
+    resolves: "claude-opus-4-6",
+    name: "Opus 4.6",
+    context: 200_000,
+    output: 64_000,
+    description: "Previous generation Opus",
+    reasoning: true,
+  },
+  "opus-4-6[1m]": {
     resolves: "claude-opus-4-6[1m]",
     name: "Opus 4.6 (1M context)",
     context: 1_000_000,
     output: 64_000,
-    description: "Most capable for complex work",
+    description: "Previous generation Opus · 1M context",
     reasoning: true,
   },
   sonnet: {
