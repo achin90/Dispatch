@@ -82,9 +82,8 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
         return store[key] ?? defaultValue
       },
       set(key: string, value: any) {
+        if (typeof value === "function") value = value(store[key])
         setStore(key, value)
-        // Clone only the value being set — the rest will be read from disk
-        // under the lock so concurrent processes never clobber each other's keys.
         const clonedValue = structuredClone(value)
         if (key === "agents" && Array.isArray(value)) {
           log.info("set agents", { count: value.length, ids: value.map((a: AgentEntry) => a.id).join(",") })
