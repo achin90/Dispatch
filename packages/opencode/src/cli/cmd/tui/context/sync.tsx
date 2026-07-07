@@ -118,6 +118,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const kv = useKV()
 
     const fullSyncedSessions = new Set<string>()
+    const [directoryCommands, setDirectoryCommands] = createStore<Record<string, Command[]>>({})
+    const directoryCommandFetches = new Set<string>()
     let syncedWorkspace = project.workspace.current()
 
     function sessionListQuery(): { scope?: "project"; path?: string } {
@@ -541,6 +543,26 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             }),
           )
           fullSyncedSessions.add(sessionID)
+        },
+      },
+      command: {
+        // Commands scoped to a directory. Agents created from the dashboard can
+        // live outside the TUI launch directory; their config (.opencode/command)
+        // resolves from their own root, so the launch directory's list does not apply.
+        for(directory?: string): Command[] {
+          const dir = directory?.replace(/\/+$/, "")
+          const base = project.data.instance.path.directory?.replace(/\/+$/, "")
+          if (!dir || dir === base) return store.command
+          if (!directoryCommandFetches.has(dir)) {
+            directoryCommandFetches.add(dir)
+            void sdk.client.command
+              .list({ directory: dir })
+              .then((x) => setDirectoryCommands(dir, x.data ?? []))
+              .catch(() => {
+                directoryCommandFetches.delete(dir)
+              })
+          }
+          return directoryCommands[dir] ?? store.command
         },
       },
       bootstrap,

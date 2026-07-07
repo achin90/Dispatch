@@ -104,6 +104,11 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  // The directory this prompt operates in — sessions created from the dashboard
+  // can live outside the TUI launch directory.
+  const promptDirectory = createMemo(
+    () => props.directory ?? (props.sessionID ? sync.session.get(props.sessionID)?.directory : undefined),
+  )
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -814,7 +819,7 @@ export function Prompt(props: PromptProps) {
       iife(() => {
         const firstLine = inputText.split("\n")[0]
         const command = firstLine.split(" ")[0].slice(1)
-        return sync.data.command.some((x) => x.name === command)
+        return sync.command.for(promptDirectory()).some((x) => x.name === command)
       })
     ) {
       // Parse command from first line, preserve multi-line content in arguments
@@ -1027,7 +1032,7 @@ export function Prompt(props: PromptProps) {
     <>
       <Autocomplete
         sessionID={props.sessionID}
-        directory={props.directory}
+        directory={promptDirectory()}
         ref={(r) => {
           autocomplete = r
           setAuto(() => r)
