@@ -91,13 +91,13 @@ Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard**
 Installs a pre-built binary for your platform to `~/.dispatch/bin/dispatch` and adds it to your PATH:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DemonicEgg/Dispatch/claudesdk/install | bash
+curl -fsSL https://raw.githubusercontent.com/achin90/Dispatch/claudesdk/install | bash
 ```
 
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DemonicEgg/Dispatch/claudesdk/install | bash -s -- --version 0.1.0
+curl -fsSL https://raw.githubusercontent.com/achin90/Dispatch/claudesdk/install | bash -s -- --version 0.1.0
 ```
 
 Then run from any directory:
@@ -112,7 +112,7 @@ dispatch ~/Documents/workspace
 Requires [Bun](https://bun.sh) v1.3.11 or later. Clones, builds, and installs to `~/.dispatch/bin/dispatch`:
 
 ```bash
-git clone https://github.com/DemonicEgg/Dispatch.git
+git clone https://github.com/achin90/Dispatch.git
 cd Dispatch
 ./install-from-source
 ```
@@ -128,7 +128,7 @@ git pull && ./install-from-source
 Runs the TypeScript source directly via Bun without a build step:
 
 ```bash
-git clone https://github.com/DemonicEgg/Dispatch.git
+git clone https://github.com/achin90/Dispatch.git
 cd Dispatch
 bun install
 bun run dev

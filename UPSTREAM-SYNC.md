@@ -5,7 +5,7 @@ Dispatch is a fork of [opencode](https://github.com/anomalyco/opencode). This do
 ## Setup
 
 **Remotes:**
-- `origin` — `https://github.com/DemonicEgg/Dispatch.git` (Dispatch fork)
+- `origin` — `https://github.com/achin90/Dispatch.git` (Dispatch fork)
 - `upstream` — `https://github.com/anomalyco/opencode.git` (upstream opencode)
 
 **Primary branch:** `claudesdk` — all Dispatch development happens here.
