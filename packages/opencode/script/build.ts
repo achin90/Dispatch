@@ -200,9 +200,14 @@ for (const item of targets) {
   // Per-target shim that embeds the matching Claude CLI binary into $bunfs.
   // src/session/claude-sdk-bin.ts imports this at runtime and runs
   // extractFromBunfs() on the embedded path so the SDK can spawn it.
+  // The platform packages are optional deps of the SDK, not of this package,
+  // so under Bun's isolated linker they are not resolvable from here — resolve
+  // them from the SDK's real location in the store and embed the absolute path.
   const sdkPlatformPkg = `@anthropic-ai/claude-agent-sdk-${item.os}-${item.arch}${item.abi === "musl" ? "-musl" : ""}`
   const sdkBinFile = item.os === "win32" ? "claude.exe" : "claude"
-  const claudeSdkBinShim = `import binPath from '${sdkPlatformPkg}/${sdkBinFile}' with { type: 'file' }\nexport default binPath\n`
+  const sdkRealDir = fs.realpathSync(path.join(dir, "node_modules/@anthropic-ai/claude-agent-sdk"))
+  const sdkBinSource = Bun.resolveSync(`${sdkPlatformPkg}/${sdkBinFile}`, sdkRealDir)
+  const claudeSdkBinShim = `import binPath from ${JSON.stringify(sdkBinSource)} with { type: 'file' }\nexport default binPath\n`
 
   await Bun.build({
     conditions: ["browser"],
