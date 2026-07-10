@@ -1489,7 +1489,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 cwd: ctx.directory,
                 maxTurns: isLastStep ? 1 : undefined,
                 ruleset: Permission.merge(agent.permission, session.permission ?? []),
-                effort: lastUser.model.variant as "low" | "medium" | "high" | "max" | undefined,
+                effort: lastUser.model.variant as "low" | "medium" | "high" | "xhigh" | "max" | undefined,
                 mcpServers,
                 abortController,
                 hooks: {

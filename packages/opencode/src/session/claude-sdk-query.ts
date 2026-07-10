@@ -321,7 +321,6 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
       systemPrompt: input.systemPrompt,
       cwd,
       env,
-      betas: ["context-1m-2025-08-07"],
       permissionMode: input.permissionMode ?? "default",
       ...(bin ? { pathToClaudeCodeExecutable: bin } : {}),
       allowedTools: input.allowedTools,
