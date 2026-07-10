@@ -159,7 +159,7 @@ describe("claude-sdk permissions", () => {
   })
 
   describe("createCanUseToolBridge", () => {
-    const defaultCallOptions = { signal: AbortSignal.any([]), toolUseID: "toolu_test" }
+    const defaultCallOptions = { signal: AbortSignal.any([]), toolUseID: "toolu_test", requestId: "req_test" }
 
     async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
       await using tmp = await tmpdir({ git: true })
@@ -186,7 +186,7 @@ describe("claude-sdk permissions", () => {
 
         try {
           const result = await bridge("Read", { file_path: "/tmp/test.ts" }, defaultCallOptions)
-          expect(result.behavior).toBe("allow")
+          expect(result?.behavior).toBe("allow")
           expect(capturedPermission).toBe("read")
           expect(capturedPatterns).toEqual(["/tmp/test.ts"])
           expect(capturedSessionID).toBe(sid)
@@ -209,7 +209,7 @@ describe("claude-sdk permissions", () => {
 
         try {
           const result = await bridge("Bash", { command: "echo hi" }, defaultCallOptions)
-          expect(result.behavior).toBe("allow")
+          expect(result?.behavior).toBe("allow")
         } finally {
           unsubscribe()
         }
@@ -229,8 +229,8 @@ describe("claude-sdk permissions", () => {
 
         try {
           const result = await bridge("Write", { file_path: "/etc/passwd", content: "bad" }, defaultCallOptions)
-          expect(result.behavior).toBe("deny")
-          if (result.behavior === "deny") {
+          expect(result?.behavior).toBe("deny")
+          if (result?.behavior === "deny") {
             expect(result.message).toBe("User rejected permission")
           }
         } finally {
@@ -246,11 +246,11 @@ describe("claude-sdk permissions", () => {
         const result = await bridge(
           "Read",
           { file_path: "/tmp/x" },
-          { signal: AbortSignal.abort(), toolUseID: "toolu_test" },
+          { signal: AbortSignal.abort(), toolUseID: "toolu_test", requestId: "req_test" },
         )
 
-        expect(result.behavior).toBe("deny")
-        if (result.behavior === "deny") {
+        expect(result?.behavior).toBe("deny")
+        if (result?.behavior === "deny") {
           expect(result.message).toBe("Request aborted")
         }
       })
@@ -264,14 +264,14 @@ describe("claude-sdk permissions", () => {
         const resultPromise = bridge(
           "Read",
           { file_path: "/tmp/x" },
-          { signal: controller.signal, toolUseID: "toolu_test" },
+          { signal: controller.signal, toolUseID: "toolu_test", requestId: "req_test" },
         )
 
         setTimeout(() => controller.abort(), 10)
 
         const result = await resultPromise
-        expect(result.behavior).toBe("deny")
-        if (result.behavior === "deny") {
+        expect(result?.behavior).toBe("deny")
+        if (result?.behavior === "deny") {
           expect(result.message).toBe("Request aborted")
         }
       })
@@ -317,10 +317,10 @@ describe("claude-sdk permissions", () => {
       try {
         const result = await Instance.provide({
           directory: agentDir.path,
-          fn: () => bridge("Read", { file_path: "/tmp/test.ts" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross" }),
+          fn: () => bridge("Read", { file_path: "/tmp/test.ts" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross", requestId: "req_cross" }),
         })
         expect(capturedID).toBeDefined()
-        expect(result.behavior).toBe("allow")
+        expect(result?.behavior).toBe("allow")
       } finally {
         unsubscribe()
       }
@@ -354,9 +354,9 @@ describe("claude-sdk permissions", () => {
       try {
         const result = await Instance.provide({
           directory: agentDir.path,
-          fn: () => bridge("Bash", { command: "echo hi" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross" }),
+          fn: () => bridge("Bash", { command: "echo hi" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross", requestId: "req_cross" }),
         })
-        expect(result.behavior).toBe("allow")
+        expect(result?.behavior).toBe("allow")
       } finally {
         unsubscribe()
       }
@@ -390,10 +390,10 @@ describe("claude-sdk permissions", () => {
       try {
         const result = await Instance.provide({
           directory: agentDir.path,
-          fn: () => bridge("Write", { file_path: "/etc/passwd", content: "bad" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross" }),
+          fn: () => bridge("Write", { file_path: "/etc/passwd", content: "bad" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross", requestId: "req_cross" }),
         })
-        expect(result.behavior).toBe("deny")
-        if (result.behavior === "deny") {
+        expect(result?.behavior).toBe("deny")
+        if (result?.behavior === "deny") {
           expect(result.message).toBe("User rejected permission")
         }
       } finally {
@@ -418,7 +418,12 @@ describe("claude-sdk permissions", () => {
           await bridge(
             "Bash",
             { command: "rm -rf /tmp/test" },
-            { signal: AbortSignal.any([]), toolUseID: "toolu_test", title: "Claude wants to run: rm -rf /tmp/test" },
+            {
+              signal: AbortSignal.any([]),
+              toolUseID: "toolu_test",
+              requestId: "req_test",
+              title: "Claude wants to run: rm -rf /tmp/test",
+            },
           )
 
           expect(capturedRequest).toBeDefined()
