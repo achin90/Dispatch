@@ -1037,19 +1037,11 @@ export const SDK_MODELS: Record<
     reasoning: true,
   },
   sonnet: {
-    resolves: "claude-sonnet-4-6",
-    name: "Sonnet 4.6",
-    context: 200_000,
-    output: 32_000,
-    description: "Best for everyday tasks",
-    reasoning: true,
-  },
-  "sonnet[1m]": {
-    resolves: "claude-sonnet-4-6[1m]",
-    name: "Sonnet 4.6 (1M context)",
+    resolves: "claude-sonnet-5",
+    name: "Sonnet 5",
     context: 1_000_000,
-    output: 32_000,
-    description: "Extra usage · $3/$15 per Mtok",
+    output: 64_000,
+    description: "Best for everyday tasks",
     reasoning: true,
   },
   haiku: {

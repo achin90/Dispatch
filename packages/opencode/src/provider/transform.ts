@@ -427,8 +427,14 @@ export function topK(model: Provider.Model) {
 const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
+const SUMMARIZED_THINKING_MODELS = ["fable-5", "opus-4-8", "opus-4-7", "sonnet-5"]
+
+function wantsSummarizedThinking(apiId: string): boolean {
+  return SUMMARIZED_THINKING_MODELS.some((v) => apiId.includes(v))
+}
+
 function anthropicAdaptiveEfforts(apiId: string): string[] | null {
-  if (["fable-5", "opus-4-8", "opus-4.8", "opus-4-7", "opus-4.7"].some((v) => apiId.includes(v))) {
+  if (SUMMARIZED_THINKING_MODELS.some((v) => apiId.includes(v))) {
     return ["low", "medium", "high", "xhigh", "max"]
   }
   if (["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"].some((v) => apiId.includes(v))) {
@@ -645,9 +651,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
             {
               thinking: {
                 type: "adaptive",
-                ...(["fable-5", "opus-4-8", "opus-4.8", "opus-4-7", "opus-4.7"].some((v) => model.api.id.includes(v))
-                  ? { display: "summarized" }
-                  : {}),
+                ...(wantsSummarizedThinking(model.api.id) ? { display: "summarized" } : {}),
               },
               effort,
             },
@@ -680,9 +684,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
               reasoningConfig: {
                 type: "adaptive",
                 maxReasoningEffort: effort,
-                ...(["fable-5", "opus-4-8", "opus-4.8", "opus-4-7", "opus-4.7"].some((v) => model.api.id.includes(v))
-                  ? { display: "summarized" }
-                  : {}),
+                ...(wantsSummarizedThinking(model.api.id) ? { display: "summarized" } : {}),
               },
             },
           ]),
