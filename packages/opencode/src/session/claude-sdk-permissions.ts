@@ -200,6 +200,66 @@ async function checkExternalDirectory(
 }
 
 // ---------------------------------------------------------------------------
+// Subagent permission propagation (PreToolUse hook)
+// ---------------------------------------------------------------------------
+
+/**
+ * PreToolUse hook that propagates the session ruleset to *subagent* tool calls.
+ *
+ * PreToolUse is the only hook the SDK fires for a subagent tool call before it
+ * runs; it carries agent_id and runs ahead of canUseTool. Without it, a
+ * subagent's out-of-workspace tool call takes the SDK's default headless path
+ * (auto-deny) and a permissive parent (e.g. yolo) never reaches its subagents.
+ *
+ * So we evaluate the same ruleset here and emit allow / deny / ask:
+ *  - allow → the SDK runs the tool without consulting canUseTool (verified: yolo
+ *    subagents run silently).
+ *  - ask   → the SDK surfaces it as a can_use_tool control request, i.e. it DOES
+ *    invoke canUseTool with options.agentID set, so the prompt reaches the TUI
+ *    via our bridge (verified: build subagents prompt interactively).
+ *  - deny  → the tool is blocked and canUseTool is bypassed.
+ *
+ * Main-thread calls (no agent_id) are passed through so canUseTool keeps owning
+ * edit diffs, AskUserQuestion / ExitPlanMode routing, and interactive prompts.
+ */
+export function createSubagentPermissionHook(ruleset: Permission.Ruleset) {
+  // Bind the current Instance ALS context: the SDK fires hooks from a stream
+  // reader context that loses AsyncLocalStorage, and normaliseFilePatterns reads
+  // Instance.worktree. Same reason createCanUseToolBridge binds its callback.
+  return Instance.bind(async (input: unknown) => {
+    const evt = input as { agent_id?: string; tool_name?: string; tool_input?: Record<string, unknown> }
+    // Main thread → leave it to canUseTool.
+    if (!evt.agent_id || !evt.tool_name) return { continue: true as const }
+
+    const toolInput = evt.tool_input ?? {}
+    const permission = derivePermissionName(evt.tool_name)
+    const patterns = normaliseFilePatterns(evt.tool_name, extractPatterns(evt.tool_name, toolInput))
+
+    // Combine per-pattern decisions: any deny wins; otherwise all-allow allows;
+    // otherwise ask — which the SDK re-routes through canUseTool (with agentID)
+    // so the prompt reaches the TUI.
+    const actions = patterns.map((pattern) => Permission.evaluate(permission, pattern, ruleset).action)
+    const decision: "allow" | "deny" | "ask" = actions.includes("deny")
+      ? "deny"
+      : actions.every((action) => action === "allow")
+        ? "allow"
+        : "ask"
+
+    return {
+      continue: true as const,
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse" as const,
+        permissionDecision: decision,
+        permissionDecisionReason:
+          decision === "allow"
+            ? "Inherited from parent session permissions"
+            : `Subagent tool '${evt.tool_name}' ${decision === "deny" ? "denied" : "not pre-approved"} by parent ruleset`,
+      },
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Diff generation for edit/write tools
 // ---------------------------------------------------------------------------
 
@@ -510,7 +570,14 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
 
       // Generate diff metadata for edit/write tools
       const diffInfo = await generateEditDiff(toolName, input)
-      const metadata: Record<string, unknown> = { toolName, title: callOptions.title }
+      const metadata: Record<string, unknown> = {
+        toolName,
+        title: callOptions.title,
+        // Present only for subagent tool calls (the SDK's `ask` path re-routes
+        // subagent requests through canUseTool with agentID set). Lets the TUI
+        // label the prompt as coming from a subagent rather than the main agent.
+        ...(callOptions.agentID ? { agentID: callOptions.agentID } : {}),
+      }
       if (diffInfo) {
         metadata.filepath = diffInfo.filepath
         metadata.diff = diffInfo.diff

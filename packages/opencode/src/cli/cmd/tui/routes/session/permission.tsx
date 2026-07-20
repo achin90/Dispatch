@@ -424,11 +424,16 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 
           const current = info()
 
+          const isSubagent = createMemo(() => typeof props.request.metadata?.agentID === "string")
+
           const header = () => (
             <box flexDirection="column" gap={0}>
               <box flexDirection="row" gap={1} flexShrink={0}>
                 <text fg={theme.warning}>{"△"}</text>
                 <text fg={theme.text}>Permission required</text>
+                <Show when={isSubagent()}>
+                  <text fg={theme.textMuted}>{"· subagent"}</text>
+                </Show>
               </box>
               <box flexDirection="row" gap={1} paddingLeft={2} flexShrink={0}>
                 <text fg={theme.textMuted} flexShrink={0}>

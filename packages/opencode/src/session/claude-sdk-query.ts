@@ -37,7 +37,7 @@ import { MCP } from "@/mcp"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Permission } from "@/permission"
 import { SessionID, MessageID } from "@/session/schema"
-import { createCanUseToolBridge } from "./claude-sdk-permissions"
+import { createCanUseToolBridge, createSubagentPermissionHook } from "./claude-sdk-permissions"
 import { getSdkSessionEntry, removeSdkSessionID } from "./claude-sdk-session-map"
 import bin from "./claude-sdk-bin"
 
@@ -316,6 +316,12 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
   })
 
   function buildOptions(resume: string | undefined, cwd: string): Options {
+    // canUseTool handles the main thread (permission prompts, edit diffs,
+    // AskUserQuestion / ExitPlanMode routing). It is NOT invoked for headless
+    // subagents, so a PreToolUse hook propagates the same ruleset to subagent
+    // tool calls — see createSubagentPermissionHook. Staying on "default" keeps
+    // the canUseTool bridge alive (bypassPermissions would shadow it entirely).
+    const subagentPermissionHook = createSubagentPermissionHook(input.ruleset ?? [])
     return {
       model: input.model,
       systemPrompt: input.systemPrompt,
@@ -335,7 +341,10 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
       ...(input.effort ? { effort: input.effort } : {}),
       ...(resume ? { resume } : {}),
       ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
-      ...(input.hooks ? { hooks: input.hooks } : {}),
+      hooks: {
+        ...(input.hooks ?? {}),
+        PreToolUse: [...(input.hooks?.PreToolUse ?? []), { hooks: [subagentPermissionHook] }],
+      },
     }
   }
 
