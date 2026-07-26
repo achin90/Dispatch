@@ -458,15 +458,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
                   return
                 }
                 if (option === "reject") {
-                  if (session()?.parentID) {
-                    setStore("stage", "reject")
-                    return
-                  }
-                  void sdk.client.permission.reply({
-                    reply: "reject",
-                    requestID: props.request.id,
-                    workspace: project.workspace.current(),
-                  })
+                  setStore("stage", "reject")
                   return
                 }
                 void sdk.client.permission.reply({

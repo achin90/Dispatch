@@ -190,11 +190,13 @@ async function checkExternalDirectory(
     const msg =
       error instanceof Permission.DeniedError
         ? "Permission denied by ruleset: external directory"
-        : error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
-          ? "User rejected permission"
-          : error instanceof Error
-            ? error.message
-            : "Permission denied"
+        : error instanceof Permission.CorrectedError
+          ? `User rejected permission with the following feedback: ${error.feedback}`
+          : error instanceof Permission.RejectedError
+            ? "User rejected permission"
+            : error instanceof Error
+              ? error.message
+              : "Permission denied"
     return { behavior: "deny", message: msg }
   }
 }
@@ -636,13 +638,15 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
         }
 
         const msg =
-          error instanceof Permission.RejectedError || error instanceof Permission.CorrectedError
-            ? "User rejected permission"
-            : error instanceof Permission.DeniedError
-              ? "Permission denied by ruleset: specified a rule"
-              : error instanceof Error
-                ? error.message
-                : "Permission denied"
+          error instanceof Permission.CorrectedError
+            ? `User rejected permission with the following feedback: ${error.feedback}`
+            : error instanceof Permission.RejectedError
+              ? "User rejected permission"
+              : error instanceof Permission.DeniedError
+                ? "Permission denied by ruleset: specified a rule"
+                : error instanceof Error
+                  ? error.message
+                  : "Permission denied"
 
         // Update the tool part to error state so the TUI shows strikethrough
         await markToolDenied(toolMessageID, callOptions.toolUseID, msg)
