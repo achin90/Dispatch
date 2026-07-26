@@ -31,6 +31,50 @@ const decide = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
     },
   })
 
+// Same binding requirement as `decide`, but returns the rewritten tool input
+// rather than the permission decision.
+const rewrite = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
+  Instance.provide({
+    directory: os.tmpdir(),
+    fn: async () => {
+      const out = (await createSubagentPermissionHook(ruleset)(evt)) as {
+        hookSpecificOutput?: { updatedInput?: Record<string, unknown> }
+      }
+      return out.hookSpecificOutput?.updatedInput
+    },
+  })
+
+test("Agent calls are forced to run synchronously", async () => {
+  // The SDK backgrounds subagents by default, which we have no support for: the
+  // task outlives the turn, the subprocess dies with the turn, and the orphaned
+  // subagent's tool calls are cancelled before reaching any permission path.
+  const input = { description: "find the thing", prompt: "go", subagent_type: "Explore" }
+  expect(await rewrite(build, { tool_name: "Agent", tool_input: input })).toEqual({
+    ...input,
+    run_in_background: false,
+  })
+})
+
+test("Agent rewrite preserves the rest of the tool input", async () => {
+  const updated = await rewrite(build, {
+    tool_name: "Agent",
+    tool_input: { prompt: "go", subagent_type: "Explore", model: "opus" },
+  })
+  expect(updated?.prompt).toBe("go")
+  expect(updated?.subagent_type).toBe("Explore")
+  expect(updated?.model).toBe("opus")
+})
+
+test("Agent calls already synchronous are left alone", async () => {
+  expect(await rewrite(build, { tool_name: "Agent", tool_input: { prompt: "go", run_in_background: false } })).toBe(
+    undefined,
+  )
+})
+
+test("non-Agent tools are not rewritten", async () => {
+  expect(await rewrite(build, { tool_name: "Bash", tool_input: { command: "ls" } })).toBe(undefined)
+})
+
 test("main-thread calls (no agent_id) are passed through to canUseTool", async () => {
   expect(await decide(build, { tool_name: "Bash", tool_input: { command: "rm -rf /" } })).toBe("passthrough")
 })

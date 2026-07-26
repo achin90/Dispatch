@@ -230,6 +230,31 @@ export function createSubagentPermissionHook(ruleset: Permission.Ruleset) {
   // Instance.worktree. Same reason createCanUseToolBridge binds its callback.
   return Instance.bind(async (input: unknown) => {
     const evt = input as { agent_id?: string; tool_name?: string; tool_input?: Record<string, unknown> }
+
+    // Force subagents to run synchronously.
+    //
+    // The SDK's Agent tool backgrounds them by default — AgentInput.run_in_background,
+    // documented as "Agents run in the background by default; you will be notified when
+    // one completes. Set to false to run this agent synchronously when you need its
+    // result before continuing."
+    //
+    // We have no support for that. A backgrounded task is meant to outlive the turn that
+    // spawned it, but we build a query() per turn and the SDK closes stdin at the first
+    // result, so the subprocess dies and takes the task with it. The Agent tool returns
+    // in ~3ms, the parent ends its turn believing the subagent succeeded, and the
+    // orphaned subagent's tool calls are cancelled before reaching any permission code
+    // path — which the model reports as being blocked on permissions. That misattribution
+    // is why this looked like a permission bug through three separate investigations.
+    if ((evt.tool_name === "Agent" || evt.tool_name === "Task") && evt.tool_input?.run_in_background !== false) {
+      return {
+        continue: true as const,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse" as const,
+          updatedInput: { ...(evt.tool_input ?? {}), run_in_background: false },
+        },
+      }
+    }
+
     // Main thread → leave it to canUseTool.
     if (!evt.agent_id || !evt.tool_name) return { continue: true as const }
 
