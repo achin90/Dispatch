@@ -429,15 +429,24 @@ const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
 const SUMMARIZED_THINKING_MODELS = ["fable-5", "opus-5", "opus-4-8", "opus-4-7", "sonnet-5"]
 
+// Providers spell the same model both ways — the gateway sends
+// "anthropic/claude-opus-4.7" while the first-party API sends
+// "claude-opus-4-7" — so match against a dash-normalised id and keep the
+// lists below in one spelling.
+function normalizeApiID(apiId: string): string {
+  return apiId.replaceAll(".", "-")
+}
+
 function wantsSummarizedThinking(apiId: string): boolean {
-  return SUMMARIZED_THINKING_MODELS.some((v) => apiId.includes(v))
+  return SUMMARIZED_THINKING_MODELS.some((v) => normalizeApiID(apiId).includes(v))
 }
 
 function anthropicAdaptiveEfforts(apiId: string): string[] | null {
-  if (SUMMARIZED_THINKING_MODELS.some((v) => apiId.includes(v))) {
+  const id = normalizeApiID(apiId)
+  if (SUMMARIZED_THINKING_MODELS.some((v) => id.includes(v))) {
     return ["low", "medium", "high", "xhigh", "max"]
   }
-  if (["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"].some((v) => apiId.includes(v))) {
+  if (["opus-4-6", "sonnet-4-6"].some((v) => id.includes(v))) {
     return ["low", "medium", "high", "max"]
   }
   return null
