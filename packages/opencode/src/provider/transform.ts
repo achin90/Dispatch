@@ -427,7 +427,7 @@ export function topK(model: Provider.Model) {
 const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
-const SUMMARIZED_THINKING_MODELS = ["fable-5", "opus-4-8", "opus-4-7", "sonnet-5"]
+const SUMMARIZED_THINKING_MODELS = ["fable-5", "opus-5", "opus-4-8", "opus-4-7", "sonnet-5"]
 
 function wantsSummarizedThinking(apiId: string): boolean {
   return SUMMARIZED_THINKING_MODELS.some((v) => apiId.includes(v))

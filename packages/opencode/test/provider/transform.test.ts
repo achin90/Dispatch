@@ -2917,6 +2917,34 @@ describe("ProviderTransform.variants", () => {
       })
     })
 
+    test("opus 5 returns adaptive thinking options with xhigh", () => {
+      const model = createMockModel({
+        id: "anthropic/claude-opus-5",
+        providerID: "anthropic",
+        api: {
+          id: "claude-opus-5",
+          url: "https://api.anthropic.com",
+          npm: "@ai-sdk/anthropic",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.xhigh).toEqual({
+        thinking: {
+          type: "adaptive",
+          display: "summarized",
+        },
+        effort: "xhigh",
+      })
+      expect(result.max).toEqual({
+        thinking: {
+          type: "adaptive",
+          display: "summarized",
+        },
+        effort: "max",
+      })
+    })
+
     test("github copilot opus 4.7 returns only medium reasoning effort", () => {
       const model = createMockModel({
         id: "claude-opus-4.7",
