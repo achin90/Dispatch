@@ -1492,6 +1492,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 effort: lastUser.model.variant as "low" | "medium" | "high" | "xhigh" | "max" | undefined,
                 mcpServers,
                 abortController,
+                contextWindow: model.limit.context,
                 hooks: {
                   PostCompact: [
                     {

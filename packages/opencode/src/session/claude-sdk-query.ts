@@ -59,6 +59,7 @@ export interface ClaudeSdkQueryInput {
   effort?: Options["effort"]
   mcpServers?: Record<string, McpServerConfig>
   hooks?: Options["hooks"]
+  contextWindow?: number
 }
 
 /**
@@ -297,6 +298,14 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
 
   const env: Record<string, string | undefined> = {
     ...process.env,
+    // The CLI only enables native-1M context (e.g. Sonnet 5) when it believes
+    // it's talking to first-party Anthropic: its Yd() gate requires
+    // ANTHROPIC_BASE_URL to be unset or api.anthropic.com. When a local proxy
+    // (e.g. sleeve) sets ANTHROPIC_BASE_URL, that gate fails, the model window
+    // falls back to 200k, and auto-compact fires at 200k regardless of the
+    // autoCompactWindow setting. This escape hatch asserts first-party
+    // semantics; the claudesdk path always authenticates against Anthropic.
+    _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1",
   }
   if (apiKey) {
     env.ANTHROPIC_API_KEY = apiKey
@@ -345,6 +354,11 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
         ...(input.hooks ?? {}),
         PreToolUse: [...(input.hooks?.PreToolUse ?? []), { hooks: [subagentPermissionHook] }],
       },
+      // Clamp to the CLI settings schema range (1e5..1e6) — out-of-range
+      // values are silently dropped by its zod .catch(undefined).
+      ...(input.contextWindow
+        ? { settings: { autoCompactWindow: Math.min(Math.max(input.contextWindow, 100_000), 1_000_000) } }
+        : {}),
     }
   }
 
