@@ -516,14 +516,19 @@ async function updateToolMetadata(messageID: MessageID, callID: string, meta: Re
   try {
     const parts = await MessageV2.parts(messageID)
     const part = parts.find((p) => p.type === "tool" && p.callID === callID)
-    if (!part || part.type !== "tool" || part.state.status !== "running") return
-    const runState = part.state as MessageV2.ToolStateRunning
+    if (!part || part.type !== "tool") return
+    // Merge into running OR completed parts. A part may already be completed
+    // when this runs: finalizeRunningTools fires on the next assistant event,
+    // which can arrive while canUseTool is still awaiting the user's approval
+    // (the SDK streams batched tool_use blocks before earlier tools execute).
+    const state = part.state
+    if (state.status !== "running" && state.status !== "completed") return
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...part,
       state: {
-        ...runState,
+        ...state,
         metadata: {
-          ...(runState.metadata ?? {}),
+          ...(state.metadata ?? {}),
           ...meta,
         },
       },
@@ -608,6 +613,11 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       if (diffInfo) {
         metadata.filepath = diffInfo.filepath
         metadata.diff = diffInfo.diff
+        // Stash immediately — BEFORE awaiting the user's approval. The next
+        // assistant event can arrive mid-approval and finalizeRunningTools
+        // will complete this tool's part; stashing now lets it pick up the
+        // diff instead of finalizing with empty metadata.
+        pending.set(callOptions.toolUseID, { diff: diffInfo.diff, filepath: diffInfo.filepath })
       }
       // Store tool input in metadata so the TUI permission prompt can display
       // details (e.g., bash command) even when the tool part isn't synced
@@ -639,17 +649,18 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
             signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
           }),
         ])
-        // Store diff metadata so the TUI can display it.
-        // The tool part may not exist yet (race between stream processing and
-        // canUseTool callback), so we both try to update the part directly AND
-        // stash in the pending map for finalizeRunningTools to pick up.
+        // Store diff metadata so the TUI can display it. The pending map entry
+        // (set above, before awaiting approval) covers the case where
+        // finalizeRunningTools completed the part mid-approval; this direct
+        // update covers parts that are still running or already completed.
         if (diffInfo) {
-          const meta = { diff: diffInfo.diff, filepath: diffInfo.filepath }
-          pending.set(callOptions.toolUseID, meta)
-          await updateToolMetadata(toolMessageID, callOptions.toolUseID, meta)
+          await updateToolMetadata(toolMessageID, callOptions.toolUseID, { diff: diffInfo.diff, filepath: diffInfo.filepath })
         }
         return { behavior: "allow", updatedInput: input }
       } catch (error) {
+        // Denied/aborted — drop the stashed diff so it doesn't leak or get
+        // merged into a denied tool part by a later finalize.
+        pending.delete(callOptions.toolUseID)
         // If the error is NOT from the Permission system (i.e. it came from the
         // abort signal winning Promise.race), the Effect fiber backing
         // Deferred.await is still alive and the globalPending entry was never
