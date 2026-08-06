@@ -15,6 +15,7 @@ import type {
 import { Session } from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
+import type { ModelID } from "@/provider/schema"
 import { popPendingMeta } from "./claude-sdk-permissions"
 import { assistantMessageToParts, resultMessageToMetadata, type CompletionMetadata } from "./claude-sdk-adapter"
 import { setSdkSessionID } from "./claude-sdk-session-map"
@@ -149,6 +150,8 @@ interface SubagentContext {
   childSessionID: SessionID
   childMessageID: MessageID
   userMessageID: MessageID
+  /** Model recorded on the child assistant message (opencode-style id). */
+  modelID: string
 }
 
 /**
@@ -389,6 +392,10 @@ async function processAssistantMessage(
     await finalizeRunningTools(ctx.childMessageID)
   }
 
+  // Record the model the SDK actually used for this subagent (agents can run
+  // on a different model than the main thread via their `model` setting).
+  await syncSubagentModel(ctx, msg.message.model)
+
   const parts = assistantMessageToParts(msg, ctx.childSessionID, ctx.childMessageID)
   for (const part of parts) {
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart(part)))
@@ -480,7 +487,40 @@ async function createChildSession(
     await updateAgentToolMetadata(agentPart, childSession.id)
   }
 
-  return { childSessionID: childSession.id, childMessageID, userMessageID }
+  return { childSessionID: childSession.id, childMessageID, userMessageID, modelID: assistantMessage.modelID }
+}
+
+/**
+ * Normalize an API wire model id to the opencode-style short id used on the
+ * anthropic route (e.g. "claude-opus-5" → "opus-5",
+ * "claude-haiku-4-5-20251001" → "haiku-4-5"). Subagents can run on a
+ * different model than the main thread (agent frontmatter `model` field), and
+ * the SDK reports the actual model on each assistant event.
+ */
+function normalizeWireModel(model: string | undefined): string | undefined {
+  if (!model) return undefined
+  return model.replace(/^claude-/, "").replace(/-\d{8}$/, "")
+}
+
+/**
+ * Sync the child assistant message's modelID with the model the SDK actually
+ * used for this subagent event. Without this, child messages permanently show
+ * the main thread's model even when the subagent runs on a different one.
+ */
+async function syncSubagentModel(ctx: SubagentContext, wireModel: string | undefined): Promise<void> {
+  const actual = normalizeWireModel(wireModel)
+  if (!actual || actual === ctx.modelID) return
+  ctx.modelID = actual
+  try {
+    const child = MessageV2.get({ sessionID: ctx.childSessionID, messageID: ctx.childMessageID })
+    if (child.info.role !== "assistant") return
+    await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage({
+      ...child.info,
+      modelID: actual as ModelID,
+    })))
+  } catch {
+    // Best-effort — display-only metadata
+  }
 }
 
 /**
