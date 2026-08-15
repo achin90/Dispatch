@@ -350,6 +350,13 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
       ...(input.effort ? { effort: input.effort } : {}),
       ...(resume ? { resume } : {}),
       ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
+      // MCP servers come exclusively from opencode's own config (proxied via
+      // resolveMcpServers). Without this, the spawned CLI ALSO loads its own
+      // MCP sources — project .mcp.json, ~/.claude.json / user settings,
+      // plugins, claude.ai connectors — and unauthenticated ones (e.g. the
+      // claude.ai Slack/Notion/Calendar connectors) inject "requires
+      // authentication" reminders that the model then reports to the user.
+      strictMcpConfig: true,
       hooks: {
         ...(input.hooks ?? {}),
         PreToolUse: [...(input.hooks?.PreToolUse ?? []), { hooks: [subagentPermissionHook] }],
