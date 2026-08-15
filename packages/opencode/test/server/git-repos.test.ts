@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { WithInstance } from "@/project/with-instance"
 import fs from "fs/promises"
 import path from "path"
-import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import * as Log from "@opencode-ai/core/util/log"
 import { resetDatabase } from "../fixture/db"
@@ -25,7 +25,7 @@ describe("experimental/git-repos", () => {
       },
     })
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app
@@ -53,7 +53,7 @@ describe("experimental/git-repos", () => {
       },
     })
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app
@@ -81,7 +81,7 @@ describe("experimental/git-repos", () => {
       },
     })
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app
@@ -106,7 +106,7 @@ describe("experimental/git-repos", () => {
       },
     })
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app
@@ -131,7 +131,7 @@ describe("experimental/git-repos", () => {
       },
     })
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app
@@ -148,7 +148,7 @@ describe("experimental/git-repos", () => {
   test("returns empty array for non-existent root", async () => {
     await using tmp = await tmpdir()
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app
@@ -175,7 +175,7 @@ describe("experimental/git-repos", () => {
       },
     })
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app
@@ -200,7 +200,7 @@ describe("experimental/git-repos", () => {
       },
     })
 
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const app = Server.Default().app

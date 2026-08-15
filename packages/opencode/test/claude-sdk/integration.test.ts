@@ -1,10 +1,10 @@
 import { describe, test, expect } from "bun:test"
+import { WithInstance } from "@/project/with-instance"
 import { Effect } from "effect"
 import { Session } from "../../src/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { ProviderID, ModelID } from "../../src/provider/schema"
-import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { processClaudeSdkStream } from "../../src/session/claude-sdk-processor"
 import { resolveApiKey } from "../../src/session/claude-sdk-query"
@@ -27,7 +27,7 @@ const svc = {
 
 async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
   await using tmp = await tmpdir({ git: true })
-  return Instance.provide({ directory: tmp.path, fn })
+  return WithInstance.provide({ directory: tmp.path, fn })
 }
 
 function makeAssistantMessage(sessionID: SessionID): MessageV2.Assistant {

@@ -17,6 +17,7 @@ import { PermissionID } from "@/permission/schema"
 import { Question } from "@/question"
 import * as Filesystem from "@/util/filesystem"
 import { Instance } from "@/project/instance"
+import { containsPath } from "@/project/instance-context"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionID, MessageID, PartID } from "@/session/schema"
@@ -150,7 +151,7 @@ async function checkExternalDirectory(
   opts: CanUseToolBridgeOptions,
   signal: AbortSignal,
 ): Promise<PermissionResult | null> {
-  if (Instance.containsPath(filePath)) return null
+  if (containsPath(filePath, Instance.current)) return null
 
   const dir = path.dirname(filePath)
   const glob = path.join(dir, "*")

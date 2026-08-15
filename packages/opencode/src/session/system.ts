@@ -1,7 +1,8 @@
 import path from "path"
+import { Instance } from "@/project/instance"
 import { Context, Effect, Layer } from "effect"
 
-import { Instance } from "../project/instance"
+import { InstanceState } from "@/effect/instance-state"
 
 import PROMPT_ANTHROPIC from "./prompt/anthropic.txt"
 import PROMPT_DEFAULT from "./prompt/default.txt"
@@ -69,15 +70,15 @@ export const layer = Layer.effect(
 
     return Service.of({
       environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
-        const project = Instance.project
+        const ctx = yield* InstanceState.context
         const parts = [
           [
             `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
             `Here is some useful information about the environment you are running in:`,
             `<env>`,
-            `  Working directory: ${Instance.directory}`,
-            `  Workspace root folder: ${Instance.worktree}`,
-            `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
+            `  Working directory: ${ctx.directory}`,
+            `  Workspace root folder: ${ctx.worktree}`,
+            `  Is directory a git repo: ${ctx.project.vcs === "git" ? "yes" : "no"}`,
             `  Platform: ${process.platform}`,
             `  Today's date: ${new Date().toDateString()}`,
             `</env>`,
@@ -93,12 +94,12 @@ export const layer = Layer.effect(
               `You are working in a git worktree. Here are the details:`,
               ``,
               `- **Main worktree**: ${wt.source}`,
-              `- **Your worktree**: ${Instance.directory}`,
+              `- **Your worktree**: ${ctx.directory}`,
               `- **Your branch**: ${wt.branch}`,
               ``,
               `## Working rules`,
               ``,
-              `- Do all your work within your worktree (\`${Instance.directory}\`). Do not modify files in the main worktree directly.`,
+              `- Do all your work within your worktree (\`${ctx.directory}\`). Do not modify files in the main worktree directly.`,
               `- When you are asked to merge your work back into the main branch, follow this exact process:`,
               ``,
               `### Merge process`,

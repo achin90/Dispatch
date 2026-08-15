@@ -1,11 +1,14 @@
 import { test, expect, afterEach } from "bun:test"
+import { AppRuntime } from "@/effect/app-runtime"
+import { InstanceStore } from "@/project/instance-store"
+import { WithInstance } from "@/project/with-instance"
 import os from "os"
 import { Permission } from "../../src/permission"
 import { Instance } from "../../src/project/instance"
 import { createSubagentPermissionHook } from "../../src/session/claude-sdk-permissions"
 
 afterEach(async () => {
-  await Instance.disposeAll()
+  await AppRuntime.runPromise(InstanceStore.Service.use((store) => store.disposeAll()))
 })
 
 const defaults = Permission.fromConfig({
@@ -20,7 +23,7 @@ const build = Permission.merge(defaults, Permission.fromConfig({ bash: "ask", ed
 // the hook and call it inside Instance.provide (mirrors production, where it is
 // constructed within the session's instance context).
 const decide = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
-  Instance.provide({
+  WithInstance.provide({
     directory: os.tmpdir(),
     fn: async () => {
       const out = (await createSubagentPermissionHook(ruleset)(evt)) as {
@@ -34,7 +37,7 @@ const decide = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
 // Same binding requirement as `decide`, but returns the rewritten tool input
 // rather than the permission decision.
 const rewrite = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
-  Instance.provide({
+  WithInstance.provide({
     directory: os.tmpdir(),
     fn: async () => {
       const out = (await createSubagentPermissionHook(ruleset)(evt)) as {

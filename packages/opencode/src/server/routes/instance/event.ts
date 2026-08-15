@@ -44,6 +44,7 @@ export const EventRoutes = () =>
 
         q.push(
           JSON.stringify({
+            id: Bus.createID(),
             type: "server.connected",
             properties: {},
           }),
@@ -53,6 +54,7 @@ export const EventRoutes = () =>
         const heartbeat = setInterval(() => {
           q.push(
             JSON.stringify({
+              id: Bus.createID(),
               type: "server.heartbeat",
               properties: {},
             }),

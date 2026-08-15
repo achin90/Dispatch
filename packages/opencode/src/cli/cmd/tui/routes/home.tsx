@@ -27,7 +27,9 @@ import { Locale } from "@/util/locale"
 import { Spinner } from "@tui/component/spinner"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
-import { useKeybind } from "@tui/context/keybind"
+import { useBindings, useCommandShortcut, useLeaderActive, LEADER_TOKEN } from "../keymap"
+import { useTuiConfig } from "@tui/context/tui-config"
+import { TuiKeybind } from "@tui/config/keybind"
 import { useExit } from "../context/exit"
 import { Toast, useToast } from "@tui/ui/toast"
 import path from "path"
@@ -196,7 +198,10 @@ export function Home() {
   const directory = useDirectory()
   const dialog = useDialog()
   const toast = useToast()
-  const keybind = useKeybind()
+  const tuiConfig = useTuiConfig()
+  const leaderActive = useLeaderActive()
+  const dashboardShortcut = useCommandShortcut("session.dashboard")
+  const paletteShortcut = useCommandShortcut("command.palette.show")
   const exit = useExit()
   const renderer = useRenderer()
   const dimensions = useTerminalDimensions()
@@ -625,19 +630,42 @@ export function Home() {
     sdk.client.permission.reply({ reply: "reject", requestID: perm.id })
   }
 
+  function leaderByte() {
+    const key = tuiConfig.keybinds.get(LEADER_TOKEN)?.[0]?.key ?? TuiKeybind.LeaderDefault
+    const stroke =
+      typeof key === "string"
+        ? { ctrl: key.includes("ctrl+"), name: key.split("+").pop() ?? "" }
+        : { ctrl: key.ctrl === true, name: key.name }
+    if (!stroke.ctrl || !stroke.name) return 0x18
+    return stroke.name.toLowerCase().charCodeAt(0) - 96
+  }
+
+  useBindings(() => ({
+    enabled: !dialogOpen() && dialog.stack.length === 0 && !promptOpen(),
+    commands: [
+      {
+        name: "app.exit",
+        title: "Exit",
+        category: "Dashboard",
+        run() {
+          exit()
+        },
+      },
+    ],
+  }))
+
   function attach() {
     if (attaching()) return
     const agent = selected()
     if (!agent) return
     const dir = resolveDir(agent)
-    const leader = keybind.all.leader?.[0]
-    const byte = leader?.ctrl && leader.name ? leader.name.toLowerCase().charCodeAt(0) - 96 : 0x18
+    const byte = leaderByte()
     setAttaching(true)
     const fgInts = fg.toInts()
     const bgInts = theme.primary.toInts()
     PtyAttach.open(agent.id, dir, renderer, {
       leader: byte,
-      label: keybind.print("dashboard"),
+      label: dashboardShortcut(),
       dir: shortDir(dir),
       fg: [fgInts[0], fgInts[1], fgInts[2]],
       bg: [bgInts[0], bgInts[1], bgInts[2]],
@@ -769,12 +797,8 @@ export function Home() {
       // Let the Prompt component handle all keys (including ctrl-c clear)
       return
     }
-    if (keybind.match("app_exit", evt)) {
-      exit()
-      return
-    }
     if (dialogOpen() || dialog.stack.length > 0) return
-    if (keybind.leader) return
+    if (leaderActive()) return
     if (flat().length === 0 && evt.name !== "a" && evt.name !== "w") return
 
     jump(evt)
@@ -1044,7 +1068,7 @@ export function Home() {
             <span style={{ fg: theme.textMuted }}> terminal</span>
           </text>
           <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{keybind.print("command_list")}</span>
+            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{paletteShortcut()}</span>
             <span style={{ fg: theme.textMuted }}> commands</span>
           </text>
         </box>

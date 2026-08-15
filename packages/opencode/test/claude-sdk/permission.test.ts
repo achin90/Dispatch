@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test"
+import { WithInstance } from "@/project/with-instance"
 import {
   extractPatterns,
   derivePermissionName,
@@ -7,7 +8,6 @@ import {
 } from "../../src/session/claude-sdk-permissions"
 import { Bus } from "../../src/bus"
 import { Permission } from "../../src/permission"
-import { Instance } from "../../src/project/instance"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
 import { AppRuntime } from "../../src/effect/app-runtime"
@@ -163,7 +163,7 @@ describe("claude-sdk permissions", () => {
 
     async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
       await using tmp = await tmpdir({ git: true })
-      return Instance.provide({ directory: tmp.path, fn })
+      return WithInstance.provide({ directory: tmp.path, fn })
     }
 
     test("resolves allow on 'once' reply via Permission.reply()", async () => {
@@ -286,7 +286,7 @@ describe("claude-sdk permissions", () => {
       await using tuiDir = await tmpdir({ git: true })
 
       // Bridge is created in the agent's directory (like createClaudeSdkQuery does)
-      const bridge = await Instance.provide({
+      const bridge = await WithInstance.provide({
         directory: agentDir.path,
         fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
@@ -294,7 +294,7 @@ describe("claude-sdk permissions", () => {
       // Bus.subscribe must run inside an Instance context (Bus state is per-directory).
       // We subscribe from the agent's directory since that's where ask() publishes.
       let capturedID: unknown
-      const unsubscribe = await Instance.provide({
+      const unsubscribe = await WithInstance.provide({
         directory: agentDir.path,
         fn: () => {
           return Bus.subscribe(Permission.Event.Asked, (event) => {
@@ -302,7 +302,7 @@ describe("claude-sdk permissions", () => {
             // reply() runs inside the TUI's directory — different from the agent.
             // This simulates the real flow: TUI sends HTTP request with its own
             // x-opencode-directory header, server runs Permission.reply() in that context.
-            Instance.provide({
+            WithInstance.provide({
               directory: tuiDir.path,
               fn: () =>
                 AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
@@ -315,7 +315,7 @@ describe("claude-sdk permissions", () => {
       })
 
       try {
-        const result = await Instance.provide({
+        const result = await WithInstance.provide({
           directory: agentDir.path,
           fn: () => bridge("Read", { file_path: "/tmp/test.ts" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross", requestId: "req_cross" }),
         })
@@ -330,16 +330,16 @@ describe("claude-sdk permissions", () => {
       await using agentDir = await tmpdir({ git: true })
       await using tuiDir = await tmpdir({ git: true })
 
-      const bridge = await Instance.provide({
+      const bridge = await WithInstance.provide({
         directory: agentDir.path,
         fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
-      const unsubscribe = await Instance.provide({
+      const unsubscribe = await WithInstance.provide({
         directory: agentDir.path,
         fn: () => {
           return Bus.subscribe(Permission.Event.Asked, (event) => {
-            Instance.provide({
+            WithInstance.provide({
               directory: tuiDir.path,
               fn: () =>
                 AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
@@ -352,7 +352,7 @@ describe("claude-sdk permissions", () => {
       })
 
       try {
-        const result = await Instance.provide({
+        const result = await WithInstance.provide({
           directory: agentDir.path,
           fn: () => bridge("Bash", { command: "echo hi" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross", requestId: "req_cross" }),
         })
@@ -366,16 +366,16 @@ describe("claude-sdk permissions", () => {
       await using agentDir = await tmpdir({ git: true })
       await using tuiDir = await tmpdir({ git: true })
 
-      const bridge = await Instance.provide({
+      const bridge = await WithInstance.provide({
         directory: agentDir.path,
         fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
-      const unsubscribe = await Instance.provide({
+      const unsubscribe = await WithInstance.provide({
         directory: agentDir.path,
         fn: () => {
           return Bus.subscribe(Permission.Event.Asked, (event) => {
-            Instance.provide({
+            WithInstance.provide({
               directory: tuiDir.path,
               fn: () =>
                 AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
@@ -388,7 +388,7 @@ describe("claude-sdk permissions", () => {
       })
 
       try {
-        const result = await Instance.provide({
+        const result = await WithInstance.provide({
           directory: agentDir.path,
           fn: () => bridge("Write", { file_path: "/etc/passwd", content: "bad" }, { signal: AbortSignal.any([]), toolUseID: "toolu_cross", requestId: "req_cross" }),
         })

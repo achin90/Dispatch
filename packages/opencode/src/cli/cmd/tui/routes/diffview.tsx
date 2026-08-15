@@ -4,7 +4,7 @@ import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@tui/context/theme"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useSDK } from "../context/sdk"
-import { useKeybind } from "@tui/context/keybind"
+import { useBindings, useCommandShortcut } from "../keymap"
 import { Spinner } from "@tui/component/spinner"
 import { useTuiConfig } from "../context/tui-config"
 import { Global } from "@opencode-ai/core/global"
@@ -39,7 +39,9 @@ export function Diffview() {
   const route = useRoute()
   const data = useRouteData("diffview")
   const sdk = useSDK()
-  const keybind = useKeybind()
+  const tuiConfig = useTuiConfig()
+  const pageUpShortcut = useCommandShortcut("session.page.up")
+  const pageDownShortcut = useCommandShortcut("session.page.down")
   const config = useTuiConfig()
   const dimensions = useTerminalDimensions()
 
@@ -73,21 +75,34 @@ export function Diffview() {
     setRaw((res.data as { diff: string }).diff)
   })
 
+  useBindings(() => ({
+    commands: [
+      {
+        name: "session.page.up",
+        title: "Page up",
+        category: "Diff",
+        run() {
+          scroll?.scrollBy(-(scroll?.height ?? 0) / 2)
+        },
+      },
+      {
+        name: "session.page.down",
+        title: "Page down",
+        category: "Diff",
+        run() {
+          scroll?.scrollBy((scroll?.height ?? 0) / 2)
+        },
+      },
+    ],
+    bindings: tuiConfig.keybinds.gather("diffview", ["session.page.up", "session.page.down"]),
+  }))
+
   useKeyboard((evt) => {
-    if (keybind.match("app_exit", evt)) return
     if (evt.name === "escape" || evt.name === "q") {
       route.navigate({ type: "home" })
       return
     }
     if (!scroll) return
-    if (keybind.match("messages_page_up", evt)) {
-      scroll.scrollBy(-scroll.height / 2)
-      return
-    }
-    if (keybind.match("messages_page_down", evt)) {
-      scroll.scrollBy(scroll.height / 2)
-      return
-    }
     if (evt.name === "j" || evt.name === "down") {
       scroll.scrollBy(1)
       return
@@ -174,9 +189,9 @@ export function Diffview() {
           <span style={{ fg: theme.textMuted }}> scroll</span>
         </text>
         <text>
-          <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{keybind.print("messages_page_up")}</span>
+          <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{pageUpShortcut()}</span>
           <span style={{ fg: theme.textMuted }}>{"/"}</span>
-          <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{keybind.print("messages_page_down")}</span>
+          <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{pageDownShortcut()}</span>
           <span style={{ fg: theme.textMuted }}> page</span>
         </text>
       </box>

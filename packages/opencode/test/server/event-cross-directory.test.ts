@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { WithInstance } from "@/project/with-instance"
 import { Instance } from "../../src/project/instance"
 import { Bus } from "../../src/bus"
 import { GlobalBus } from "../../src/bus/global"
@@ -22,7 +23,7 @@ describe("event route cross-directory", () => {
     }
     GlobalBus.on("event", handler)
     try {
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           await Bus.publish(
@@ -52,7 +53,7 @@ describe("event route cross-directory", () => {
     }
     GlobalBus.on("event", handler)
     try {
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmpA.path,
         fn: async () => {
           await Bus.publish(
@@ -61,7 +62,7 @@ describe("event route cross-directory", () => {
           )
         },
       })
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmpB.path,
         fn: async () => {
           await Bus.publish(
@@ -137,7 +138,7 @@ describe("event route cross-directory", () => {
     }
     GlobalBus.on("event", handler)
     try {
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           await Bus.publish({ type: "test.workspace", properties: {} } as any, { data: 1 })

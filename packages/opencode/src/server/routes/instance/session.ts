@@ -29,6 +29,7 @@ import { NamedError } from "@opencode-ai/core/util/error"
 import { jsonRequest, runRequest } from "./trace"
 import { Summarize } from "@/session/summarize"
 import { Instance } from "@/project/instance"
+import { WithInstance } from "@/project/with-instance"
 import type { InstanceContext } from "@/project/instance"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -47,9 +48,8 @@ export const withSessionInstance = <A>(sessionID: SessionID, fn: (instance: Inst
   Effect.gen(function* () {
     const session = yield* Session.Service.use((svc) => svc.get(sessionID))
     return yield* Effect.promise(() =>
-      Instance.provide({
+      WithInstance.provide({
         directory: session.directory,
-        init: () => AppRuntime.runPromise(InstanceBootstrap),
         fn: () => fn(Instance.current),
       }),
     )
@@ -103,18 +103,22 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const query = c.req.valid("query")
-        const sessions: Session.Info[] = []
-        for await (const session of Session.list({
-          directory: query.scope === "project" ? undefined : query.directory,
-          path: query.path,
-          roots: queryBoolean(query.roots),
-          start: query.start,
-          search: query.search,
-          limit: query.limit,
-        })) {
-          sessions.push(session)
-        }
-        return c.json(sessions)
+        return c.json(
+          await runRequest(
+            "SessionRoutes.list",
+            c,
+            Session.Service.use((svc) =>
+              svc.list({
+                directory: query.scope === "project" ? undefined : query.directory,
+                path: query.path,
+                roots: queryBoolean(query.roots),
+                start: query.start,
+                search: query.search,
+                limit: query.limit,
+              }),
+            ),
+          ),
+        )
       },
     )
     .get(

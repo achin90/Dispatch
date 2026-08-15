@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { AppRuntime } from "@/effect/app-runtime"
+import { InstanceStore } from "@/project/instance-store"
+import { WithInstance } from "@/project/with-instance"
 import { Effect } from "effect"
-import { Instance } from "../../src/project/instance"
 import { Session as SessionNs } from "../../src/session/session"
 import type { SessionID } from "../../src/session/schema"
 import * as Log from "@opencode-ai/core/util/log"
@@ -22,7 +24,7 @@ const svc = {
 }
 
 afterEach(async () => {
-  await Instance.disposeAll()
+  await AppRuntime.runPromise(InstanceStore.Service.use((store) => store.disposeAll()))
 })
 
 // ---------------------------------------------------------------------------
@@ -37,7 +39,7 @@ describe("session creation directory", () => {
   test("session stores its creation directory", async () => {
     await using tmp = await tmpdir({ git: true })
 
-    const session = await Instance.provide({
+    const session = await WithInstance.provide({
       directory: tmp.path,
       fn: () => svc.create({ title: "test" }),
     })
@@ -49,12 +51,12 @@ describe("session creation directory", () => {
     await using dirA = await tmpdir({ git: true })
     await using dirB = await tmpdir({ git: true })
 
-    const sessionA = await Instance.provide({
+    const sessionA = await WithInstance.provide({
       directory: dirA.path,
       fn: () => svc.create({ title: "agent-a" }),
     })
 
-    const sessionB = await Instance.provide({
+    const sessionB = await WithInstance.provide({
       directory: dirB.path,
       fn: () => svc.create({ title: "agent-b" }),
     })
@@ -69,13 +71,13 @@ describe("session creation directory", () => {
     await using dirB = await tmpdir({ git: true })
 
     // Create in dir A
-    const session = await Instance.provide({
+    const session = await WithInstance.provide({
       directory: dirA.path,
       fn: () => svc.create({ title: "worktree-agent" }),
     })
 
     // Retrieve from dir B context — svc.get should still return dir A
-    const retrieved = await Instance.provide({
+    const retrieved = await WithInstance.provide({
       directory: dirB.path,
       fn: () => svc.get(session.id),
     })
@@ -88,13 +90,13 @@ describe("session creation directory", () => {
     await using tui = await tmpdir({ git: true })
 
     // Simulate: agent creates session in worktree directory
-    const agent = await Instance.provide({
+    const agent = await WithInstance.provide({
       directory: worktree.path,
       fn: () => svc.create({ title: "worktree-session" }),
     })
 
     // Simulate: TUI reads session from its own directory
-    const fromTui = await Instance.provide({
+    const fromTui = await WithInstance.provide({
       directory: tui.path,
       fn: () => svc.get(agent.id),
     })

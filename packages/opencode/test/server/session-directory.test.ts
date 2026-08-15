@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { AppRuntime } from "@/effect/app-runtime"
+import { InstanceStore } from "@/project/instance-store"
+import { WithInstance } from "@/project/with-instance"
 import { Effect } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
@@ -20,7 +23,7 @@ const svc = {
 }
 
 afterEach(async () => {
-  await Instance.disposeAll()
+  await AppRuntime.runPromise(InstanceStore.Service.use((store) => store.disposeAll()))
 })
 
 // ---------------------------------------------------------------------------
@@ -38,13 +41,13 @@ describe("withSessionInstance", () => {
     await using dirB = await tmpdir({ git: true })
 
     // Create session in dir A — stores dirA as the session's directory
-    const session = await Instance.provide({
+    const session = await WithInstance.provide({
       directory: dirA.path,
       fn: () => svc.create({ title: "agent-session" }),
     })
 
     // From dir B, use withSessionInstance — it should provide dir A
-    const resolved = await Instance.provide({
+    const resolved = await WithInstance.provide({
       directory: dirB.path,
       fn: () =>
         run(
@@ -61,7 +64,7 @@ describe("withSessionInstance", () => {
     await using dirA = await tmpdir({ git: true })
     await using dirB = await tmpdir({ git: true })
 
-    const session = await Instance.provide({
+    const session = await WithInstance.provide({
       directory: dirA.path,
       fn: () => svc.create({}),
     })
@@ -69,7 +72,7 @@ describe("withSessionInstance", () => {
     // Start server in dir B and call abort on the session from dir A.
     // The route uses withSessionInstance, which resolves to dirA.
     // If withSessionInstance is broken, the route would fail.
-    await Instance.provide({
+    await WithInstance.provide({
       directory: dirB.path,
       fn: async () => {
         const app = Server.Default().app
