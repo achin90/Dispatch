@@ -331,7 +331,8 @@ export function Home() {
 
   sdk.event.on("event", (evt) => {
     if (evt.payload.type !== "worktree.ready") return
-    if (pending.delete(evt.payload.properties.branch)) fetchDiffStats()
+    const branch = evt.payload.properties.branch
+    if (branch && pending.delete(branch)) fetchDiffStats()
   })
 
   // ---- GitHub PR integration ----
@@ -537,7 +538,7 @@ export function Home() {
     // Pre-seed zero diff stats so the effect doesn't race the
     // background worktree checkout (--no-checkout + forked boot).
     const dir = worktree.directory.replace(/\/+$/, "")
-    pending.set(worktree.branch, dir)
+    pending.set(worktree.branch ?? name, dir)
     setDiffStats((prev) => ({ ...prev, [dir]: { additions: 0, deletions: 0, files: 0 } }))
     const session = (await sdk.client.session.create({ directory: worktree.directory })).data
     if (!session) return
@@ -547,7 +548,7 @@ export function Home() {
       sessionID: session.id,
       createdAt: Date.now(),
       directory: worktree.directory,
-      worktree: { branch: worktree.branch, directory: worktree.directory, sourceRepo: repoDir },
+      worktree: { branch: worktree.branch ?? name, directory: worktree.directory, sourceRepo: repoDir },
     })
   }
 

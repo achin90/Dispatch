@@ -10,8 +10,10 @@ import { tmpdir } from "../fixture/fixture"
 
 Log.init({ print: false })
 
+// AppRuntime.runPromise attaches the surrounding WithInstance.provide context,
+// which a bare Effect.runPromise cannot do (no InstanceRef → InstanceState dies).
 function run<A, E>(fx: Effect.Effect<A, E, SessionNs.Service>) {
-  return Effect.runPromise(fx.pipe(Effect.provide(SessionNs.defaultLayer)))
+  return AppRuntime.runPromise(fx)
 }
 
 const svc = {

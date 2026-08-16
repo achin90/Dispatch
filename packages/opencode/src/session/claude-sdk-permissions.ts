@@ -1,3 +1,4 @@
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 /**
  * Permission bridge between the Claude Agent SDK's canUseTool callback
  * and the existing Permission system.
@@ -13,13 +14,13 @@ import { createTwoFilesPatch } from "diff"
 import path from "path"
 import * as Log from "@opencode-ai/core/util/log"
 import { Permission } from "@/permission"
-import { PermissionID } from "@/permission/schema"
 import { Question } from "@/question"
 import * as Filesystem from "@/util/filesystem"
 import { Instance } from "@/project/instance"
 import { containsPath } from "@/project/instance-context"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionID, MessageID, PartID } from "@/session/schema"
 import { Provider } from "@/provider/provider"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -169,7 +170,7 @@ async function checkExternalDirectory(
 
   const dir = path.dirname(filePath)
   const glob = path.join(dir, "*")
-  const requestID = PermissionID.ascending()
+  const requestID = PermissionV1.ID.ascending()
 
   try {
     await Promise.race([
@@ -195,19 +196,19 @@ async function checkExternalDirectory(
     // Clean up the pending permission entry if abort won the race
     // (same pattern as createCanUseToolBridge's catch block)
     const fromPermission =
-      error instanceof Permission.DeniedError ||
-      error instanceof Permission.RejectedError ||
-      error instanceof Permission.CorrectedError
+      error instanceof PermissionV1.DeniedError ||
+      error instanceof PermissionV1.RejectedError ||
+      error instanceof PermissionV1.CorrectedError
     if (!fromPermission) {
       AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({ requestID, reply: "reject" }))).catch(() => {})
     }
 
     const msg =
-      error instanceof Permission.DeniedError
+      error instanceof PermissionV1.DeniedError
         ? "Permission denied by ruleset: external directory"
-        : error instanceof Permission.CorrectedError
+        : error instanceof PermissionV1.CorrectedError
           ? `User rejected permission with the following feedback: ${error.feedback}`
-          : error instanceof Permission.RejectedError
+          : error instanceof PermissionV1.RejectedError
             ? "User rejected permission"
             : error instanceof Error
               ? error.message
@@ -239,7 +240,7 @@ async function checkExternalDirectory(
  * Main-thread calls (no agent_id) are passed through so canUseTool keeps owning
  * edit diffs, AskUserQuestion / ExitPlanMode routing, and interactive prompts.
  */
-export function createSubagentPermissionHook(ruleset: Permission.Ruleset) {
+export function createSubagentPermissionHook(ruleset: PermissionV1.Ruleset) {
   // Bind the current Instance ALS context: the SDK fires hooks from a stream
   // reader context that loses AsyncLocalStorage, and normaliseFilePatterns reads
   // Instance.worktree. Same reason createCanUseToolBridge binds its callback.
@@ -447,8 +448,8 @@ async function exitPlanMode(
   log.info("exitPlanMode: user selected agent", { selectedAgent })
 
   // Get model info from the latest user message
-  let model: MessageV2.User["model"] | undefined
-  for (const item of MessageV2.stream(opts.sessionID)) {
+  let model: SessionV1.User["model"] | undefined
+  for (const item of await AppRuntime.runPromise(MessageV2.stream(opts.sessionID))) {
     if (item.info.role === "user" && item.info.model) {
       model = item.info.model
       break
@@ -467,7 +468,7 @@ async function exitPlanMode(
     time: { created: Date.now() },
     agent: selectedAgent,
     model,
-  } satisfies MessageV2.User)))
+  } satisfies SessionV1.User)))
 
   await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
     id: PartID.ascending(),
@@ -476,7 +477,7 @@ async function exitPlanMode(
     type: "text",
     text: "The plan has been approved, you can now edit files. Execute the plan",
     synthetic: true,
-  } satisfies MessageV2.TextPart)))
+  } satisfies SessionV1.TextPart)))
 
   log.info("exitPlanMode: synthetic user message created", { msgId, selectedAgent })
   return { behavior: "allow" }
@@ -489,7 +490,7 @@ async function exitPlanMode(
 export interface CanUseToolBridgeOptions {
   sessionID: SessionID
   messageID: MessageID
-  ruleset?: Permission.Ruleset
+  ruleset?: PermissionV1.Ruleset
 }
 
 /**
@@ -499,11 +500,11 @@ export interface CanUseToolBridgeOptions {
  */
 async function markToolDenied(messageID: MessageID, callID: string, error: string) {
   try {
-    const parts = await MessageV2.parts(messageID)
+    const parts = await AppRuntime.runPromise(MessageV2.parts(messageID))
     const part = parts.find((p) => p.type === "tool" && p.callID === callID)
     if (!part || part.type !== "tool") return
     if (part.state.status !== "running") return
-    const runState = part.state as MessageV2.ToolStateRunning
+    const runState = part.state as SessionV1.ToolStateRunning
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...part,
       state: {
@@ -529,7 +530,7 @@ async function markToolDenied(messageID: MessageID, callID: string, error: strin
  */
 async function updateToolMetadata(messageID: MessageID, callID: string, meta: Record<string, unknown>) {
   try {
-    const parts = await MessageV2.parts(messageID)
+    const parts = await AppRuntime.runPromise(MessageV2.parts(messageID))
     const part = parts.find((p) => p.type === "tool" && p.callID === callID)
     if (!part || part.type !== "tool") return
     // Merge into running OR completed parts. A part may already be completed
@@ -594,7 +595,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
 
       const rawPatterns = extractPatterns(toolName, input)
       const permission = derivePermissionName(toolName)
-      const requestID = PermissionID.ascending()
+      const requestID = PermissionV1.ID.ascending()
 
       // Gate 1: external_directory check for file-based tools outside the
       // project boundary — mirrors assertExternalDirectoryEffect in the
@@ -681,19 +682,19 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
         // Deferred.await is still alive and the globalPending entry was never
         // cleaned up.  Reject it so Effect.ensuring fires and deletes the entry.
         const fromPermission =
-          error instanceof Permission.RejectedError ||
-          error instanceof Permission.CorrectedError ||
-          error instanceof Permission.DeniedError
+          error instanceof PermissionV1.RejectedError ||
+          error instanceof PermissionV1.CorrectedError ||
+          error instanceof PermissionV1.DeniedError
         if (!fromPermission) {
           AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({ requestID, reply: "reject" }))).catch(() => {})
         }
 
         const msg =
-          error instanceof Permission.CorrectedError
+          error instanceof PermissionV1.CorrectedError
             ? `User rejected permission with the following feedback: ${error.feedback}`
-            : error instanceof Permission.RejectedError
+            : error instanceof PermissionV1.RejectedError
               ? "User rejected permission"
-              : error instanceof Permission.DeniedError
+              : error instanceof PermissionV1.DeniedError
                 ? "Permission denied by ruleset: specified a rule"
                 : error instanceof Error
                   ? error.message

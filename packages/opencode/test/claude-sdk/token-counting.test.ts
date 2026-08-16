@@ -1,10 +1,13 @@
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { describe, expect, spyOn, test } from "bun:test"
 import { WithInstance } from "@/project/with-instance"
+import { AppRuntime } from "@/effect/app-runtime"
 import { Effect } from "effect"
 import { Session as SessionNs } from "../../src/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { MessageID, SessionID } from "../../src/session/schema"
-import { ModelID, ProviderID } from "../../src/provider/schema"
 import { tmpdir } from "../fixture/fixture"
 import {
   textBlock,
@@ -23,18 +26,21 @@ import { processClaudeSdkStream } from "../../src/session/claude-sdk-processor"
 // This test verifies the correct behavior survives upstream merges.
 // ---------------------------------------------------------------------------
 
+// AppRuntime carries the instance context (via `attach`, which prefers the
+// AsyncLocalStorage context established by `WithInstance.provide` below).
+// A bare `Effect.runPromise` has no InstanceRef and dies in InstanceState.
 function run<A, E>(fx: Effect.Effect<A, E, SessionNs.Service>) {
-  return Effect.runPromise(fx.pipe(Effect.provide(SessionNs.defaultLayer)))
+  return AppRuntime.runPromise(fx)
 }
 
 const svc = {
   create(input?: SessionNs.CreateInput) {
     return run(SessionNs.Service.use((svc) => svc.create(input)))
   },
-  updateMessage<T extends MessageV2.Info>(msg: T) {
+  updateMessage<T extends SessionV1.Info>(msg: T) {
     return run(SessionNs.Service.use((svc) => svc.updateMessage(msg)))
   },
-  updatePart<T extends MessageV2.Part>(part: T) {
+  updatePart<T extends SessionV1.Part>(part: T) {
     return run(SessionNs.Service.use((svc) => svc.updatePart(part)))
   },
 }
@@ -44,15 +50,15 @@ async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
   return WithInstance.provide({ directory: tmp.path, fn })
 }
 
-function makeAssistant(sessionID: SessionID): MessageV2.Assistant {
+function makeAssistant(sessionID: SessionID): SessionV1.Assistant {
   return {
     id: MessageID.ascending(),
     sessionID,
     role: "assistant",
     time: { created: Date.now() },
     parentID: MessageID.ascending(),
-    modelID: ModelID.make("claude-sonnet-4-20250514"),
-    providerID: ProviderID.make("anthropic"),
+    modelID: ModelV2.ID.make("claude-sonnet-4-20250514"),
+    providerID: ProviderV2.ID.make("anthropic"),
     mode: "default",
     agent: "default",
     path: { cwd: "/tmp", root: "/tmp" },

@@ -1,10 +1,13 @@
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { describe, test, expect } from "bun:test"
 import { WithInstance } from "@/project/with-instance"
+import { AppRuntime } from "@/effect/app-runtime"
 import { Effect } from "effect"
 import { Session as SessionNs } from "../../src/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { MessageID, SessionID } from "../../src/session/schema"
-import { ProviderID, ModelID } from "../../src/provider/schema"
 import { tmpdir } from "../fixture/fixture"
 import {
   textBlock,
@@ -25,8 +28,11 @@ import { processClaudeSdkStream } from "../../src/session/claude-sdk-processor"
 // Test helpers
 // ---------------------------------------------------------------------------
 
+// AppRuntime carries the instance context (via `attach`, which prefers the
+// AsyncLocalStorage context established by `WithInstance.provide` below).
+// A bare `Effect.runPromise` has no InstanceRef and dies in InstanceState.
 function run<A, E>(fx: Effect.Effect<A, E, SessionNs.Service>) {
-  return Effect.runPromise(fx.pipe(Effect.provide(SessionNs.defaultLayer)))
+  return AppRuntime.runPromise(fx)
 }
 
 const svc = {
@@ -36,10 +42,10 @@ const svc = {
   get(id: SessionID) {
     return run(SessionNs.Service.use((svc) => svc.get(id)))
   },
-  updateMessage<T extends MessageV2.Info>(msg: T) {
+  updateMessage<T extends SessionV1.Info>(msg: T) {
     return run(SessionNs.Service.use((svc) => svc.updateMessage(msg)))
   },
-  updatePart<T extends MessageV2.Part>(part: T) {
+  updatePart<T extends SessionV1.Part>(part: T) {
     return run(SessionNs.Service.use((svc) => svc.updatePart(part)))
   },
   children(parentID: SessionID) {
@@ -52,15 +58,15 @@ async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
   return WithInstance.provide({ directory: tmp.path, fn })
 }
 
-function makeAssistantMessage(sessionID: SessionID): MessageV2.Assistant {
+function makeAssistantMessage(sessionID: SessionID): SessionV1.Assistant {
   return {
     id: MessageID.ascending(),
     sessionID,
     role: "assistant",
     time: { created: Date.now() },
     parentID: MessageID.ascending(),
-    modelID: ModelID.make("claude-sonnet-4-20250514"),
-    providerID: ProviderID.make("anthropic"),
+    modelID: ModelV2.ID.make("claude-sonnet-4-20250514"),
+    providerID: ProviderV2.ID.make("anthropic"),
     mode: "default",
     agent: "default",
     path: { cwd: "/tmp", root: "/tmp" },
@@ -105,7 +111,7 @@ describe("claude-sdk session loop", () => {
         expect(result.metadata!.result).toBe("Hello world")
 
         // One TextPart created
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(1)
         expect(parts[0]!.type).toBe("text")
         if (parts[0]!.type === "text") {
@@ -157,7 +163,7 @@ describe("claude-sdk session loop", () => {
         expect(result.outcome).toBe("stop")
 
         // ToolPart + TextPart
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(2)
         expect(parts[0]!.type).toBe("tool")
         if (parts[0]!.type === "tool") {
@@ -194,7 +200,7 @@ describe("claude-sdk session loop", () => {
         })
 
         expect(result.outcome).toBe("stop")
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(2)
         expect(parts[0]!.type).toBe("reasoning")
         if (parts[0]!.type === "reasoning") {
@@ -286,7 +292,7 @@ describe("claude-sdk session loop", () => {
         // Should get error outcome since no result message was processed
         expect(result.outcome).toBe("error")
         // Only the first text part should have been created
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(1)
         expect(parts[0]!.type).toBe("text")
         if (parts[0]!.type === "text") {
@@ -322,7 +328,7 @@ describe("claude-sdk session loop", () => {
         })
 
         expect(result.outcome).toBe("stop")
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(3)
         expect(parts[0]!.type).toBe("tool")
         if (parts[0]!.type === "tool") {
@@ -389,7 +395,7 @@ describe("claude-sdk session loop", () => {
         })
 
         expect(result.outcome).toBe("stop")
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(1)
         expect(parts[0]!.type).toBe("text")
       })
@@ -419,7 +425,7 @@ describe("claude-sdk session loop", () => {
         })
 
         expect(result.outcome).toBe("stop")
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(3)
         expect(parts[0]!.type).toBe("reasoning")
         expect(parts[1]!.type).toBe("text")
@@ -446,7 +452,7 @@ describe("claude-sdk session loop", () => {
           cwd: "/tmp",
         })
 
-        const parts = await MessageV2.parts(assistantMsg.id)
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         expect(parts).toHaveLength(3)
         const ids = new Set(parts.map((p) => p.id))
         expect(ids.size).toBe(3)
@@ -491,7 +497,7 @@ describe("claude-sdk session loop", () => {
         expect(result.outcome).toBe("stop")
 
         // Parent message should have the Agent ToolPart
-        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
         expect(agentPart).toBeDefined()
 
@@ -534,7 +540,7 @@ describe("claude-sdk session loop", () => {
         })
 
         // Read back the Agent ToolPart from DB
-        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
         expect(agentPart).toBeDefined()
 
@@ -578,7 +584,7 @@ describe("claude-sdk session loop", () => {
         })
 
         // Agent ToolPart should have title from task_started
-        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
         expect(agentPart).toBeDefined()
 
@@ -618,7 +624,7 @@ describe("claude-sdk session loop", () => {
         })
 
         // Agent ToolPart should be completed with the summary as output
-        const parentParts = await MessageV2.parts(assistantMsg.id)
+        const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
         const agentPart = parentParts.find((p) => p.type === "tool" && p.tool === "agent")
         expect(agentPart).toBeDefined()
         if (agentPart?.type === "tool") {

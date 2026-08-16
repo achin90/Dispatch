@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { Effect } from "effect"
+import { AppRuntime } from "@/effect/app-runtime"
 import { WithInstance } from "@/project/with-instance"
 import { Session } from "@/session/session"
 import { Server } from "../../src/server/server"
@@ -15,8 +16,10 @@ function app() {
   return Server.Default().app
 }
 
+// AppRuntime.runPromise attaches the surrounding WithInstance.provide context,
+// which a bare Effect.runPromise cannot do (no InstanceRef → InstanceState dies).
 function runSession<A, E>(fx: Effect.Effect<A, E, Session.Service>) {
-  return Effect.runPromise(fx.pipe(Effect.provide(Session.defaultLayer)))
+  return AppRuntime.runPromise(fx)
 }
 
 function createSession(directory: string, input?: Session.CreateInput) {

@@ -1,8 +1,8 @@
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import { generateText } from "ai"
 import { resolveApiKey } from "./claude-sdk-query"
 import { Provider } from "@/provider/provider"
-import type { ProviderID } from "@/provider/schema"
 import { AppRuntime } from "@/effect/app-runtime"
 import bin from "./claude-sdk-bin"
 
@@ -58,7 +58,7 @@ export namespace Summarize {
     return result || undefined
   }
 
-  export async function aisdk(input: string, providerID: ProviderID): Promise<string | undefined> {
+  export async function aisdk(input: string, providerID: ProviderV2.ID): Promise<string | undefined> {
     const small = await AppRuntime.runPromise(Provider.Service.use((svc) => svc.getSmallModel(providerID))).catch(() => undefined)
     if (!small) return undefined
     const controller = new AbortController()

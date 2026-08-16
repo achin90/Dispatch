@@ -75,7 +75,7 @@ describe("sdk formatActivity", () => {
   function tool(name: string, input: Record<string, unknown> | undefined): Parameters<typeof sdkFormatActivity>[0] {
     return {
       id: PartID.ascending(),
-      sessionID: SessionID.make("test-session"),
+      sessionID: SessionID.make("ses_testformatactivity"),
       messageID: MessageID.ascending(),
       type: "tool" as const,
       callID: "call-1",

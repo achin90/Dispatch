@@ -32,10 +32,11 @@ type MessageParam = SDKUserMessage["message"]
 import { Effect } from "effect"
 import { Auth } from "@/auth"
 import * as Log from "@opencode-ai/core/util/log"
-import { Bus } from "@/bus"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { MCP } from "@/mcp"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Permission } from "@/permission"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge, createSubagentPermissionHook } from "./claude-sdk-permissions"
 import { getSdkSessionEntry, removeSdkSessionID } from "./claude-sdk-session-map"
@@ -55,7 +56,7 @@ export interface ClaudeSdkQueryInput {
   disallowedTools?: string[]
   abortController?: AbortController
   maxTurns?: number
-  ruleset?: Permission.Ruleset
+  ruleset?: PermissionV1.Ruleset
   effort?: Options["effort"]
   mcpServers?: Record<string, McpServerConfig>
   hooks?: Options["hooks"]
@@ -148,10 +149,16 @@ async function resolveDefs(): Promise<Record<string, ToolDefs> | undefined> {
 export async function resolveMcpServers(): Promise<Record<string, McpServerConfig> | undefined> {
   if (!subscribed) {
     subscribed = true
-    Bus.subscribe(MCP.ToolsChanged, () => {
-      log.info("mcp tools changed, invalidating cache")
-      invalidateMcpCache()
-    })
+    await AppRuntime.runPromise(
+      EventV2Bridge.Service.use((events) =>
+        events.listen((event) => {
+          if (event.type !== MCP.ToolsChanged.type) return Effect.void
+          log.info("mcp tools changed, invalidating cache")
+          invalidateMcpCache()
+          return Effect.void
+        }),
+      ),
+    )
   }
 
   if (dirty) {

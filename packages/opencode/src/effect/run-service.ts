@@ -1,12 +1,12 @@
 import { Effect, Fiber, Layer, ManagedRuntime } from "effect"
 import * as Context from "effect/Context"
-import { Instance } from "@/project/instance"
-import { LocalContext } from "@/util/local-context"
 import { InstanceRef, WorkspaceRef } from "./instance-ref"
 import * as Observability from "@opencode-ai/core/effect/observability"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
-import type { InstanceContext } from "@/project/instance"
+import type { InstanceContext } from "@/project/instance-context"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
+import { Instance } from "@/project/instance"
+import { LocalContext } from "@/util/local-context"
 
 type Refs = {
   instance?: InstanceContext
@@ -25,6 +25,13 @@ export function attachWith<A, E, R>(effect: Effect.Effect<A, E, R>, refs: Refs):
 
 export function attach<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
   const workspace = WorkspaceContext.workspaceID
+  // Dispatch: prefer the AsyncLocalStorage instance context over the Effect
+  // fiber's InstanceRef. The Claude Agent SDK invokes our callbacks (canUseTool,
+  // MCP tool handlers, stream processing) from plain async code where
+  // `Fiber.getCurrent()` is undefined; the only surviving context there is the
+  // ALS that `Instance.restore`/`Instance.bind` re-enter. Without this fallback
+  // every `AppRuntime.runPromise` from those callbacks dies with
+  // "InstanceRef not provided".
   const instance = (() => {
     try {
       return Instance.current

@@ -6,7 +6,9 @@ import {
   createCanUseToolBridge,
   trimDiff,
 } from "../../src/session/claude-sdk-permissions"
-import { Bus } from "../../src/bus"
+import { Effect } from "effect"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Permission } from "../../src/permission"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
@@ -14,6 +16,27 @@ import { AppRuntime } from "../../src/effect/app-runtime"
 
 const sid = SessionID.make("ses_test-perms")
 const mid = MessageID.make("msg_test-perms")
+
+/**
+ * Subscribe to Permission.Event.Asked through the EventV2 bridge (the
+ * replacement for the old per-directory Bus). Listeners live on the event
+ * service itself, so a single subscription sees asks from every directory.
+ * Returns a synchronous unsubscribe, matching the old Bus.subscribe shape.
+ */
+async function onPermissionAsked(handler: (request: PermissionV1.Request) => void): Promise<() => void> {
+  const unsubscribe = await AppRuntime.runPromise(
+    EventV2Bridge.Service.use((events) =>
+      events.listen((event) =>
+        Effect.sync(() => {
+          if (event.type === Permission.Event.Asked.type) handler(event.data as PermissionV1.Request)
+        }),
+      ),
+    ),
+  )
+  return () => {
+    AppRuntime.runPromise(unsubscribe)
+  }
+}
 
 describe("claude-sdk permissions", () => {
   describe("extractPatterns", () => {
@@ -174,12 +197,12 @@ describe("claude-sdk permissions", () => {
         let capturedSessionID: unknown
 
         // Listen for the Asked event and reply through the Permission system
-        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
-          capturedPermission = event.properties.permission
-          capturedPatterns = event.properties.patterns
-          capturedSessionID = event.properties.sessionID
+        const unsubscribe = await onPermissionAsked((request) => {
+          capturedPermission = request.permission
+          capturedPatterns = request.patterns
+          capturedSessionID = request.sessionID
           AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
-            requestID: event.properties.id,
+            requestID: request.id,
             reply: "once",
           })))
         })
@@ -200,9 +223,9 @@ describe("claude-sdk permissions", () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
 
-        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
+        const unsubscribe = await onPermissionAsked((request) => {
           AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
-            requestID: event.properties.id,
+            requestID: request.id,
             reply: "always",
           })))
         })
@@ -220,9 +243,9 @@ describe("claude-sdk permissions", () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
 
-        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
+        const unsubscribe = await onPermissionAsked((request) => {
           AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
-            requestID: event.properties.id,
+            requestID: request.id,
             reply: "reject",
           })))
         })
@@ -291,27 +314,20 @@ describe("claude-sdk permissions", () => {
         fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
-      // Bus.subscribe must run inside an Instance context (Bus state is per-directory).
-      // We subscribe from the agent's directory since that's where ask() publishes.
       let capturedID: unknown
-      const unsubscribe = await WithInstance.provide({
-        directory: agentDir.path,
-        fn: () => {
-          return Bus.subscribe(Permission.Event.Asked, (event) => {
-            capturedID = event.properties.id
-            // reply() runs inside the TUI's directory — different from the agent.
-            // This simulates the real flow: TUI sends HTTP request with its own
-            // x-opencode-directory header, server runs Permission.reply() in that context.
-            WithInstance.provide({
-              directory: tuiDir.path,
-              fn: () =>
-                AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
-                  requestID: event.properties.id,
-                  reply: "once",
-                }))),
-            })
-          })
-        },
+      const unsubscribe = await onPermissionAsked((request) => {
+        capturedID = request.id
+        // reply() runs inside the TUI's directory — different from the agent.
+        // This simulates the real flow: TUI sends HTTP request with its own
+        // x-opencode-directory header, server runs Permission.reply() in that context.
+        WithInstance.provide({
+          directory: tuiDir.path,
+          fn: () =>
+            AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
+              requestID: request.id,
+              reply: "once",
+            }))),
+        })
       })
 
       try {
@@ -335,20 +351,15 @@ describe("claude-sdk permissions", () => {
         fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
-      const unsubscribe = await WithInstance.provide({
-        directory: agentDir.path,
-        fn: () => {
-          return Bus.subscribe(Permission.Event.Asked, (event) => {
-            WithInstance.provide({
-              directory: tuiDir.path,
-              fn: () =>
-                AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
-                  requestID: event.properties.id,
-                  reply: "always",
-                }))),
-            })
-          })
-        },
+      const unsubscribe = await onPermissionAsked((request) => {
+        WithInstance.provide({
+          directory: tuiDir.path,
+          fn: () =>
+            AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
+              requestID: request.id,
+              reply: "always",
+            }))),
+        })
       })
 
       try {
@@ -371,20 +382,15 @@ describe("claude-sdk permissions", () => {
         fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
       })
 
-      const unsubscribe = await WithInstance.provide({
-        directory: agentDir.path,
-        fn: () => {
-          return Bus.subscribe(Permission.Event.Asked, (event) => {
-            WithInstance.provide({
-              directory: tuiDir.path,
-              fn: () =>
-                AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
-                  requestID: event.properties.id,
-                  reply: "reject",
-                }))),
-            })
-          })
-        },
+      const unsubscribe = await onPermissionAsked((request) => {
+        WithInstance.provide({
+          directory: tuiDir.path,
+          fn: () =>
+            AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
+              requestID: request.id,
+              reply: "reject",
+            }))),
+        })
       })
 
       try {
@@ -404,12 +410,12 @@ describe("claude-sdk permissions", () => {
     test("request contains tool metadata", async () => {
       await withInstance(async () => {
         const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
-        let capturedRequest: Permission.Request | undefined
+        let capturedRequest: PermissionV1.Request | undefined
 
-        const unsubscribe = Bus.subscribe(Permission.Event.Asked, (event) => {
-          capturedRequest = event.properties
+        const unsubscribe = await onPermissionAsked((request) => {
+          capturedRequest = request
           AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
-            requestID: event.properties.id,
+            requestID: request.id,
             reply: "once",
           })))
         })

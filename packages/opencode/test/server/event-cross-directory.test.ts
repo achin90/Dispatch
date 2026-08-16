@@ -1,12 +1,27 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { WithInstance } from "@/project/with-instance"
-import { Instance } from "../../src/project/instance"
-import { Bus } from "../../src/bus"
+import { Schema } from "effect"
+import { EventV2 } from "@opencode-ai/core/event"
+import { AppRuntime } from "@/effect/app-runtime"
+import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { GlobalBus } from "../../src/bus/global"
-import { Server } from "../../src/server/server"
 import * as Log from "@opencode-ai/core/util/log"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
+
+// Ad-hoc events used only by this test. EventV2 publishes against a definition
+// rather than an inline `{ type, properties }` object, so declare them up front.
+const TestEvent = EventV2.define({ type: "test.event", schema: { foo: Schema.String } })
+const TestFromA = EventV2.define({ type: "test.from.a", schema: { source: Schema.String } })
+const TestFromB = EventV2.define({ type: "test.from.b", schema: { source: Schema.String } })
+const TestWorkspace = EventV2.define({ type: "test.workspace", schema: { data: Schema.Number } })
+
+// Publish through the opencode bridge — this is the seam that stamps the
+// instance location onto the event and forwards it to GlobalBus (the old
+// Bus.publish -> GlobalBus.emit path these tests were written against).
+function publish<D extends EventV2.Definition>(definition: D, data: D["data"]["Type"]) {
+  return AppRuntime.runPromise(EventV2Bridge.Service.use((events) => events.publish(definition, data)))
+}
 
 afterEach(async () => {
   await resetDatabase()
@@ -15,7 +30,7 @@ afterEach(async () => {
 Log.init({ print: false })
 
 describe("event route cross-directory", () => {
-  test("Bus.publish emits to GlobalBus with directory", async () => {
+  test("publish emits to GlobalBus with directory", async () => {
     await using tmp = await tmpdir()
     const seen: { directory?: string; payload: any }[] = []
     const handler = (evt: { directory?: string; payload: any }) => {
@@ -25,12 +40,7 @@ describe("event route cross-directory", () => {
     try {
       await WithInstance.provide({
         directory: tmp.path,
-        fn: async () => {
-          await Bus.publish(
-            { type: "test.event", properties: {} } as any,
-            { foo: "bar" },
-          )
-        },
+        fn: () => publish(TestEvent, { foo: "bar" }),
       })
       const testEvents = seen.filter((e) => e.payload.type === "test.event")
       expect(testEvents.length).toBe(1)
@@ -56,21 +66,11 @@ describe("event route cross-directory", () => {
     try {
       await WithInstance.provide({
         directory: tmpA.path,
-        fn: async () => {
-          await Bus.publish(
-            { type: "test.from.a", properties: {} } as any,
-            { source: "A" },
-          )
-        },
+        fn: () => publish(TestFromA, { source: "A" }),
       })
       await WithInstance.provide({
         directory: tmpB.path,
-        fn: async () => {
-          await Bus.publish(
-            { type: "test.from.b", properties: {} } as any,
-            { source: "B" },
-          )
-        },
+        fn: () => publish(TestFromB, { source: "B" }),
       })
 
       const fromA = seen.find((e) => e.payload.type === "test.from.a")
@@ -141,9 +141,7 @@ describe("event route cross-directory", () => {
     try {
       await WithInstance.provide({
         directory: tmp.path,
-        fn: async () => {
-          await Bus.publish({ type: "test.workspace", properties: {} } as any, { data: 1 })
-        },
+        fn: () => publish(TestWorkspace, { data: 1 }),
       })
 
       const evt = seen.find((e) => e.payload.type === "test.workspace")

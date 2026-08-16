@@ -17,6 +17,7 @@ type BetaTextBlock = Extract<BetaContentBlock, { type: "text" }>
 type BetaThinkingBlock = Extract<BetaContentBlock, { type: "thinking" }>
 type BetaToolUseBlock = Extract<BetaContentBlock, { type: "tool_use" }>
 import { MessageV2 } from "./message-v2"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { PartID, SessionID, MessageID } from "./schema"
 
 // ---------------------------------------------------------------------------
@@ -39,7 +40,7 @@ export function isToolUseBlock(block: BetaContentBlock): block is BetaToolUseBlo
 // Content block → MessageV2 Part mappers
 // ---------------------------------------------------------------------------
 
-export function textBlockToPart(block: BetaTextBlock, sessionID: SessionID, messageID: MessageID): MessageV2.TextPart {
+export function textBlockToPart(block: BetaTextBlock, sessionID: SessionID, messageID: MessageID): SessionV1.TextPart {
   return {
     id: PartID.ascending(),
     sessionID,
@@ -57,7 +58,7 @@ export function thinkingBlockToPart(
   block: BetaThinkingBlock,
   sessionID: SessionID,
   messageID: MessageID,
-): MessageV2.ReasoningPart {
+): SessionV1.ReasoningPart {
   return {
     id: PartID.ascending(),
     sessionID,
@@ -140,7 +141,7 @@ export function toolUseBlockToPart(
   block: BetaToolUseBlock,
   sessionID: SessionID,
   messageID: MessageID,
-): MessageV2.ToolPart {
+): SessionV1.ToolPart {
   const tool = normalizeTool(block.name)
   const input = normalizeInput(tool, (block.input ?? {}) as Record<string, unknown>)
   return {
@@ -164,7 +165,7 @@ export function toolUseBlockToPart(
 // Convert a single content block to a MessageV2 Part (or null if unsupported)
 // ---------------------------------------------------------------------------
 
-export type MappedPart = MessageV2.TextPart | MessageV2.ReasoningPart | MessageV2.ToolPart
+export type MappedPart = SessionV1.TextPart | SessionV1.ReasoningPart | SessionV1.ToolPart
 
 export function contentBlockToPart(
   block: BetaContentBlock,

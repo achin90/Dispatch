@@ -1,3 +1,4 @@
+import { ModelV2 } from "@opencode-ai/core/model"
 /**
  * Processor that consumes the Claude Agent SDK's query() output (async generator of SDKMessage)
  * and maps it into MessageV2 parts persisted via Session.updatePart/updateMessage.
@@ -14,13 +15,13 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk"
 import { Session } from "./session"
 import { MessageV2 } from "./message-v2"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionID, MessageID, PartID } from "./schema"
-import type { ModelID } from "@/provider/schema"
 import { popPendingMeta } from "./claude-sdk-permissions"
 import { assistantMessageToParts, resultMessageToMetadata, type CompletionMetadata } from "./claude-sdk-adapter"
 import { setSdkSessionID } from "./claude-sdk-session-map"
 import { SessionCompaction } from "./compaction"
-import { Bus } from "@/bus"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import { Instance } from "@/project/instance"
 import { AppRuntime } from "@/effect/app-runtime"
 import * as Log from "@opencode-ai/core/util/log"
@@ -48,7 +49,7 @@ export function extractErrorMessage(error: unknown): string {
 // Activity formatting
 // ---------------------------------------------------------------------------
 
-export function formatActivity(part: MessageV2.ToolPart): string {
+export function formatActivity(part: SessionV1.ToolPart): string {
   const name = part.tool.charAt(0).toUpperCase() + part.tool.slice(1)
   const input = part.state.input as Record<string, unknown> | undefined
   if (!input) return name
@@ -132,7 +133,7 @@ export interface CompactionRef {
 }
 
 export interface ClaudeSdkProcessorInput {
-  assistantMessage: MessageV2.Assistant
+  assistantMessage: SessionV1.Assistant
   sessionID: SessionID
   abort: AbortSignal
   /** The cwd that was passed to the SDK query — stored alongside the session UUID. */
@@ -264,7 +265,7 @@ export async function processClaudeSdkStream(
       assistantMessage.error = {
         name: "APIError",
         data: { message: msg, isRetryable: true },
-      } as MessageV2.Assistant["error"]
+      } as SessionV1.Assistant["error"]
       await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(assistantMessage)))
       return { outcome: "error" }
     }
@@ -281,7 +282,7 @@ export async function processClaudeSdkStream(
     assistantMessage.error = {
       name: "MessageAbortedError",
       data: { message: "Stream ended without result" },
-    } as MessageV2.Assistant["error"]
+    } as SessionV1.Assistant["error"]
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(assistantMessage)))
     return { outcome: "error" }
   }
@@ -298,13 +299,13 @@ export async function processClaudeSdkStream(
  * still running.
  */
 async function finalizeRunningTools(messageID: MessageID, opts?: { skipAgentTools?: boolean }): Promise<void> {
-  const parts = await MessageV2.parts(messageID)
+  const parts = await AppRuntime.runPromise(MessageV2.parts(messageID))
   for (const part of parts) {
     if (part.type !== "tool" || part.state.status !== "running") continue
     // Agent/Task tools have their own lifecycle managed by handleTaskNotification.
     // Skip them during mid-stream finalization — they may still be running subagents.
     if (opts?.skipAgentTools && (part.tool === "agent" || part.tool === "task")) continue
-    const runState = part.state as MessageV2.ToolStateRunning
+    const runState = part.state as SessionV1.ToolStateRunning
     // Merge any pending metadata stashed by canUseTool (e.g. diffs for
     // edit/write tools). The pending map handles the race where canUseTool
     // runs before processAssistantMessage creates the ToolPart.
@@ -333,10 +334,10 @@ async function finalizeRunningTools(messageID: MessageID, opts?: { skipAgentTool
  * Mark all "running" tool parts as "error" on abort/unexpected exit.
  */
 async function abortRunningTools(messageID: MessageID): Promise<void> {
-  const parts = await MessageV2.parts(messageID)
+  const parts = await AppRuntime.runPromise(MessageV2.parts(messageID))
   for (const part of parts) {
     if (part.type !== "tool" || part.state.status !== "running") continue
-    const runState = part.state as MessageV2.ToolStateRunning
+    const runState = part.state as SessionV1.ToolStateRunning
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...part,
       state: {
@@ -360,7 +361,7 @@ async function abortRunningTools(messageID: MessageID): Promise<void> {
 async function processAssistantMessage(
   msg: SDKAssistantMessage,
   sessionID: SessionID,
-  assistantMessage: MessageV2.Assistant,
+  assistantMessage: SessionV1.Assistant,
   subagentMap: Map<string, SubagentContext>,
   setStatus?: ClaudeSdkProcessorInput["setStatus"],
 ): Promise<void> {
@@ -407,7 +408,7 @@ async function processAssistantMessage(
  * The SDK sends subagentType as PascalCase (e.g., "Explore") but opencode
  * agents use lowercase names (e.g., "explore") for color/display matching.
  */
-function resolveAgentName(toolPart: MessageV2.ToolPart | undefined, fallback?: string): string {
+function resolveAgentName(toolPart: SessionV1.ToolPart | undefined, fallback?: string): string {
   const raw = (toolPart?.state.input?.subagentType as string | undefined) ?? fallback
   return raw?.toLowerCase() ?? "default"
 }
@@ -419,14 +420,14 @@ function resolveAgentName(toolPart: MessageV2.ToolPart | undefined, fallback?: s
  */
 async function createChildSession(
   sessionID: SessionID,
-  assistantMessage: MessageV2.Assistant,
+  assistantMessage: SessionV1.Assistant,
   parentToolUseId: string,
   overrideAgentName?: string,
 ): Promise<SubagentContext> {
   // Find the Agent ToolPart's description/prompt from its input to use as title
-  const parentParts = await MessageV2.parts(assistantMessage.id)
+  const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMessage.id))
   const agentPart = parentParts.find(
-    (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === parentToolUseId,
+    (p: SessionV1.Part): p is SessionV1.ToolPart => p.type === "tool" && p.callID === parentToolUseId,
   )
   const description = agentPart?.state.input?.description as string | undefined
   const prompt = agentPart?.state.input?.prompt as string | undefined
@@ -439,7 +440,7 @@ async function createChildSession(
 
   // Create a user message with the prompt text (matches old task tool pattern)
   const userMessageID = MessageID.ascending()
-  const userMessage: MessageV2.User = {
+  const userMessage: SessionV1.User = {
     id: userMessageID,
     sessionID: childSession.id,
     role: "user",
@@ -466,7 +467,7 @@ async function createChildSession(
 
   // Create an assistant message linked to the user message
   const childMessageID = MessageID.ascending()
-  const childMessage: MessageV2.Assistant = {
+  const childMessage: SessionV1.Assistant = {
     id: childMessageID,
     sessionID: childSession.id,
     role: "assistant",
@@ -512,11 +513,11 @@ async function syncSubagentModel(ctx: SubagentContext, wireModel: string | undef
   if (!actual || actual === ctx.modelID) return
   ctx.modelID = actual
   try {
-    const child = MessageV2.get({ sessionID: ctx.childSessionID, messageID: ctx.childMessageID })
+    const child = await AppRuntime.runPromise(MessageV2.get({ sessionID: ctx.childSessionID, messageID: ctx.childMessageID }))
     if (child.info.role !== "assistant") return
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage({
       ...child.info,
-      modelID: actual as ModelID,
+      modelID: actual as ModelV2.ID,
     })))
   } catch {
     // Best-effort — display-only metadata
@@ -527,9 +528,9 @@ async function syncSubagentModel(ctx: SubagentContext, wireModel: string | undef
  * Update an Agent ToolPart's state.metadata with the child session ID,
  * which is the bridge that makes the TUI Task component work.
  */
-async function updateAgentToolMetadata(agentPart: MessageV2.ToolPart, childSessionID: SessionID): Promise<void> {
+async function updateAgentToolMetadata(agentPart: SessionV1.ToolPart, childSessionID: SessionID): Promise<void> {
   if (agentPart.state.status !== "running") return
-  const runState = agentPart.state as MessageV2.ToolStateRunning
+  const runState = agentPart.state as SessionV1.ToolStateRunning
   await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
     ...agentPart,
     state: {
@@ -549,7 +550,7 @@ async function updateAgentToolMetadata(agentPart: MessageV2.ToolPart, childSessi
 async function handleTaskStarted(
   msg: SDKTaskStartedMessage,
   sessionID: SessionID,
-  assistantMessage: MessageV2.Assistant,
+  assistantMessage: SessionV1.Assistant,
   subagentMap: Map<string, SubagentContext>,
 ): Promise<void> {
   const toolUseId = msg.tool_use_id
@@ -567,9 +568,9 @@ async function handleTaskStarted(
   }
 
   // Resolve the correct agent name for the title
-  const parentParts = await MessageV2.parts(assistantMessage.id)
+  const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMessage.id))
   const agentPart = parentParts.find(
-    (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
+    (p: SessionV1.Part): p is SessionV1.ToolPart => p.type === "tool" && p.callID === toolUseId,
   )
   const agentName = resolveAgentName(agentPart, taskTypeFallback)
 
@@ -583,7 +584,7 @@ async function handleTaskStarted(
 
   // Update the Agent ToolPart's title
   if (agentPart && agentPart.state.status === "running") {
-    const runState = agentPart.state as MessageV2.ToolStateRunning
+    const runState = agentPart.state as SessionV1.ToolStateRunning
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...agentPart,
       state: {
@@ -601,16 +602,16 @@ async function handleTaskStarted(
 /**
  * Handle task_progress: update the Agent ToolPart's metadata with tool count for live display.
  */
-async function handleTaskProgress(msg: SDKTaskProgressMessage, assistantMessage: MessageV2.Assistant): Promise<void> {
+async function handleTaskProgress(msg: SDKTaskProgressMessage, assistantMessage: SessionV1.Assistant): Promise<void> {
   const toolUseId = msg.tool_use_id
   if (!toolUseId) return
 
-  const parentParts = await MessageV2.parts(assistantMessage.id)
+  const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMessage.id))
   const agentPart = parentParts.find(
-    (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
+    (p: SessionV1.Part): p is SessionV1.ToolPart => p.type === "tool" && p.callID === toolUseId,
   )
   if (agentPart && agentPart.state.status === "running") {
-    const runState = agentPart.state as MessageV2.ToolStateRunning
+    const runState = agentPart.state as SessionV1.ToolStateRunning
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
       ...agentPart,
       state: {
@@ -631,7 +632,7 @@ async function handleTaskProgress(msg: SDKTaskProgressMessage, assistantMessage:
  */
 async function handleTaskNotification(
   msg: SDKTaskNotificationMessage,
-  assistantMessage: MessageV2.Assistant,
+  assistantMessage: SessionV1.Assistant,
   subagentMap: Map<string, SubagentContext>,
 ): Promise<void> {
   const toolUseId = msg.tool_use_id
@@ -642,12 +643,12 @@ async function handleTaskNotification(
     await finalizeRunningTools(ctx.childMessageID)
   }
 
-  const parentParts = await MessageV2.parts(assistantMessage.id)
+  const parentParts = await AppRuntime.runPromise(MessageV2.parts(assistantMessage.id))
   const agentPart = parentParts.find(
-    (p: MessageV2.Part): p is MessageV2.ToolPart => p.type === "tool" && p.callID === toolUseId,
+    (p: SessionV1.Part): p is SessionV1.ToolPart => p.type === "tool" && p.callID === toolUseId,
   )
   if (!agentPart || agentPart.state.status !== "running") return
-  const runState = agentPart.state as MessageV2.ToolStateRunning
+  const runState = agentPart.state as SessionV1.ToolStateRunning
 
   if (msg.status === "completed") {
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
@@ -693,7 +694,7 @@ async function handleTaskNotification(
  */
 function processResultMessage(
   msg: SDKResultMessage,
-  assistantMessage: MessageV2.Assistant,
+  assistantMessage: SessionV1.Assistant,
   lastTurnUsage?: {
     input_tokens: number
     output_tokens: number
@@ -733,7 +734,7 @@ function processResultMessage(
         message: meta.errors?.join("; ") ?? "Unknown error",
         isRetryable: false,
       },
-    } as MessageV2.Assistant["error"]
+    } as SessionV1.Assistant["error"]
   }
 
   assistantMessage.finish = meta.stop_reason ?? "end_turn"
@@ -749,7 +750,7 @@ function processResultMessage(
 async function handleCompactBoundary(
   msg: SDKCompactBoundary,
   sessionID: SessionID,
-  assistantMessage: MessageV2.Assistant,
+  assistantMessage: SessionV1.Assistant,
   ref?: CompactionRef,
 ): Promise<void> {
   const summary = ref?.summary ?? "Conversation was compacted by the Claude SDK."
@@ -794,7 +795,7 @@ async function handleCompactBoundary(
     providerID: assistantMessage.providerID,
     time: { created: Date.now(), completed: Date.now() },
     finish: "end_turn",
-  })))) as MessageV2.Assistant
+  })))) as SessionV1.Assistant
 
   await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
     id: PartID.ascending(),
@@ -805,5 +806,7 @@ async function handleCompactBoundary(
     time: { start: Date.now(), end: Date.now() },
   })))
 
-  Bus.publish(SessionCompaction.Event.Compacted, { sessionID })
+  await AppRuntime.runPromise(
+    EventV2Bridge.Service.use((events) => events.publish(SessionCompaction.Event.Compacted, { sessionID })),
+  )
 }

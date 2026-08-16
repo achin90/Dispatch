@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import { SDK_MODELS, buildSdkModel } from "../../src/provider/provider"
-import { ProviderID } from "../../src/provider/schema"
 
 // ---------------------------------------------------------------------------
 // SDK_MODELS and buildSdkModel — Dispatch regression guard
