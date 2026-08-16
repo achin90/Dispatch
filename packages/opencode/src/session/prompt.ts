@@ -16,6 +16,7 @@ import { Bus } from "../bus"
 import { ProviderTransform } from "@/provider/transform"
 import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
+import { Instance } from "@/project/instance"
 import { Plugin } from "../plugin"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
@@ -1616,44 +1617,53 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const abortController = new AbortController()
             const abort = abortController.signal
 
+            // The claude-sdk modules resolve the instance through the
+            // AsyncLocalStorage context — Instance.current/Instance.worktree,
+            // and the Instance.bind()s that re-enter it from SDK callbacks.
+            // Effect carries the instance on the fiber, not in ALS, so ALS is
+            // entered here: the boundary where Effect calls into those modules.
             const sdkQuery = yield* Effect.promise(() =>
-              createClaudeSdkQuery({
-                prompt,
-                sessionID,
-                messageID: msg.id,
-                model: model.api.id,
-                systemPrompt,
-                cwd: ctx.directory,
-                maxTurns: isLastStep ? 1 : undefined,
-                ruleset: Permission.merge(agent.permission, session.permission ?? []),
-                effort: lastUser.model.variant as "low" | "medium" | "high" | "xhigh" | "max" | undefined,
-                mcpServers,
-                abortController,
-                contextWindow: model.limit.context,
-                hooks: {
-                  PostCompact: [
-                    {
-                      hooks: [
-                        async (input) => {
-                          compactRef.summary = (input as { compact_summary: string }).compact_summary
-                          return { continue: true }
-                        },
-                      ],
-                    },
-                  ],
-                },
-              }),
+              Instance.restore(ctx, () =>
+                createClaudeSdkQuery({
+                  prompt,
+                  sessionID,
+                  messageID: msg.id,
+                  model: model.api.id,
+                  systemPrompt,
+                  cwd: ctx.directory,
+                  maxTurns: isLastStep ? 1 : undefined,
+                  ruleset: Permission.merge(agent.permission, session.permission ?? []),
+                  effort: lastUser.model.variant as "low" | "medium" | "high" | "xhigh" | "max" | undefined,
+                  mcpServers,
+                  abortController,
+                  contextWindow: model.limit.context,
+                  hooks: {
+                    PostCompact: [
+                      {
+                        hooks: [
+                          async (input) => {
+                            compactRef.summary = (input as { compact_summary: string }).compact_summary
+                            return { continue: true }
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                }),
+              ),
             )
 
             const result = yield* Effect.promise(() =>
-              processClaudeSdkStream(sdkQuery, {
-                assistantMessage: msg,
-                sessionID,
-                abort,
-                cwd: ctx.directory,
-                compaction: compactRef,
-                setStatus: (sid, s) => run.fork(status.set(sid, s as any)),
-              }),
+              Instance.restore(ctx, () =>
+                processClaudeSdkStream(sdkQuery, {
+                  assistantMessage: msg,
+                  sessionID,
+                  abort,
+                  cwd: ctx.directory,
+                  compaction: compactRef,
+                  setStatus: (sid, s) => run.fork(status.set(sid, s as any)),
+                }),
+              ),
             ).pipe(Effect.onInterrupt(() => Effect.sync(() => abortController.abort())))
 
             yield* instruction.clear(msg.id)
