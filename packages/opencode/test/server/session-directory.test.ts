@@ -1,84 +1,112 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { AppRuntime } from "@/effect/app-runtime"
-import { InstanceStore } from "@/project/instance-store"
-import { WithInstance } from "@/project/with-instance"
+import fs from "fs/promises"
+import path from "path"
 import { Effect } from "effect"
-import { Instance } from "../../src/project/instance"
+import { WithInstance } from "@/project/with-instance"
+import { Session } from "@/session/session"
 import { Server } from "../../src/server/server"
-import { Session as SessionNs } from "../../src/session/session"
-import { withSessionInstance } from "../../src/server/routes/instance/session"
 import * as Log from "@opencode-ai/core/util/log"
-import { tmpdir } from "../fixture/fixture"
+import { resetDatabase } from "../fixture/db"
+import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 
-Log.init({ print: false })
+void Log.init({ print: false })
 
-function run<A, E>(fx: Effect.Effect<A, E, SessionNs.Service>) {
-  return Effect.runPromise(fx.pipe(Effect.provide(SessionNs.defaultLayer)))
+function app() {
+  return Server.Default().app
 }
 
-const svc = {
-  create(input?: SessionNs.CreateInput) {
-    return run(SessionNs.Service.use((svc) => svc.create(input)))
-  },
+function runSession<A, E>(fx: Effect.Effect<A, E, Session.Service>) {
+  return Effect.runPromise(fx.pipe(Effect.provide(Session.defaultLayer)))
+}
+
+function createSession(directory: string, input?: Session.CreateInput) {
+  return WithInstance.provide({
+    directory,
+    fn: () => runSession(Session.Service.use((svc) => svc.create(input))),
+  })
+}
+
+async function exists(file: string) {
+  return fs
+    .stat(file)
+    .then(() => true)
+    .catch(() => false)
 }
 
 afterEach(async () => {
-  await AppRuntime.runPromise(InstanceStore.Service.use((store) => store.disposeAll()))
+  await disposeAllInstances()
+  await resetDatabase()
 })
 
 // ---------------------------------------------------------------------------
-// withSessionInstance — Dispatch regression guard
+// Session-scoped routes run in the session's own instance — Dispatch guard
 //
-// Upstream calls SessionPrompt methods directly without directory context.
-// Dispatch wraps them with withSessionInstance so agent sessions running in
-// worktree directories resolve paths correctly. These tests ensure the
-// wrapper survives upstream merges.
+// Dispatch supports worktree agent sessions: a session created in directory A
+// while the TUI (and therefore the request) is rooted in directory B. The
+// HttpApi session handler group resolves each session's stored directory and
+// runs the handler inside THAT instance (the `sessionInstance` /
+// `withSessionInstance` pair in
+// src/server/routes/instance/httpapi/handlers/session.ts, which wraps abort,
+// init, summarize, command, shell, deleteMessage, prompt, promptAsync and
+// lastResponse).
+//
+// Upstream opencode has no such redirection — handlers just run in the
+// requester's instance. If a merge drops it, prompts and shell commands
+// silently execute against the wrong directory (wrong files, wrong system
+// prompt) while still returning 200 with plausible output. It fails silently,
+// so these tests assert through the HTTP API only: they must stay meaningful
+// no matter how the server internals are restructured.
 // ---------------------------------------------------------------------------
 
-describe("withSessionInstance", () => {
-  test("runs callback in session directory context", async () => {
-    await using dirA = await tmpdir({ git: true })
-    await using dirB = await tmpdir({ git: true })
+describe("session routes run in the session's directory", () => {
+  test("shell route executes in the session's directory, not the requester's", async () => {
+    await using dirA = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+    await using dirB = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
 
-    // Create session in dir A — stores dirA as the session's directory
-    const session = await WithInstance.provide({
-      directory: dirA.path,
-      fn: () => svc.create({ title: "agent-session" }),
+    // Session is created in dir A, so dir A is its stored directory.
+    const session = await createSession(dirA.path, { title: "agent-session" })
+
+    // The request comes from an instance rooted at dir B.
+    const response = await app().request(`/session/${session.id}/shell`, {
+      method: "POST",
+      headers: { "x-opencode-directory": dirB.path, "content-type": "application/json" },
+      body: JSON.stringify({ agent: "build", command: "pwd && touch marker.txt" }),
     })
 
-    // From dir B, use withSessionInstance — it should provide dir A
-    const resolved = await WithInstance.provide({
-      directory: dirB.path,
-      fn: () =>
-        run(
-          withSessionInstance(session.id, async () => {
-            return Instance.directory
-          }),
-        ),
+    expect(response.status).toBe(200)
+    const message = (await response.json()) as {
+      info: { path: { cwd: string; root: string } }
+      parts: { type: string; state?: { status: string; output?: string } }[]
+    }
+
+    // The assistant message records the instance the work ran in.
+    expect(message.info.path.cwd).toBe(dirA.path)
+    expect(message.info.path.root).toBe(dirA.path)
+
+    // ...and the process itself really ran there.
+    const tool = message.parts.find((part) => part.type === "tool")
+    expect(tool?.state?.status).toBe("completed")
+    expect(tool?.state?.output?.trim()).toBe(dirA.path)
+
+    // Side effects land in dir A, never in the requesting instance's dir B.
+    expect(await exists(path.join(dirA.path, "marker.txt"))).toBe(true)
+    expect(await exists(path.join(dirB.path, "marker.txt"))).toBe(false)
+  }, 30_000)
+
+  test("abort route succeeds for a session owned by another directory", async () => {
+    await using dirA = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+    await using dirB = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+
+    const session = await createSession(dirA.path, {})
+
+    // abort is one of the redirected handlers; resolving dir A's instance must
+    // not make the route fail when the caller is rooted somewhere else.
+    const response = await app().request(`/session/${session.id}/abort`, {
+      method: "POST",
+      headers: { "x-opencode-directory": dirB.path },
     })
 
-    expect(resolved).toBe(dirA.path)
-  })
-
-  test("abort route returns success through withSessionInstance", async () => {
-    await using dirA = await tmpdir({ git: true })
-    await using dirB = await tmpdir({ git: true })
-
-    const session = await WithInstance.provide({
-      directory: dirA.path,
-      fn: () => svc.create({}),
-    })
-
-    // Start server in dir B and call abort on the session from dir A.
-    // The route uses withSessionInstance, which resolves to dirA.
-    // If withSessionInstance is broken, the route would fail.
-    await WithInstance.provide({
-      directory: dirB.path,
-      fn: async () => {
-        const app = Server.Default().app
-        const res = await app.request(`/session/${session.id}/abort`, { method: "POST" })
-        expect(res.status).toBe(200)
-      },
-    })
-  })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toBe(true)
+  }, 30_000)
 })
