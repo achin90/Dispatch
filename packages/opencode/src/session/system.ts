@@ -1,5 +1,4 @@
 import path from "path"
-import { Instance } from "@/project/instance"
 import { Context, Effect, Layer } from "effect"
 
 import { InstanceState } from "@/effect/instance-state"
@@ -34,8 +33,10 @@ export function provider(model: Provider.Model) {
   return [PROMPT_DEFAULT]
 }
 
-async function worktree() {
-  const dir = Instance.directory
+// Takes the directory explicitly: the HTTP API path never enters the
+// AsyncLocalStorage Instance context, so reading Instance.directory here fails
+// with "No context found for instance". The caller already has the instance.
+async function worktree(dir: string) {
   const content = await Bun.file(path.join(dir, ".git"))
     .text()
     .catch(() => null)
@@ -85,7 +86,7 @@ export const layer = Layer.effect(
           ].join("\n"),
         ]
 
-        const wt = yield* Effect.promise(() => worktree())
+        const wt = yield* Effect.promise(() => worktree(ctx.directory))
         if (wt) {
           parts.push(
             [

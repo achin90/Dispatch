@@ -1,6 +1,8 @@
 import { Bus } from "@/bus"
+import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
+import { InstanceState } from "@/effect/instance-state"
 import * as Log from "@opencode-ai/core/util/log"
-import { Effect, Schema } from "effect"
+import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
@@ -37,8 +39,23 @@ function eventData(data: unknown): Sse.Event {
   }
 }
 
-function eventResponse(bus: Bus.Interface) {
+function eventResponse(bus: Bus.Interface, currentDirectory: string) {
   const events = bus.subscribeAll().pipe(Stream.takeUntil((event) => event.type === Bus.InstanceDisposed.type))
+
+  // Dispatch: agent sessions running in worktree directories publish to their
+  // own instance bus, so a TUI subscribed to this instance would never see
+  // them. Bridge in GlobalBus events from OTHER directories; same-directory
+  // events are skipped because subscribeAll already delivered them.
+  const cross = Stream.callback<Record<string, unknown>>((queue) => {
+    const handler = ({ directory, payload }: GlobalBusEvent) => {
+      if (directory === currentDirectory) return
+      Queue.offerUnsafe(queue, payload)
+    }
+    return Effect.acquireRelease(
+      Effect.sync(() => GlobalBus.on("event", handler)),
+      () => Effect.sync(() => GlobalBus.off("event", handler)),
+    )
+  })
   const heartbeat = Stream.tick("10 seconds").pipe(
     Stream.drop(1),
     Stream.map(() => ({ id: Bus.createID(), type: "server.heartbeat", properties: {} })),
@@ -47,7 +64,12 @@ function eventResponse(bus: Bus.Interface) {
   log.info("event connected")
   return HttpServerResponse.stream(
     Stream.make({ id: Bus.createID(), type: "server.connected", properties: {} }).pipe(
-      Stream.concat(events.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }))),
+      Stream.concat(
+        events.pipe(
+          Stream.merge(cross, { haltStrategy: "left" }),
+          Stream.merge(heartbeat, { haltStrategy: "left" }),
+        ),
+      ),
       Stream.map(eventData),
       Stream.pipeThroughChannel(Sse.encode()),
       Stream.encodeText,
@@ -70,7 +92,8 @@ export const eventHandlers = HttpApiBuilder.group(EventApi, "event", (handlers) 
     return handlers.handleRaw(
       "subscribe",
       Effect.fn("EventHttpApi.subscribe")(function* () {
-        return eventResponse(bus)
+        const instance = yield* InstanceState.context
+        return eventResponse(bus, instance.directory)
       }),
     )
   }),

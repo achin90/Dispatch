@@ -35,7 +35,8 @@ describe("event route cross-directory", () => {
       const testEvents = seen.filter((e) => e.payload.type === "test.event")
       expect(testEvents.length).toBe(1)
       expect(testEvents[0].directory).toBe(tmp.path)
-      expect(testEvents[0].payload).toEqual({
+      // upstream now stamps every event with an ascending `id`; assert on content only
+      expect(testEvents[0].payload).toMatchObject({
         type: "test.event",
         properties: { foo: "bar" },
       })
@@ -123,8 +124,8 @@ describe("event route cross-directory", () => {
       })
 
       expect(forwarded).toHaveLength(2)
-      expect(forwarded[0]).toEqual({ type: "cross.dir.event", properties: {} })
-      expect(forwarded[1]).toEqual({ type: "undefined.dir.event", properties: {} })
+      expect(forwarded[0]).toMatchObject({ type: "cross.dir.event", properties: {} })
+      expect(forwarded[1]).toMatchObject({ type: "undefined.dir.event", properties: {} })
     } finally {
       GlobalBus.off("event", filter)
     }

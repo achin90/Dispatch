@@ -4,6 +4,7 @@ import { Flag } from "@opencode-ai/core/flag/flag"
 import { Instance } from "../../src/project/instance"
 import { WithInstance } from "../../src/project/with-instance"
 import { Server } from "../../src/server/server"
+import path from "path"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { Session } from "@/session/session"
 import { Database } from "@/storage/db"
@@ -173,7 +174,8 @@ describe("experimental HttpApi", () => {
 
     expect(created.status).toBe(200)
     const info = (await created.json()) as Worktree.Info
-    expect(info).toMatchObject({ name: "api-test", branch: "opencode/api-test" })
+    // Dispatch names worktrees `<repo-basename>-<slug>` as siblings, with branch === name
+    expect(info).toMatchObject({ name: `${path.basename(tmp.path)}-api-test`, branch: `${path.basename(tmp.path)}-api-test` })
     await waitReady(info.directory)
 
     const listed = await app().request(ExperimentalPaths.worktree, { headers })

@@ -30,6 +30,7 @@ export class UnsupportedOAuthError extends Schema.ErrorClass<UnsupportedOAuthErr
 
 export const McpPaths = {
   status: "/mcp",
+  health: "/mcp/health",
   auth: "/mcp/:name/auth",
   authCallback: "/mcp/:name/auth/callback",
   authAuthenticate: "/mcp/:name/auth/authenticate",
@@ -59,6 +60,16 @@ export const McpApi = HttpApi.make("mcp")
             identifier: "mcp.add",
             summary: "Add MCP server",
             description: "Dynamically add a new Model Context Protocol (MCP) server to the system.",
+          }),
+        ),
+        HttpApiEndpoint.post("health", McpPaths.health, {
+          success: described(Schema.Boolean, "Health check completed"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "mcp.health",
+            summary: "Health check MCP connections",
+            description:
+              "Ping all connected MCP servers and reconnect any that are unresponsive. Useful after process suspension.",
           }),
         ),
         HttpApiEndpoint.post("authStart", McpPaths.auth, {

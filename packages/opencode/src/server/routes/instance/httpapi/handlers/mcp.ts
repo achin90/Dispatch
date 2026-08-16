@@ -19,6 +19,11 @@ export const mcpHandlers = HttpApiBuilder.group(InstanceHttpApi, "mcp", (handler
       ).pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
     })
 
+    const health = Effect.fn("McpHttpApi.health")(function* () {
+      yield* mcp.healthCheck()
+      return true
+    })
+
     const authStart = Effect.fn("McpHttpApi.authStart")(function* (ctx: { params: { name: string } }) {
       if (!(yield* mcp.supportsOAuth(ctx.params.name))) {
         return yield* new UnsupportedOAuthError({ error: `MCP server ${ctx.params.name} does not support OAuth` })
@@ -58,6 +63,7 @@ export const mcpHandlers = HttpApiBuilder.group(InstanceHttpApi, "mcp", (handler
     return handlers
       .handle("status", status)
       .handle("add", add)
+      .handle("health", health)
       .handle("authStart", authStart)
       .handle("authCallback", authCallback)
       .handle("authAuthenticate", authAuthenticate)

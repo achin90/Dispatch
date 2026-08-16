@@ -23,7 +23,6 @@ import { fn } from "@/util/fn"
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
 import type { SDKAssistantMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk"
 import bin from "./claude-sdk-bin"
-import { resolveApiKey } from "./claude-sdk-query"
 import { resultMessageToMetadata } from "./claude-sdk-adapter"
 import { getSdkSessionID, removeSdkSessionID } from "./claude-sdk-session-map"
 import { EventV2 } from "@/v2/event"
@@ -454,6 +453,11 @@ export const layer: Layer.Layer<
         // re-inflation on the next turn). Uses OAuth/subscription auth
         // so compaction works without an explicit ANTHROPIC_API_KEY.
         result = yield* Effect.promise(async () => {
+          // Imported lazily: claude-sdk-query imports AppRuntime, and AppRuntime's
+          // layer list imports this module. A static import closes that cycle and
+          // makes module init order fatal ("Cannot access 'defaultLayer' before
+          // initialization") for anything that loads compaction first.
+          const { resolveApiKey } = await import("./claude-sdk-query")
           const apiKey = await resolveApiKey()
           const env: Record<string, string | undefined> = { ...globalThis.process.env }
           if (apiKey) env.ANTHROPIC_API_KEY = apiKey

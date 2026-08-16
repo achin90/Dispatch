@@ -137,7 +137,21 @@ function extractFilePath(toolName: string, input: Record<string, unknown>): stri
  */
 function normaliseFilePatterns(toolName: string, patterns: string[]): string[] {
   if (!FILE_TOOLS.has(toolName)) return patterns
-  return patterns.map((p) => (path.isAbsolute(p) ? path.relative(Instance.worktree, p) : p))
+  // Non-git projects set worktree to "/" (the same sentinel containsPath guards
+  // against). Relativising against it would strip the leading slash off every
+  // absolute path.
+  const worktree = Instance.worktree
+  if (worktree === "/") return patterns
+  return patterns.map((p) => {
+    if (!path.isAbsolute(p)) return p
+    const rel = path.relative(worktree, p)
+    // Only paths INSIDE the worktree get relativised. A file outside it would
+    // otherwise become "../../../../tmp/x", which matches no config rule and is
+    // less readable than the absolute path in the permission dialog. Those are
+    // gated by the external_directory permission instead.
+    if (rel.startsWith("..") || path.isAbsolute(rel)) return p
+    return rel
+  })
 }
 
 /**

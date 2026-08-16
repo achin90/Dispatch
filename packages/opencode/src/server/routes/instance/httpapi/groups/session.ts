@@ -67,6 +67,10 @@ export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput
 export const PermissionResponsePayload = Schema.Struct({
   response: Permission.Reply,
 })
+const LastResponse = Schema.Struct({
+  text: Schema.String,
+  summary: Schema.Boolean,
+})
 
 export const SessionPaths = {
   list: root,
@@ -75,6 +79,7 @@ export const SessionPaths = {
   children: `${root}/:sessionID/children`,
   todo: `${root}/:sessionID/todo`,
   diff: `${root}/:sessionID/diff`,
+  lastResponse: `${root}/:sessionID/last-response`,
   messages: `${root}/:sessionID/message`,
   message: `${root}/:sessionID/message/:messageID`,
   create: root,
@@ -152,6 +157,18 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.todo",
             summary: "Get session todos",
             description: "Retrieve the todo list associated with a specific session, showing tasks and action items.",
+          }),
+        ),
+        HttpApiEndpoint.get("lastResponse", SessionPaths.lastResponse, {
+          params: { sessionID: SessionID },
+          success: described(LastResponse, "Last response text"),
+          error: [HttpApiError.BadRequest, HttpApiError.NotFound],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.lastResponse",
+            summary: "Get last response summary",
+            description:
+              "Get the last assistant response for a session, optionally summarized by a small model if the response is long.",
           }),
         ),
         HttpApiEndpoint.get("diff", SessionPaths.diff, {

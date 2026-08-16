@@ -52,7 +52,7 @@ describe("Worktree", () => {
 
             expect(info.name).toBeDefined()
             expect(typeof info.name).toBe("string")
-            expect(info.branch).toBe(`opencode/${info.name}`)
+            expect(info.branch).toBe(info.name)
             expect(info.directory).toContain(info.name)
           }),
         { git: true },
@@ -61,13 +61,13 @@ describe("Worktree", () => {
 
     it.live("uses provided name as base", () =>
       provideTmpdirInstance(
-        () =>
+        (dir) =>
           Effect.gen(function* () {
             const svc = yield* Worktree.Service
             const info = yield* svc.makeWorktreeInfo("my-feature")
 
-            expect(info.name).toBe("my-feature")
-            expect(info.branch).toBe("opencode/my-feature")
+            expect(info.name).toBe(`${path.basename(dir)}-my-feature`)
+            expect(info.branch).toBe(info.name)
           }),
         { git: true },
       ),
@@ -75,12 +75,12 @@ describe("Worktree", () => {
 
     it.live("slugifies the provided name", () =>
       provideTmpdirInstance(
-        () =>
+        (dir) =>
           Effect.gen(function* () {
             const svc = yield* Worktree.Service
             const info = yield* svc.makeWorktreeInfo("My Feature Branch!")
 
-            expect(info.name).toBe("my-feature-branch")
+            expect(info.name).toBe(`${path.basename(dir)}-my-feature-branch`)
           }),
         { git: true },
       ),
@@ -108,7 +108,7 @@ describe("Worktree", () => {
             const info = yield* svc.create()
 
             expect(info.name).toBeDefined()
-            expect(info.branch).toStartWith("opencode/")
+            expect(info.branch).toBe(info.name)
             expect(info.directory).toBeDefined()
 
             yield* Effect.promise(() => Bun.sleep(1000))
@@ -129,7 +129,7 @@ describe("Worktree", () => {
             const info = yield* svc.create()
 
             expect(info.name).toBeDefined()
-            expect(info.branch).toStartWith("opencode/")
+            expect(info.branch).toBe(info.name)
 
             const text = yield* Effect.promise(() => $`git worktree list --porcelain`.cwd(dir).quiet().text())
             const next = yield* Effect.promise(() => fs.realpath(info.directory).catch(() => info.directory))
@@ -154,14 +154,14 @@ describe("Worktree", () => {
 
     it.live("create with custom name", () =>
       provideTmpdirInstance(
-        () =>
+        (dir) =>
           Effect.gen(function* () {
             const svc = yield* Worktree.Service
             const ready = waitReady()
             const info = yield* svc.create({ name: "test-workspace" })
 
-            expect(info.name).toBe("test-workspace")
-            expect(info.branch).toBe("opencode/test-workspace")
+            expect(info.name).toBe(`${path.basename(dir)}-test-workspace`)
+            expect(info.branch).toBe(info.name)
 
             yield* Effect.promise(() => ready)
             yield* Effect.promise(() =>
@@ -220,7 +220,9 @@ describe("Worktree", () => {
             expect(list).toContainEqual({
               name: path.basename(parent),
               branch,
-              directory: directory.toLowerCase(),
+              // impl only lowercases on win32 (worktree/index.ts); macOS tmpdirs contain an
+              // uppercase "T", so lowercasing unconditionally here fails off-Linux
+              directory: process.platform === "win32" ? directory.toLowerCase() : directory,
             })
 
             yield* svc.remove({ directory: target })
