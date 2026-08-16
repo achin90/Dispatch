@@ -4,6 +4,7 @@ import { InstanceStore } from "@/project/instance-store"
 import { WithInstance } from "@/project/with-instance"
 import os from "os"
 import { Permission } from "../../src/permission"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Instance } from "../../src/project/instance"
 import { createSubagentPermissionHook } from "../../src/session/claude-sdk-permissions"
 
@@ -22,7 +23,7 @@ const build = Permission.merge(defaults, Permission.fromConfig({ bash: "ask", ed
 // createSubagentPermissionHook binds the current Instance ALS context, so build
 // the hook and call it inside Instance.provide (mirrors production, where it is
 // constructed within the session's instance context).
-const decide = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
+const decide = (ruleset: PermissionV1.Ruleset, evt: Record<string, unknown>) =>
   WithInstance.provide({
     directory: os.tmpdir(),
     fn: async () => {
@@ -36,7 +37,7 @@ const decide = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
 
 // Same binding requirement as `decide`, but returns the rewritten tool input
 // rather than the permission decision.
-const rewrite = (ruleset: Permission.Ruleset, evt: Record<string, unknown>) =>
+const rewrite = (ruleset: PermissionV1.Ruleset, evt: Record<string, unknown>) =>
   WithInstance.provide({
     directory: os.tmpdir(),
     fn: async () => {

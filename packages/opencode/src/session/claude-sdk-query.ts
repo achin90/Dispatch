@@ -31,7 +31,7 @@ import z from "zod"
 type MessageParam = SDKUserMessage["message"]
 import { Effect } from "effect"
 import { Auth } from "@/auth"
-import * as Log from "@opencode-ai/core/util/log"
+import * as LogBridge from "@/util/log-bridge"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { MCP } from "@/mcp"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -42,7 +42,7 @@ import { createCanUseToolBridge, createSubagentPermissionHook } from "./claude-s
 import { getSdkSessionEntry, removeSdkSessionID } from "./claude-sdk-session-map"
 import bin from "./claude-sdk-bin"
 
-const log = Log.create({ service: "claude-sdk-query" })
+const log = LogBridge.create({ service: "claude-sdk-query" })
 
 export interface ClaudeSdkQueryInput {
   prompt: string | MessageParam

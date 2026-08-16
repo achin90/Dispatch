@@ -101,6 +101,21 @@ export const TaskTool = Tool.define(
         )
       }
 
+      const parent = yield* sessions.get(ctx.sessionID)
+      let current = parent
+      let depth = 0
+      while (current.parentID) {
+        depth++
+        current = yield* sessions.get(current.parentID)
+      }
+      if (depth >= (cfg.subagent_depth ?? 1)) {
+        return yield* Effect.fail(
+          new Error(
+            `Subagent depth limit reached (${cfg.subagent_depth ?? 1}). Increase "subagent_depth" to allow nested subagents.`,
+          ),
+        )
+      }
+
       if (!ctx.extra?.bypassAgentCheck) {
         yield* ctx.ask({
           permission: id,
@@ -123,10 +138,23 @@ export const TaskTool = Tool.define(
       const session = params.task_id
         ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
-      const parent = yield* sessions.get(ctx.sessionID)
-      const parentAgent = parent.agent
-        ? yield* agent.get(parent.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-        : undefined
+      const childPermission = deriveSubagentSessionPermission({
+        parentSessionPermission: parent.permission ?? [],
+        subagent: next,
+      })
+      const childToolDenies = [
+        ...(next.permission.some((rule) => rule.permission === "todowrite")
+          ? []
+          : [{ permission: "todowrite" as const, pattern: "*" as const, action: "deny" as const }]),
+        ...(next.permission.some((rule) => rule.permission === id)
+          ? []
+          : [{ permission: id, pattern: "*" as const, action: "deny" as const }]),
+        ...(cfg.experimental?.primary_tools?.map((permission) => ({
+          permission,
+          pattern: "*" as const,
+          action: "deny" as const,
+        })) ?? []),
+      ]
       const nextSession =
         session ??
         (yield* sessions.create({
@@ -134,21 +162,20 @@ export const TaskTool = Tool.define(
           title: params.description + ` (@${next.name} subagent)`,
           agent: next.name,
           permission: [
-            // evaluate() uses findLast, so LAST match wins. Upstream's derived rules
-            // (parent agent edit denies, session denies/external_directory, todowrite/task
-            // denies) go first as the baseline; Dispatch puts the calling agent's own
-            // permissions last so a yolo caller still propagates its grants to subagents.
-            ...deriveSubagentSessionPermission({
-              parentSessionPermission: parent.permission ?? [],
-              parentAgent,
-              subagent: next,
-            }),
+            // evaluate() uses findLast, so LAST match wins. Dispatch seeds the child with
+            // the calling agent's own ruleset as the baseline (so a yolo caller propagates
+            // its grants to subagents), then appends upstream's derived rules — the parent
+            // session's external_directory/deny grants and the subagent's todowrite/task
+            // denies — so those narrow rules still win over the caller's broad defaults.
             ...(caller?.permission ?? []),
-            ...(cfg.experimental?.primary_tools?.map((item) => ({
-              pattern: "*",
-              action: "allow" as const,
-              permission: item,
-            })) ?? []),
+            ...childPermission,
+            ...childToolDenies.filter(
+              (deny) =>
+                !childPermission.some(
+                  (rule) =>
+                    rule.permission === deny.permission && rule.pattern === deny.pattern && rule.action === deny.action,
+                ),
+            ),
           ],
         }))
 
@@ -189,11 +216,6 @@ export const TaskTool = Tool.define(
           },
           variant: next.model ? undefined : variant,
           agent: next.name,
-          tools: {
-            ...(next.permission.some((rule) => rule.permission === "todowrite") ? {} : { todowrite: false }),
-            ...(next.permission.some((rule) => rule.permission === id) ? {} : { task: false }),
-            ...Object.fromEntries((cfg.experimental?.primary_tools ?? []).map((item) => [item, false])),
-          },
           parts,
         })
         return result.parts.findLast((item) => item.type === "text")?.text ?? ""

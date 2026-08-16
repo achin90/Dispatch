@@ -11,10 +11,11 @@ import type {
   WslServersEvent,
   WslServersState,
 } from "../../preload/types"
-import { WSL_SERVERS_KEY } from "../constants"
+import { WSL_SERVERS_KEY } from "../store-keys"
 import { getStore } from "../store"
 import { expectOpencodeVersion, pendingRestartAfterWslInstall, wslServerIdsToStartOnInitialize } from "./startup"
 import { clearWslDistroState, wslServerIdToRestart } from "./policy"
+import { nativeT } from "../native-translations"
 import {
   installWslDistro,
   installWslOpencode,
@@ -43,18 +44,35 @@ type ControllerLogger = {
   error: (message: string, meta?: unknown) => void
 }
 
+type WslServersControllerOptions = {
+  logger?: ControllerLogger
+  readServers?: () => WslServerConfig[]
+  writeServers?: (servers: WslServerConfig[]) => void
+  probeDistro?: typeof probeWslDistro
+  resolveOpencode?: typeof resolveWslOpencode
+  readCommandVersion?: typeof readWslCommandVersion
+}
+
 export type WslServersController = ReturnType<typeof createWslServersController>
 
 export function wslServerIdForDistro(distro: string) {
   return `wsl:${distro}`
 }
 
-export function createWslServersController(appVersion: string, spawnSidecar: SpawnSidecar, logger?: ControllerLogger) {
+export function createWslServersController(
+  appVersion: string,
+  spawnSidecar: SpawnSidecar,
+  options?: WslServersControllerOptions,
+) {
   let state: WslServersState = initialState()
   const listeners = new Set<(event: WslServersEvent) => void>()
   const sidecars = new Map<string, RunningSidecar>()
   const startAttempts = new Map<string, number>()
   let jobAbort: AbortController | undefined
+  const logger = options?.logger
+  const readServers = options?.readServers ?? readPersistedServers
+  const writeServers = options?.writeServers ?? writePersistedServers
+  const probeDistro = options?.probeDistro ?? probeWslDistro
 
   const emit = () => {
     for (const listener of listeners) listener({ type: "state", state })
@@ -66,7 +84,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
   }
 
   const persistServers = (servers: WslServerConfig[]) => {
-    getStore().set(WSL_SERVERS_KEY, { servers })
+    writeServers(servers)
   }
 
   const updateServer = (id: string, update: (item: WslServerItem) => WslServerItem) => {
@@ -89,7 +107,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
   }
 
   const refreshFromStore = () => {
-    const persisted = readPersistedServers()
+    const persisted = readServers()
     const items: WslServerItem[] = persisted.map((config) => {
       const existing = state.servers.find((item) => item.config.id === config.id)
       return {
@@ -113,10 +131,74 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     })
   }
 
+  const checkOpencode = async (distro: string, opts?: { signal?: AbortSignal }) => {
+    const resolved = await (options?.resolveOpencode ?? resolveWslOpencode)(distro, opts)
+    const version = resolved
+      ? await (options?.readCommandVersion ?? readWslCommandVersion)(resolved, distro, opts)
+      : null
+    return opencodeCheck(distro, resolved, version, appVersion)
+  }
+
   const refreshOpencodeCheck = async (distro: string, opts?: { signal?: AbortSignal }) => {
-    const resolved = await resolveWslOpencode(distro, opts)
-    const version = resolved ? await readWslCommandVersion(resolved, distro, opts) : null
-    setOpencodeCheck(distro, opencodeCheck(distro, resolved, version, appVersion))
+    setOpencodeCheck(distro, await checkOpencode(distro, opts))
+  }
+
+  const probeAddableDistros = async (distros: string[], opts?: { signal?: AbortSignal }) => {
+    const unique = [...new Set(distros)]
+    const distroProbes = await Promise.all(
+      unique
+        .filter((distro) => !state.distroProbes[distro])
+        .map(async (distro) => [distro, await probeDistro(distro, opts)] as const),
+    )
+    if (distroProbes.length) {
+      setState({ distroProbes: { ...state.distroProbes, ...Object.fromEntries(distroProbes) } })
+    }
+
+    const opencodeChecks = await Promise.all(
+      unique
+        .filter((distro) => distroProbeReady(state.distroProbes[distro]))
+        .filter((distro) => !state.opencodeChecks[distro])
+        .map(async (distro) => [distro, await checkOpencode(distro, opts)] as const),
+    )
+    if (opencodeChecks.length) {
+      setState({ opencodeChecks: { ...state.opencodeChecks, ...Object.fromEntries(opencodeChecks) } })
+    }
+  }
+
+  const hasServer = (id: string, distro: string) => {
+    return state.servers.some((item) => item.config.id === id && item.config.distro === distro)
+  }
+
+  const refreshOpencodeCheckBackground = (id: string, distro: string) => {
+    void checkOpencode(distro)
+      .then((check) => {
+        if (!hasServer(id, distro)) return
+        setOpencodeCheck(distro, check)
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        logger?.error("wsl opencode check failed", { id, distro, message })
+      })
+  }
+
+  const refreshOpencodeChecks = async () => {
+    await Promise.all(
+      state.servers.map((item) =>
+        checkOpencode(item.config.distro)
+          .then((check) => {
+            if (!hasServer(item.config.id, item.config.distro)) return
+            setOpencodeCheck(item.config.distro, check)
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            logger?.error("wsl opencode check failed", {
+              id: item.config.id,
+              distro: item.config.distro,
+              message,
+            })
+          }),
+      ),
+    )
   }
 
   const refreshDistroLists = async (opts: { signal?: AbortSignal }) => {
@@ -170,10 +252,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
         setRuntime(id, { kind: "failed", message })
         logger?.error("wsl sidecar exited", { id, distro: item.config.distro, code, signal })
       })
-      void refreshOpencodeCheck(item.config.distro).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        logger?.error("wsl opencode check failed", { id, distro: item.config.distro, message })
-      })
+      refreshOpencodeCheckBackground(id, item.config.distro)
       logger?.log("wsl sidecar ready", { id, distro: item.config.distro, url: sidecar.url })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -225,6 +304,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
 
     async initialize() {
       refreshFromStore()
+      void refreshOpencodeChecks()
       for (const id of wslServerIdsToStartOnInitialize(state.servers.map((item) => item.config))) void startServer(id)
     },
 
@@ -248,7 +328,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       await runJob({ kind: "install-wsl", startedAt: Date.now() }, async (abort) => {
         const result = await installWslRuntimeElevated({ signal: abort.signal })
         if (result.code !== 0) {
-          const message = summarize(result.stderr || result.stdout) || "WSL installation failed"
+          const message = summarize(result.stderr || result.stdout) || nativeT("desktop.wsl.error.installWsl")
           throw new Error(message)
         }
         const runtime = await probeWslRuntime({ signal: abort.signal })
@@ -260,11 +340,12 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       await runJob({ kind: "install-distro", distro: name, startedAt: Date.now() }, async (abort) => {
         const result = await installWslDistro(name, { signal: abort.signal })
         if (result.code !== 0) {
-          const message = summarize(result.stderr || result.stdout) || `Failed to install distro: ${name}`
+          const message =
+            summarize(result.stderr || result.stdout) || nativeT("desktop.wsl.error.installDistro", { distro: name })
           throw new Error(message)
         }
         const distros = await refreshDistroLists({ signal: abort.signal })
-        const probe = await probeWslDistro(name, { signal: abort.signal })
+        const probe = await probeDistro(name, { signal: abort.signal })
         setState({
           ...distros,
           distroProbes: { ...state.distroProbes, [name]: probe },
@@ -272,16 +353,10 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       })
     },
 
-    async probeDistro(name: string) {
-      await runJob({ kind: "probe-distro", distro: name, startedAt: Date.now() }, async (abort) => {
-        const probe = await probeWslDistro(name, { signal: abort.signal })
-        setState({ distroProbes: { ...state.distroProbes, [name]: probe } })
-      })
-    },
-
-    async probeOpencode(name: string) {
-      await runJob({ kind: "probe-opencode", distro: name, startedAt: Date.now() }, async (abort) => {
-        await refreshOpencodeCheck(name, { signal: abort.signal })
+    async probeAddable(distros: string[]) {
+      if (!distros.length) return
+      await runJob({ kind: "probe-addable", distros, startedAt: Date.now() }, async (abort) => {
+        await probeAddableDistros(distros, { signal: abort.signal })
       })
     },
 
@@ -289,7 +364,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       await runJob({ kind: "install-opencode", distro: name, startedAt: Date.now() }, async (abort) => {
         const result = await installWslOpencode(appVersion, name, { signal: abort.signal })
         if (result.code !== 0) {
-          throw new Error(summarize(result.stderr || result.stdout) || "OpenCode installation failed")
+          throw new Error(summarize(result.stderr || result.stdout) || nativeT("desktop.wsl.error.installOpencode"))
         }
         await refreshOpencodeCheck(name, { signal: abort.signal })
         expectOpencodeVersion(state.opencodeChecks[name]?.version ?? null, appVersion, name)
@@ -305,13 +380,13 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     async addServer(distro: string): Promise<WslServerConfig> {
       const id = wslServerIdForDistro(distro)
       if (state.servers.some((item) => item.config.id === id)) {
-        throw new Error(`${distro} is already added`)
+        throw new Error(nativeT("desktop.wsl.error.alreadyAdded", { distro }))
       }
       const config: WslServerConfig = {
         id,
         distro,
       }
-      persistServers([...readPersistedServers(), config])
+      persistServers([...readServers(), config])
       setState({
         servers: [...state.servers, { config, runtime: { kind: "starting" } }],
       })
@@ -323,7 +398,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       const distro = state.servers.find((item) => item.config.id === id)?.config.distro
       invalidateStartAttempt(id)
       await stopServerInternal(id)
-      const remaining = readPersistedServers().filter((item) => item.id !== id)
+      const remaining = readServers().filter((item) => item.id !== id)
       persistServers(remaining)
       setState({
         servers: state.servers.filter((item) => item.config.id !== id),
@@ -371,6 +446,10 @@ function readPersistedServers(): WslServerConfig[] {
   return []
 }
 
+function writePersistedServers(servers: WslServerConfig[]) {
+  getStore().set(WSL_SERVERS_KEY, { servers })
+}
+
 function normalizePersistedServer(value: unknown): WslServerConfig[] {
   if (!value || typeof value !== "object") return []
   const record = value as Record<string, unknown>
@@ -398,7 +477,7 @@ function opencodeCheck(
       version: null,
       expectedVersion,
       matchesDesktop: null,
-      error: "opencode is not installed in this distro",
+      error: nativeT("desktop.wsl.error.opencodeMissing"),
     }
   }
   if (!version) {
@@ -408,7 +487,7 @@ function opencodeCheck(
       version: null,
       expectedVersion,
       matchesDesktop: null,
-      error: "opencode is installed but could not run",
+      error: nativeT("desktop.wsl.error.opencodeCannotRun"),
     }
   }
   return {
@@ -421,8 +500,12 @@ function opencodeCheck(
   }
 }
 
+function distroProbeReady(probe: WslDistroProbe | undefined) {
+  return !!probe?.canExecute && probe.hasBash && probe.hasCurl
+}
+
 function startupFailure(code: number | null, signal: NodeJS.Signals | null) {
-  return `WSL server exited after startup (code=${code ?? "null"} signal=${signal ?? "null"})`
+  return nativeT("desktop.wsl.error.serverExited", { code: code ?? "null", signal: signal ?? "null" })
 }
 
 // Re-export types used by callers

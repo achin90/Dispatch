@@ -1,4 +1,5 @@
 import { afterEach, expect } from "bun:test"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Cause, Effect, Exit, Fiber, Layer, Queue } from "effect"
 import { Question } from "../../src/question"
 import { InstanceRef } from "../../src/effect/instance-ref"
@@ -10,16 +11,9 @@ import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 
-const it = testEffect(
-  Layer.mergeAll(Question.layer.pipe(Layer.provideMerge(EventV2Bridge.defaultLayer)), CrossSpawnSpawner.defaultLayer),
-)
-const lifecycle = testEffect(
-  Layer.mergeAll(
-    Question.layer.pipe(Layer.provideMerge(EventV2Bridge.defaultLayer)),
-    CrossSpawnSpawner.defaultLayer,
-    testInstanceStoreLayer,
-  ),
-)
+const questionLayer = LayerNode.compile(LayerNode.group([Question.node, EventV2Bridge.node, CrossSpawnSpawner.node]))
+const it = testEffect(questionLayer)
+const lifecycle = testEffect(Layer.mergeAll(questionLayer, testInstanceStoreLayer))
 
 const askEffect = Effect.fn("QuestionTest.ask")(function* (input: {
   sessionID: SessionID
@@ -371,7 +365,12 @@ it.instance(
   { git: true },
 )
 
-lifecycle.live("questions stay isolated by directory", () =>
+// Dispatch keeps a module-level pending index in src/question/index.ts, so questions are
+// deliberately NOT isolated by directory: ask() runs in the agent's worktree instance while
+// reply()/reject() arrive from the TUI's launch-directory instance. Without the shared index
+// those replies fail with "reply for unknown request" and the dialog never dismisses, and the
+// dashboard can't surface questions raised by agents in other directories.
+lifecycle.live("questions are visible and answerable across directories", () =>
   Effect.gen(function* () {
     const one = yield* tmpdirScoped({ git: true })
     const two = yield* tmpdirScoped({ git: true })
@@ -398,19 +397,30 @@ lifecycle.live("questions stay isolated by directory", () =>
       ],
     }).pipe(provideInstance(two), Effect.forkScoped)
 
-    const onePending = yield* waitForPending(1).pipe(provideInstance(one))
-    const twoPending = yield* waitForPending(1).pipe(provideInstance(two))
+    // Both instances see both questions, not just the one raised in their own directory.
+    const fromOne = yield* waitForPending(2).pipe(provideInstance(one))
+    const fromTwo = yield* waitForPending(2).pipe(provideInstance(two))
 
-    expect(onePending.length).toBe(1)
-    expect(twoPending.length).toBe(1)
-    expect(onePending[0].sessionID).toBe(SessionID.make("ses_one"))
-    expect(twoPending[0].sessionID).toBe(SessionID.make("ses_two"))
+    expect(fromOne.map((item) => item.sessionID).sort()).toEqual([
+      SessionID.make("ses_one"),
+      SessionID.make("ses_two"),
+    ])
+    expect(fromTwo.map((item) => item.id).sort()).toEqual(fromOne.map((item) => item.id).sort())
 
-    yield* rejectEffect(onePending[0].id).pipe(provideInstance(one))
-    yield* rejectEffect(twoPending[0].id).pipe(provideInstance(two))
+    const askedInOne = fromTwo.find((item) => item.sessionID === SessionID.make("ses_one"))!
+    const askedInTwo = fromOne.find((item) => item.sessionID === SessionID.make("ses_two"))!
+    expect(askedInOne).toBeDefined()
+    expect(askedInTwo).toBeDefined()
 
-    expect((yield* Fiber.await(fiber1))._tag).toBe("Failure")
+    // Replying from the *other* directory's instance resolves the ask.
+    yield* replyEffect({ requestID: askedInOne.id, answers: [["A"]] }).pipe(provideInstance(two))
+    expect(yield* Fiber.join(fiber1)).toEqual([["A"]])
+
+    // Rejecting from the *other* directory's instance rejects the ask.
+    yield* rejectEffect(askedInTwo.id).pipe(provideInstance(one))
     expect((yield* Fiber.await(fiber2))._tag).toBe("Failure")
+
+    expect(yield* listEffect.pipe(provideInstance(one))).toEqual([])
   }),
 )
 

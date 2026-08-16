@@ -1,12 +1,16 @@
 import { afterEach, describe, expect } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { Ripgrep } from "@opencode-ai/core/ripgrep"
+import { Permission } from "@/permission"
 import { Session } from "@/session/session"
 import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -32,19 +36,24 @@ const ref = {
 }
 
 const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
-  Layer.mergeAll(
-    Agent.defaultLayer,
-    BackgroundJob.defaultLayer,
-    EventV2Bridge.defaultLayer,
-    Config.defaultLayer,
-    CrossSpawnSpawner.defaultLayer,
-    Session.defaultLayer,
-    SessionRunState.defaultLayer,
-    SessionStatus.defaultLayer,
-    Truncate.defaultLayer,
-    ToolRegistry.defaultLayer,
-    Database.defaultLayer,
-    RuntimeFlags.layer(flags),
+  LayerNode.compile(
+    LayerNode.group([
+      Agent.node,
+      BackgroundJob.node,
+      EventV2Bridge.node,
+      Config.node,
+      CrossSpawnSpawner.node,
+      Session.node,
+      SessionProjector.node,
+      SessionRunState.node,
+      SessionStatus.node,
+      Truncate.node,
+      ToolRegistry.node,
+      Database.node,
+      RuntimeFlags.node,
+      Ripgrep.node,
+    ]),
+    [[RuntimeFlags.node, RuntimeFlags.layer(flags)]],
   )
 
 const it = testEffect(layer())
@@ -380,6 +389,86 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance("prevents subagents from launching subagents by default", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+      const nestedAssistant = yield* sessions.updateMessage({
+        ...assistant,
+        id: MessageID.ascending(),
+        parentID: MessageID.ascending(),
+        sessionID: child.id,
+      })
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      let asked = false
+
+      const exit = yield* def
+        .execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: child.id,
+            messageID: nestedAssistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.sync(() => (asked = true)),
+          },
+        )
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(asked).toBe(false)
+      expect(yield* sessions.children(child.id)).toHaveLength(0)
+    }),
+  )
+
+  it.instance(
+    "allows nested subagents up to the configured depth",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const { chat, assistant } = yield* seed()
+        const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+        const nestedAssistant = yield* sessions.updateMessage({
+          ...assistant,
+          id: MessageID.ascending(),
+          parentID: MessageID.ascending(),
+          sessionID: child.id,
+        })
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: child.id,
+            messageID: nestedAssistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect((yield* sessions.get(result.metadata.sessionId)).parentID).toBe(child.id)
+      }),
+    { config: { subagent_depth: 2 } },
+  )
+
   it.instance(
     "execute shapes child permissions for task, todowrite, and primary tools",
     () =>
@@ -412,7 +501,15 @@ describe("tool.task", () => {
         const child = yield* sessions.get(result.metadata.sessionId)
         expect(child.parentID).toBe(chat.id)
         expect(child.agent).toBe("reviewer")
-        expect(child.permission).toEqual([
+        // Dispatch (unlike upstream) propagates the calling agent's full permission set
+        // into the child session so a yolo caller's grants reach its subagents. The
+        // task-specific denies must still sit at the tail, because evaluate() uses
+        // findLast and the caller's ruleset contains a `*` allow.
+        const permission = child.permission!
+        expect(permission.length).toBeGreaterThan(3)
+        expect(permission).toContainEqual({ permission: "*", pattern: "*", action: "allow" })
+        expect(permission).toContainEqual({ permission: "doom_loop", pattern: "*", action: "ask" })
+        expect(permission.slice(-3)).toEqual([
           {
             permission: "todowrite",
             pattern: "*",
@@ -421,19 +518,17 @@ describe("tool.task", () => {
           {
             permission: "bash",
             pattern: "*",
-            action: "allow",
+            action: "deny",
           },
           {
             permission: "read",
             pattern: "*",
-            action: "allow",
+            action: "deny",
           },
         ])
-        expect(seen?.tools).toEqual({
-          todowrite: false,
-          bash: false,
-          read: false,
-        })
+        expect(Permission.evaluate("todowrite", "*", permission).action).toBe("deny")
+        expect(Permission.evaluate("bash", "*", permission).action).toBe("deny")
+        expect(seen?.tools).toBeUndefined()
       }),
     {
       config: {

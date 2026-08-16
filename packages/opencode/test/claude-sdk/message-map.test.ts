@@ -27,7 +27,7 @@ import { Result, Schema } from "effect"
 // Upstream replaced the zod part schemas with effect `Schema.Struct`s.
 // This adapter keeps the zod-shaped result the assertions below are written
 // against, so the checks themselves are unchanged.
-function safeParse<S extends Schema.Top>(schema: S, value: unknown) {
+function safeParse<S extends Schema.Decoder<unknown>>(schema: S, value: unknown) {
   const result = Schema.decodeUnknownResult(schema)(value)
   return Result.isSuccess(result)
     ? { success: true as const, error: undefined }

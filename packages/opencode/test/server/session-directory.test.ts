@@ -6,11 +6,9 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { WithInstance } from "@/project/with-instance"
 import { Session } from "@/session/session"
 import { Server } from "../../src/server/server"
-import * as Log from "@opencode-ai/core/util/log"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 
-void Log.init({ print: false })
 
 function app() {
   return Server.Default().app

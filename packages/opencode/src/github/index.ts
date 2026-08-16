@@ -1,10 +1,10 @@
 import z from "zod"
 import { execFile } from "child_process"
-import * as Log from "@opencode-ai/core/util/log"
+import * as LogBridge from "@/util/log-bridge"
 import { git } from "../util/git"
 
 export namespace GitHub {
-  const log = Log.create({ service: "github" })
+  const log = LogBridge.create({ service: "github" })
 
   export const PullRequest = z
     .object({

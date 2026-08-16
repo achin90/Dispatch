@@ -1,5 +1,7 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { WslServersPlatform } from "@opencode-ai/app/wsl/types"
+import type { UpdaterState } from "@opencode-ai/app/updater"
+import type { DesktopNativeBundle } from "@opencode-ai/app/i18n/desktop-native"
 export type {
   WslDistroProbe,
   WslInstalledDistro,
@@ -21,15 +23,17 @@ export type ServerReadyData = {
 }
 
 export type WslServersAPI = WslServersPlatform
+export type UpdaterAPI = {
+  subscribe: (cb: (state: UpdaterState) => void) => Promise<() => void>
+  check: () => Promise<UpdaterState>
+  install: () => Promise<void>
+}
 
 export type LinuxDisplayBackend = "wayland" | "auto"
 export type TitlebarTheme = {
   mode: "light" | "dark"
+  scheme?: "system" | "light" | "dark"
 }
-export type WindowConfig = {
-  updaterEnabled: boolean
-}
-
 export type FatalRendererError = {
   error: string
   url: string
@@ -43,13 +47,15 @@ export type ElectronAPI = {
   installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>
   wslServers: WslServersAPI
-  getWindowConfig: () => Promise<WindowConfig>
+  updater: UpdaterAPI
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
+  isFirstLaunchOnboardingPending: () => Promise<boolean>
+  finishFirstLaunchOnboarding: (createDefaultProject: boolean) => Promise<string | null>
+  isOldLayoutEligible: () => Promise<boolean>
   getDisplayBackend: () => Promise<LinuxDisplayBackend | null>
   setDisplayBackend: (backend: LinuxDisplayBackend | null) => Promise<void>
-  parseMarkdownCommand: (markdown: string) => Promise<string>
   checkAppExists: (appName: string) => Promise<boolean>
   resolveAppPath: (appName: string) => Promise<string | null>
   storeGet: (name: string, key: string) => Promise<string | null>
@@ -58,8 +64,13 @@ export type ElectronAPI = {
   storeClear: (name: string) => Promise<void>
   storeKeys: (name: string) => Promise<string[]>
   storeLength: (name: string) => Promise<number>
+  draftGet: (key: string) => Promise<string | null>
+  draftSet: (key: string, value: string) => Promise<void>
+  draftDelete: (key: string) => Promise<void>
+  draftBlobPut: (data: ArrayBuffer) => Promise<string>
+  draftBlobGet: (id: string) => Promise<ArrayBuffer | null>
 
-  getWindowCount: () => Promise<number>
+  getWindowID: () => Promise<string>
   onMenuCommand: (cb: (id: string) => void) => () => void
   onDeepLink: (cb: (urls: string[]) => void) => () => void
 
@@ -72,15 +83,20 @@ export type ElectronAPI = {
     multiple?: boolean
     title?: string
     defaultPath?: string
-    accept?: string[]
     extensions?: string[]
-  }) => Promise<string | string[] | null>
+  }) => Promise<{ token: string; files: { path: string; name: string; size: number }[] } | null>
+  readPickedFile: (token: string, path: string) => Promise<ArrayBuffer>
+  releasePickedFiles: (token: string) => Promise<void>
+  getPathForFile: (file: File) => string
   saveFilePicker: (opts?: { title?: string; defaultPath?: string }) => Promise<string | null>
-  openLink: (url: string) => void
+  openExternal: (url: string) => void
+  openLocalFile: (url: string) => void
   openPath: (path: string, app?: string) => Promise<void>
+  revealPath: (path: string) => Promise<boolean>
   readClipboardImage: () => Promise<{ buffer: ArrayBuffer; width: number; height: number } | null>
-  showNotification: (title: string, body?: string) => void
   getWindowFocused: () => Promise<boolean>
+  getWindowFullscreen: () => Promise<boolean>
+  onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void) => () => void
   setWindowFocus: () => Promise<void>
   showWindow: () => Promise<void>
   relaunch: () => void
@@ -92,10 +108,9 @@ export type ElectronAPI = {
   onZoomFactorChanged: (cb: (factor: number) => void) => () => void
   setTitlebar: (theme: TitlebarTheme) => Promise<void>
   runDesktopMenuAction: (action: DesktopMenuAction) => Promise<void>
-  runUpdater: (alertOnFail: boolean) => Promise<void>
-  checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
-  installUpdate: () => Promise<void>
   setBackgroundColor: (color: string) => Promise<void>
   exportDebugLogs: () => Promise<string>
+  setForceFocus: (enabled: boolean) => Promise<void>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void>
+  setNativeTranslations: (bundle: DesktopNativeBundle) => Promise<void>
 }

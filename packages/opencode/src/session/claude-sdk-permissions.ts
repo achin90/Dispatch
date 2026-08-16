@@ -12,7 +12,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk"
 import { createTwoFilesPatch } from "diff"
 import path from "path"
-import * as Log from "@opencode-ai/core/util/log"
+import * as LogBridge from "@/util/log-bridge"
 import { Permission } from "@/permission"
 import { Question } from "@/question"
 import * as Filesystem from "@/util/filesystem"
@@ -25,7 +25,7 @@ import { SessionID, MessageID, PartID } from "@/session/schema"
 import { Provider } from "@/provider/provider"
 import { AppRuntime } from "@/effect/app-runtime"
 
-const log = Log.create({ service: "claude-sdk-permissions" })
+const log = LogBridge.create({ service: "claude-sdk-permissions" })
 
 // ---------------------------------------------------------------------------
 // Pending metadata — diffs generated before tool parts may exist

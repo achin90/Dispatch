@@ -24,9 +24,9 @@ import { SessionCompaction } from "./compaction"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Instance } from "@/project/instance"
 import { AppRuntime } from "@/effect/app-runtime"
-import * as Log from "@opencode-ai/core/util/log"
+import * as LogBridge from "@/util/log-bridge"
 
-const log = Log.create({ service: "claude-sdk-processor" })
+const log = LogBridge.create({ service: "claude-sdk-processor" })
 
 // ---------------------------------------------------------------------------
 // Error message extraction

@@ -5,10 +5,8 @@ import { WithInstance } from "@/project/with-instance"
 import { Effect } from "effect"
 import { Session as SessionNs } from "../../src/session/session"
 import type { SessionID } from "../../src/session/schema"
-import * as Log from "@opencode-ai/core/util/log"
 import { tmpdir } from "../fixture/fixture"
 
-Log.init({ print: false })
 
 // AppRuntime.runPromise attaches the surrounding WithInstance.provide context,
 // which a bare Effect.runPromise cannot do (no InstanceRef → InstanceState dies).

@@ -5,7 +5,6 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { AppRuntime } from "@/effect/app-runtime"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { GlobalBus } from "../../src/bus/global"
-import * as Log from "@opencode-ai/core/util/log"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 
@@ -19,7 +18,7 @@ const TestWorkspace = EventV2.define({ type: "test.workspace", schema: { data: S
 // Publish through the opencode bridge — this is the seam that stamps the
 // instance location onto the event and forwards it to GlobalBus (the old
 // Bus.publish -> GlobalBus.emit path these tests were written against).
-function publish<D extends EventV2.Definition>(definition: D, data: D["data"]["Type"]) {
+function publish<D extends EventV2.Definition>(definition: D, data: EventV2.Data<D>) {
   return AppRuntime.runPromise(EventV2Bridge.Service.use((events) => events.publish(definition, data)))
 }
 
@@ -27,7 +26,6 @@ afterEach(async () => {
   await resetDatabase()
 })
 
-Log.init({ print: false })
 
 describe("event route cross-directory", () => {
   test("publish emits to GlobalBus with directory", async () => {
