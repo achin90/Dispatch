@@ -35,7 +35,6 @@ import * as LogBridge from "@/util/log-bridge"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { MCP } from "@/mcp"
 import { AppRuntime } from "@/effect/app-runtime"
-import { Permission } from "@/permission"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge, createSubagentPermissionHook } from "./claude-sdk-permissions"
@@ -81,7 +80,7 @@ let dirty = true
 let flight: Promise<Record<string, ToolDefs> | undefined> | undefined
 let subscribed = false
 
-export function invalidateMcpCache() {
+function invalidateMcpCache() {
   dirty = true
   // Do NOT clear cachedDefs here. resolveDefs() uses the previous value as a
   // fallback for servers whose listTools() call fails (e.g. a server that is

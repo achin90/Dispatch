@@ -8071,7 +8071,10 @@ export type GithubMergePrResponse = GithubMergePrResponses[keyof GithubMergePrRe
 export type WorktreeInfoData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/experimental/worktree/info"
 }
 
@@ -8096,7 +8099,10 @@ export type WorktreeInfoResponse = WorktreeInfoResponses[keyof WorktreeInfoRespo
 export type WorktreeDiffData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/experimental/worktree/diff"
 }
 
@@ -8121,7 +8127,10 @@ export type WorktreeDiffResponse = WorktreeDiffResponses[keyof WorktreeDiffRespo
 export type WorktreeDiffstatData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/experimental/worktree/diffstat"
 }
 

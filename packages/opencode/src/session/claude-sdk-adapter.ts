@@ -7,7 +7,6 @@ import type {
   SDKAssistantMessage,
   SDKResultMessage,
   SDKResultSuccess,
-  SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk"
 
 // Derive Beta types from SDKAssistantMessage.message (BetaMessage) to avoid
@@ -16,7 +15,6 @@ type BetaContentBlock = SDKAssistantMessage["message"]["content"][number]
 type BetaTextBlock = Extract<BetaContentBlock, { type: "text" }>
 type BetaThinkingBlock = Extract<BetaContentBlock, { type: "thinking" }>
 type BetaToolUseBlock = Extract<BetaContentBlock, { type: "tool_use" }>
-import { MessageV2 } from "./message-v2"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { PartID, SessionID, MessageID } from "./schema"
 
@@ -243,26 +241,4 @@ export function resultMessageToMetadata(msg: SDKResultMessage): CompletionMetada
   }
 
   return base
-}
-
-// ---------------------------------------------------------------------------
-// Extract init metadata from SDKSystemMessage
-// ---------------------------------------------------------------------------
-
-export interface InitMetadata {
-  session_id: string
-  model: string
-  tools: string[]
-  cwd: string
-  permission_mode: string
-}
-
-export function systemMessageToMetadata(msg: SDKSystemMessage): InitMetadata {
-  return {
-    session_id: msg.session_id,
-    model: msg.model,
-    tools: msg.tools,
-    cwd: msg.cwd,
-    permission_mode: msg.permissionMode,
-  }
 }

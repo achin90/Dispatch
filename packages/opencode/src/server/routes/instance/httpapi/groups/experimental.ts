@@ -381,6 +381,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
           }),
         ),
         HttpApiEndpoint.get("worktreeInfo", ExperimentalPaths.worktreeInfo, {
+          query: WorkspaceRoutingQuery,
           success: described(WorktreeDetectInfo, "Worktree info or null"),
         }).annotateMerge(
           OpenApi.annotations({
@@ -391,6 +392,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
           }),
         ),
         HttpApiEndpoint.get("worktreeDiff", ExperimentalPaths.worktreeDiff, {
+          query: WorkspaceRoutingQuery,
           success: described(WorktreeDiff, "Unified diff output"),
         }).annotateMerge(
           OpenApi.annotations({
@@ -400,6 +402,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
           }),
         ),
         HttpApiEndpoint.get("worktreeDiffstat", ExperimentalPaths.worktreeDiffstat, {
+          query: WorkspaceRoutingQuery,
           success: described(DiffStat, "Diff statistics"),
         }).annotateMerge(
           OpenApi.annotations({

@@ -141,9 +141,4 @@ export namespace GitHub {
     }
     return true
   }
-
-  export async function open(number: number, cwd?: string): Promise<boolean> {
-    const result = await gh(["pr", "view", String(number), "--web"], cwd)
-    return result.code === 0
-  }
 }

@@ -6,7 +6,6 @@ import {
   assistantMessage,
   resultSuccess,
   resultError,
-  systemMessage,
 } from "./helpers"
 import {
   isTextBlock,
@@ -18,9 +17,7 @@ import {
   contentBlockToPart,
   assistantMessageToParts,
   resultMessageToMetadata,
-  systemMessageToMetadata,
 } from "../../src/session/claude-sdk-adapter"
-import { MessageV2 } from "../../src/session/message-v2"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Result, Schema } from "effect"
 
@@ -266,32 +263,6 @@ describe("claude-sdk message mapping", () => {
       const msg = resultSuccess({ num_turns: 5 })
       const meta = resultMessageToMetadata(msg)
       expect(meta.num_turns).toBe(5)
-    })
-  })
-
-  describe("systemMessageToMetadata", () => {
-    test("extracts init metadata", () => {
-      const msg = systemMessage({
-        model: "claude-opus-4-20250514",
-        tools: ["Read", "Bash"],
-        cwd: "/home/user/project",
-        permissionMode: "acceptEdits",
-      })
-      const meta = systemMessageToMetadata(msg)
-
-      expect(meta.model).toBe("claude-opus-4-20250514")
-      expect(meta.tools).toEqual(["Read", "Bash"])
-      expect(meta.cwd).toBe("/home/user/project")
-      expect(meta.permission_mode).toBe("acceptEdits")
-      expect(typeof meta.session_id).toBe("string")
-    })
-
-    test("extracts default values", () => {
-      const msg = systemMessage()
-      const meta = systemMessageToMetadata(msg)
-
-      expect(meta.tools.length).toBeGreaterThan(0)
-      expect(meta.permission_mode).toBe("default")
     })
   })
 

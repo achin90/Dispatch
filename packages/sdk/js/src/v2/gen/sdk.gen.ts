@@ -1746,10 +1746,28 @@ export class Worktree extends HeyApiClient {
    *
    * Check if the current directory is a git worktree and return its info. Returns null if not a worktree.
    */
-  public info<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+  public info<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).get<WorktreeInfoResponses, WorktreeInfoErrors, ThrowOnError>({
       url: "/experimental/worktree/info",
       ...options,
+      ...params,
     })
   }
 
@@ -1758,10 +1776,28 @@ export class Worktree extends HeyApiClient {
    *
    * Return the full unified diff of uncommitted changes against HEAD in the working directory.
    */
-  public diff<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+  public diff<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).get<WorktreeDiffResponses, WorktreeDiffErrors, ThrowOnError>({
       url: "/experimental/worktree/diff",
       ...options,
+      ...params,
     })
   }
 
@@ -1770,10 +1806,28 @@ export class Worktree extends HeyApiClient {
    *
    * Return line-level diff statistics (additions, deletions, file count) for uncommitted changes in the current directory.
    */
-  public diffstat<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+  public diffstat<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).get<WorktreeDiffstatResponses, WorktreeDiffstatErrors, ThrowOnError>({
       url: "/experimental/worktree/diffstat",
       ...options,
+      ...params,
     })
   }
 }

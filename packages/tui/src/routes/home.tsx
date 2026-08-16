@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 
-/** DiffStat is not yet exported from the upstream SDK types */
+/** Narrowed form of the SDK's DiffStat, whose counts also admit "NaN"/"Infinity". */
 interface DiffStat {
   additions: number
   deletions: number
@@ -333,14 +333,20 @@ export function Home() {
   const pending = new Map<string, string>() // branch → dir
 
   function fetchDiffStats() {
-    const worktreeClient = sdk.client.worktree as any
-    if (typeof worktreeClient?.diffstat !== "function") return
     const dirs = new Set(pending.values())
     for (const group of grouped()) {
       if (dirs.has(group.dir)) continue
-      worktreeClient.diffstat({ directory: group.dir }).then((res: { data?: DiffStat }) => {
-        if (!res.data) return
-        setDiffStats((prev) => ({ ...prev, [group.dir]: res.data! }))
+      sdk.client.worktree.diffstat({ directory: group.dir }).then((res) => {
+        const stat = res.data
+        if (!stat) return
+        setDiffStats((prev) => ({
+          ...prev,
+          [group.dir]: {
+            additions: Number(stat.additions),
+            deletions: Number(stat.deletions),
+            files: Number(stat.files),
+          },
+        }))
       })
     }
   }
@@ -520,10 +526,7 @@ export function Home() {
     const root = dir === "." ? sync.path.directory : sync.path.directory + "/" + dir
     const result = await sdk.client.session.create({ directory: root })
     if (!result.data) return
-    const wt =
-      typeof (sdk.client.worktree as any)?.info === "function"
-        ? (await (sdk.client.worktree as any).info({ directory: root })).data
-        : undefined
+    const wt = (await sdk.client.worktree.info({ directory: root })).data
     insertAgent({
       id: crypto.randomUUID(),
       name,
@@ -589,10 +592,7 @@ export function Home() {
     const agent = selected()
     if (!agent) return
     const dir = resolveDir(agent)
-    const info =
-      typeof (sdk.client.worktree as any)?.info === "function"
-        ? (await (sdk.client.worktree as any).info({ directory: dir })).data
-        : undefined
+    const info = (await sdk.client.worktree.info({ directory: dir })).data
     if (!info) return
     setDialogOpen(true)
     const ok = await DialogConfirm.show(

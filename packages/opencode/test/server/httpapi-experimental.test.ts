@@ -1,8 +1,11 @@
+import { $ } from "bun"
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Deferred, Effect, Fiber, Layer } from "effect"
-import { HttpClient, HttpClientResponse } from "effect/unstable/http"
+import { HttpClient, HttpClientResponse, HttpServer } from "effect/unstable/http"
+import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { eq } from "drizzle-orm"
+import os from "os"
 import path from "path"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
@@ -22,6 +25,25 @@ const testWorktreeMutations = process.platform === "win32" ? it.instance.skip : 
 
 function request(path: string, directory: string, init: RequestInit = {}) {
   return requestInDirectory(path, directory, init)
+}
+
+// Generated-SDK client bound to `directory` as its launch directory, talking to
+// the test server. Used to prove endpoints accept a per-call `directory`.
+function sdkClient(directory: string) {
+  return HttpServer.HttpServer.use((server) =>
+    Effect.sync(() => {
+      const baseUrl = HttpServer.formatAddress(server.address)
+      return createOpencodeClient({
+        baseUrl: "http://localhost",
+        directory,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const source = input instanceof Request ? input : new Request(input, init)
+          const url = new URL(source.url)
+          return globalThis.fetch(new Request(new URL(`${url.pathname}${url.search}`, baseUrl), source))
+        }) as typeof globalThis.fetch,
+      })
+    }),
+  )
 }
 
 function createSession(input?: Session.CreateInput) {
@@ -296,6 +318,31 @@ describe("experimental HttpApi", () => {
         const afterRemove = yield* request(ExperimentalPaths.worktree, tmp.directory)
         expect(afterRemove.status).toBe(200)
         expect(yield* json(afterRemove)).toEqual([])
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "scopes worktree diffstat and info to a per-call directory",
+    () =>
+      Effect.gen(function* () {
+        const tmp = yield* TestInstance
+        yield* Effect.promise(async () => {
+          await Bun.write(path.join(tmp.directory, "tracked.txt"), "one\ntwo\n")
+          await $`git add tracked.txt`.cwd(tmp.directory).quiet()
+        })
+
+        // Launch directory is unrelated to the repo, so these stats can only be
+        // right if the endpoints declare `directory` and the client sends it.
+        const sdk = yield* sdkClient(os.tmpdir())
+        const diffstat = yield* Effect.promise(() => sdk.worktree.diffstat({ directory: tmp.directory }))
+        expect(diffstat.data).toEqual({ additions: 2, deletions: 0, files: 1 })
+
+        const diff = yield* Effect.promise(() => sdk.worktree.diff({ directory: tmp.directory }))
+        expect(diff.data?.diff).toContain("tracked.txt")
+
+        const info = yield* Effect.promise(() => sdk.worktree.info({ directory: tmp.directory }))
+        expect(info.data).toBeNull()
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
