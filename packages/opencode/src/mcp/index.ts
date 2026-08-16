@@ -333,6 +333,13 @@ export const layer = Layer.effect(
             if (isAuthError) {
               log.info("mcp server requires authentication", { key, transport: name })
 
+              // Notifications below (and everywhere else in this service) use
+              // catchCause rather than ignore: Bus.publish reads InstanceState,
+              // but MCP is a global service whose layer is built without an
+              // Instance context. The resulting "No context found for instance"
+              // is a defect, which ignore does not catch, so it would otherwise
+              // abort the whole AppLayer build and poison AppRuntime.
+
               if (lastError.message.includes("registration") || lastError.message.includes("client_id")) {
                 lastStatus = {
                   status: "needs_client_registration" as const,
@@ -345,7 +352,7 @@ export const layer = Layer.effect(
                     variant: "warning",
                     duration: 8000,
                   })
-                  .pipe(Effect.ignore, Effect.as(undefined))
+                  .pipe(Effect.catchCause(() => Effect.void), Effect.as(undefined))
               } else {
                 pendingOAuthTransports.set(key, transport)
                 lastStatus = { status: "needs_auth" as const }
@@ -356,7 +363,7 @@ export const layer = Layer.effect(
                     variant: "warning",
                     duration: 8000,
                   })
-                  .pipe(Effect.ignore, Effect.as(undefined))
+                  .pipe(Effect.catchCause(() => Effect.void), Effect.as(undefined))
               }
             }
 
@@ -482,7 +489,7 @@ export const layer = Layer.effect(
         if (s.clients[name] !== client || s.status[name]?.status !== "connected") return
 
         s.defs[name] = listed
-        await bridge.promise(bus.publish(ToolsChanged, { server: name }).pipe(Effect.ignore))
+        await bridge.promise(bus.publish(ToolsChanged, { server: name }).pipe(Effect.catchCause(() => Effect.void)))
       })
     }
 
@@ -542,7 +549,7 @@ export const layer = Layer.effect(
                 }
 
                 const stored = yield* storeClient(s, name, result.mcpClient, result.defs, mcp.timeout)
-                if (stored.changed) yield* bus.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
+                if (stored.changed) yield* bus.publish(ToolsChanged, { server: name }).pipe(Effect.catchCause(() => Effect.void))
                 log.info("mcp reconnected successfully", { server: name, attempt, toolsChanged: stored.changed })
                 return true
               }).pipe(Effect.catch(() => Effect.succeed(false))),
@@ -909,7 +916,7 @@ export const layer = Layer.effect(
         ),
         Effect.catch(() => {
           log.warn("failed to open browser, user must open URL manually", { mcpName })
-          return bus.publish(BrowserOpenFailed, { mcpName, url: result.authorizationUrl }).pipe(Effect.ignore)
+          return bus.publish(BrowserOpenFailed, { mcpName, url: result.authorizationUrl }).pipe(Effect.catchCause(() => Effect.void))
         }),
       )
 
@@ -1010,7 +1017,7 @@ export const layer = Layer.effect(
               Effect.catch(() => Effect.succeed(undefined)),
               Effect.ensuring(Effect.sync(() => s.reconnecting.delete(name))),
             )
-            if (stored?.changed) yield* bus.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
+            if (stored?.changed) yield* bus.publish(ToolsChanged, { server: name }).pipe(Effect.catchCause(() => Effect.void))
           }),
         { concurrency: "unbounded" },
       )
