@@ -33,8 +33,7 @@ import { ConfigMarkdown } from "@/config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { SessionProcessor } from "./processor"
-import { createClaudeSdkQuery, resolveMcpServers, createPluginToolMcpServer, PLUGIN_TOOL_SERVER_NAME } from "./claude-sdk-query"
-import { processClaudeSdkStream, type CompactionRef } from "./claude-sdk-processor"
+import type { CompactionRef } from "./claude-sdk-processor"
 import { Tool } from "@/tool/tool"
 import { Question } from "@/question"
 import { Permission } from "@/permission"
@@ -1582,6 +1581,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...instructions,
             ]
             const systemPrompt = system.join("\n\n")
+
+            // Loaded lazily: the claude-sdk modules import AppRuntime, and
+            // AppRuntime's layer list imports this module. Static imports close
+            // that cycle and make module init order fatal ("Cannot access
+            // 'defaultLayer' before initialization") for anything that loads a
+            // session module before app-runtime.
+            const [
+              { createClaudeSdkQuery, resolveMcpServers, createPluginToolMcpServer, PLUGIN_TOOL_SERVER_NAME },
+              { processClaudeSdkStream },
+            ] = yield* Effect.promise(() =>
+              Promise.all([import("./claude-sdk-query"), import("./claude-sdk-processor")]),
+            )
 
             const hooks = yield* plugin.list()
             log.info("claude-sdk: building plugin tool MCP server", {

@@ -16,7 +16,6 @@ import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect, Layer, Context, Schema } from "effect"
 import * as DateTime from "effect/DateTime"
 import { InstanceState } from "@/effect/instance-state"
-import { AppRuntime } from "@/effect/app-runtime"
 import { isOverflow as overflow, usable } from "./overflow"
 import { makeRuntime } from "@/effect/run-service"
 import { fn } from "@/util/fn"
@@ -27,6 +26,10 @@ import { resultMessageToMetadata } from "./claude-sdk-adapter"
 import { getSdkSessionID, removeSdkSessionID } from "./claude-sdk-session-map"
 import { EventV2 } from "@/v2/event"
 import { SessionEvent } from "@/v2/session-event"
+
+// Loaded lazily: AppRuntime's layer list imports this module, so a static import
+// closes a cycle that makes module init order fatal (TDZ on defaultLayer).
+const loadAppRuntime = async () => (await import("@/effect/app-runtime")).AppRuntime
 
 const log = Log.create({ service: "session.compaction" })
 
@@ -453,11 +456,15 @@ export const layer: Layer.Layer<
         // re-inflation on the next turn). Uses OAuth/subscription auth
         // so compaction works without an explicit ANTHROPIC_API_KEY.
         result = yield* Effect.promise(async () => {
-          // Imported lazily: claude-sdk-query imports AppRuntime, and AppRuntime's
-          // layer list imports this module. A static import closes that cycle and
-          // makes module init order fatal ("Cannot access 'defaultLayer' before
-          // initialization") for anything that loads compaction first.
-          const { resolveApiKey } = await import("./claude-sdk-query")
+          // Imported lazily: AppRuntime's layer list imports this module (and
+          // claude-sdk-query imports AppRuntime). A static import closes that
+          // cycle and makes module init order fatal ("Cannot access
+          // 'defaultLayer' before initialization") for anything that loads
+          // compaction before app-runtime.
+          const [{ resolveApiKey }, { AppRuntime }] = await Promise.all([
+            import("./claude-sdk-query"),
+            import("@/effect/app-runtime"),
+          ])
           const apiKey = await resolveApiKey()
           const env: Record<string, string | undefined> = { ...globalThis.process.env }
           if (apiKey) env.ANTHROPIC_API_KEY = apiKey
@@ -577,7 +584,7 @@ export const layer: Layer.Layer<
 
             if (boundary) {
               const summary = ref.summary || text || "Conversation was compacted"
-              await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart({
+              await (await loadAppRuntime()).runPromise(Session.Service.use((svc) => svc.updatePart({
                 id: PartID.ascending(),
                 messageID: msg.id,
                 sessionID: input.sessionID,
@@ -586,7 +593,7 @@ export const layer: Layer.Layer<
                 time: { start: Date.now(), end: Date.now() },
               })))
               msg.time.completed = Date.now()
-              await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
+              await (await loadAppRuntime()).runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
               log.info("sdk compact succeeded")
               return "continue" as const
             } else {
@@ -604,7 +611,7 @@ export const layer: Layer.Layer<
                 data: { message: "SDK compaction did not produce a boundary" },
               } as MessageV2.Assistant["error"]
               msg.time.completed = Date.now()
-              await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
+              await (await loadAppRuntime()).runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
               return "stop" as const
             }
           } catch (e) {
@@ -622,7 +629,7 @@ export const layer: Layer.Layer<
                 data: { message: errMsg, isRetryable: false },
               } as MessageV2.Assistant["error"]
               msg.time.completed = Date.now()
-              await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
+              await (await loadAppRuntime()).runPromise(Session.Service.use((svc) => svc.updateMessage(msg)))
               return "stop" as const
             }
           }

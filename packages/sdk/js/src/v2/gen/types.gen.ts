@@ -29,9 +29,9 @@ export type Event =
   | EventTodoUpdated
   | EventSessionStatus
   | EventSessionIdle
+  | EventSessionCompacted
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
-  | EventSessionCompacted
   | EventCommandExecuted
   | EventProjectUpdated
   | EventVcsBranchUpdated
@@ -803,9 +803,9 @@ export type GlobalEvent = {
     | EventTodoUpdated
     | EventSessionStatus
     | EventSessionIdle
+    | EventSessionCompacted
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
-    | EventSessionCompacted
     | EventCommandExecuted
     | EventProjectUpdated
     | EventVcsBranchUpdated
@@ -1451,6 +1451,44 @@ export type McpResource = {
   description?: string
   mimeType?: string
   client: string
+}
+
+export type GitRepoPaths = Array<string>
+
+export type GitHubStatus = {
+  authenticated: boolean
+}
+
+export type GitHubPullRequest = {
+  number: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  title: string
+  state: "OPEN" | "CLOSED" | "MERGED"
+  url: string
+  draft: boolean
+  base: string
+  checks: "pass" | "fail" | "pending" | "none"
+  review: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | ""
+}
+
+export type GitHubCreateError = {
+  error: string
+}
+
+export type WorktreeDetectInfo = {
+  name: string
+  branch: string
+  directory: string
+  sourceRepo: string
+}
+
+export type WorktreeDiff = {
+  diff: string
+}
+
+export type DiffStat = {
+  additions: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  deletions: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  files: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
 }
 
 export type Symbol = {
@@ -2490,6 +2528,14 @@ export type EventSessionIdle = {
   }
 }
 
+export type EventSessionCompacted = {
+  id: string
+  type: "session.compacted"
+  properties: {
+    sessionID: string
+  }
+}
+
 export type EventMcpToolsChanged = {
   id: string
   type: "mcp.tools.changed"
@@ -2504,14 +2550,6 @@ export type EventMcpBrowserOpenFailed = {
   properties: {
     mcpName: string
     url: string
-  }
-}
-
-export type EventSessionCompacted = {
-  id: string
-  type: "session.compacted"
-  properties: {
-    sessionID: string
   }
 }
 
@@ -3905,6 +3943,207 @@ export type ExperimentalResourceListResponses = {
 export type ExperimentalResourceListResponse =
   ExperimentalResourceListResponses[keyof ExperimentalResourceListResponses]
 
+export type GitReposListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+    root?: string
+    query?: string
+  }
+  url: "/experimental/git-repos"
+}
+
+export type GitReposListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GitReposListError = GitReposListErrors[keyof GitReposListErrors]
+
+export type GitReposListResponses = {
+  /**
+   * Git repository paths
+   */
+  200: GitRepoPaths
+}
+
+export type GitReposListResponse = GitReposListResponses[keyof GitReposListResponses]
+
+export type GithubStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/github/status"
+}
+
+export type GithubStatusResponses = {
+  /**
+   * gh CLI authentication status
+   */
+  200: GitHubStatus
+}
+
+export type GithubStatusResponse = GithubStatusResponses[keyof GithubStatusResponses]
+
+export type GithubPrData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    workspace?: string
+    branch: string
+    cwd?: string
+  }
+  url: "/experimental/github/pr"
+}
+
+export type GithubPrErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GithubPrError = GithubPrErrors[keyof GithubPrErrors]
+
+export type GithubPrResponses = {
+  /**
+   * Pull request info or null
+   */
+  200: GitHubPullRequest
+}
+
+export type GithubPrResponse = GithubPrResponses[keyof GithubPrResponses]
+
+export type GithubCreatePrData = {
+  body?: {
+    head: string
+    base?: string
+    title: string
+    body?: string
+    cwd: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/github/pr"
+}
+
+export type GithubCreatePrErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GithubCreatePrError = GithubCreatePrErrors[keyof GithubCreatePrErrors]
+
+export type GithubCreatePrResponses = {
+  /**
+   * Created pull request info or error on failure
+   */
+  200: GitHubPullRequest | GitHubCreateError
+}
+
+export type GithubCreatePrResponse = GithubCreatePrResponses[keyof GithubCreatePrResponses]
+
+export type GithubMergePrData = {
+  body?: {
+    number: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    cwd?: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/github/pr/merge"
+}
+
+export type GithubMergePrErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GithubMergePrError = GithubMergePrErrors[keyof GithubMergePrErrors]
+
+export type GithubMergePrResponses = {
+  /**
+   * Whether the merge succeeded
+   */
+  200: boolean
+}
+
+export type GithubMergePrResponse = GithubMergePrResponses[keyof GithubMergePrResponses]
+
+export type WorktreeInfoData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/info"
+}
+
+export type WorktreeInfoResponses = {
+  /**
+   * Worktree info or null
+   */
+  200: WorktreeDetectInfo
+}
+
+export type WorktreeInfoResponse = WorktreeInfoResponses[keyof WorktreeInfoResponses]
+
+export type WorktreeDiffData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/diff"
+}
+
+export type WorktreeDiffResponses = {
+  /**
+   * Unified diff output
+   */
+  200: WorktreeDiff
+}
+
+export type WorktreeDiffResponse = WorktreeDiffResponses[keyof WorktreeDiffResponses]
+
+export type WorktreeDiffstatData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/diffstat"
+}
+
+export type WorktreeDiffstatResponses = {
+  /**
+   * Diff statistics
+   */
+  200: DiffStat
+}
+
+export type WorktreeDiffstatResponse = WorktreeDiffstatResponses[keyof WorktreeDiffstatResponses]
+
 export type FindTextData = {
   body?: never
   path?: never
@@ -4343,6 +4582,25 @@ export type McpAddResponses = {
 }
 
 export type McpAddResponse = McpAddResponses[keyof McpAddResponses]
+
+export type McpHealthData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/mcp/health"
+}
+
+export type McpHealthResponses = {
+  /**
+   * Health check completed
+   */
+  200: boolean
+}
+
+export type McpHealthResponse = McpHealthResponses[keyof McpHealthResponses]
 
 export type McpAuthRemoveData = {
   body?: never
@@ -5377,6 +5635,43 @@ export type SessionTodoResponses = {
 }
 
 export type SessionTodoResponse = SessionTodoResponses[keyof SessionTodoResponses]
+
+export type SessionLastResponseData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/last-response"
+}
+
+export type SessionLastResponseErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionLastResponseError = SessionLastResponseErrors[keyof SessionLastResponseErrors]
+
+export type SessionLastResponseResponses = {
+  /**
+   * Last response text
+   */
+  200: {
+    text: string
+    summary: boolean
+  }
+}
+
+export type SessionLastResponseResponse = SessionLastResponseResponses[keyof SessionLastResponseResponses]
 
 export type SessionDiffData = {
   body?: never
