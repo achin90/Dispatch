@@ -1204,6 +1204,7 @@ const layer = Layer.effect(
           )
 
           // Route: anthropic provider → Claude Agent SDK, all others → AI SDK
+          const userCountBefore = msgs.filter((m) => m.info.role === "user").length
           if (model.providerID === "anthropic") {
             // ── Claude Agent SDK path ──────────────────────────────────
             // Bridge for running Effects from the SDK's plain-JS callbacks
@@ -1436,16 +1437,15 @@ const layer = Layer.effect(
               }
             }
 
-            // Before exiting, check if the user queued messages while the SDK was running.
-            // Without this the loop would always break and leave them as UNSENT.
+            if (result.outcome === "error") break
+            // Check if a new user message was queued during the SDK turn
+            // by comparing user message counts. Avoids ID comparison which
+            // breaks because message IDs are not chronologically sortable.
             const msgs2 = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
               Effect.provideService(Database.Service, database),
             )
-            const last = msgs2.findLast((m) => m.info.role === "assistant")
-            if (last && msgs2.some((m) => m.info.role === "user" && m.info.id > last.info.id)) continue
-            if (result.outcome === "error") break
-            if (result.outcome === "stop") break
-            continue
+            if (msgs2.filter((m) => m.info.role === "user").length > userCountBefore) continue
+            break
           }
 
           // ── AI SDK path (all non-anthropic providers) ──────────────

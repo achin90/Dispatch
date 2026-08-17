@@ -475,6 +475,20 @@ rg -n "healthCheck" packages/opencode/src/server/routes/instance/httpapi/handler
 # Must match — the /mcp/health handler
 ```
 
+### Claude SDK post-turn queued-message check loops forever on stale user messages
+
+The Claude SDK turn loop in `session/prompt.ts` had a post-turn check that scanned for queued user messages using `m.info.id > last.info.id`. Message IDs are not chronologically sortable — a stale user message (e.g. from a prior agent switch) can permanently sort after newer assistant messages and make every iteration `continue`, looping the same turn forever.
+
+**Fix:** replaced the ID-based check with a user message count comparison. Store `msgs.filter(user).length` before the SDK turn; after the turn, reload messages and compare counts. If the count grew, a new message was queued — `continue`. Otherwise `break`. One integer, no ID ordering dependency.
+
+**Symptom:** agent keeps running the same command repeatedly after a prompt, never stops.
+
+**Quick verification after merge:**
+```bash
+rg -n "userCountBefore" packages/opencode/src/session/prompt.ts
+# Should show the count snapshot before the SDK turn and the comparison after
+```
+
 ### Subagent permission ordering — `evaluate()` uses `findLast()`, so LAST match wins
 
 **Read this carefully; an earlier sync got it backwards by assuming first-match-wins.** `Permission.evaluate()` in `permission/index.ts` (~line 45) selects a rule with `.findLast(...)`. **The last matching rule in the array wins.**
