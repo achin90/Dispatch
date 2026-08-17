@@ -38,6 +38,7 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { SessionID, MessageID } from "@/session/schema"
 import { createCanUseToolBridge, createSubagentPermissionHook } from "./claude-sdk-permissions"
+import type { InstanceContext } from "@/project/instance-context"
 import { getSdkSessionEntry, removeSdkSessionID } from "./claude-sdk-session-map"
 import bin from "./claude-sdk-bin"
 
@@ -60,6 +61,13 @@ export interface ClaudeSdkQueryInput {
   mcpServers?: Record<string, McpServerConfig>
   hooks?: Options["hooks"]
   contextWindow?: number
+  /**
+   * Instance (directory / worktree / project) this query belongs to. Threaded
+   * down to the permission bridge so path normalisation and the
+   * external_directory gate never depend on the ALS surviving into an SDK
+   * callback.
+   */
+  instance: InstanceContext
 }
 
 /**
@@ -336,7 +344,7 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
     // subagents, so a PreToolUse hook propagates the same ruleset to subagent
     // tool calls — see createSubagentPermissionHook. Staying on "default" keeps
     // the canUseTool bridge alive (bypassPermissions would shadow it entirely).
-    const subagentPermissionHook = createSubagentPermissionHook(input.ruleset ?? [])
+    const subagentPermissionHook = createSubagentPermissionHook(input.ruleset ?? [], input.instance.worktree)
     return {
       model: input.model,
       systemPrompt: input.systemPrompt,
@@ -350,6 +358,7 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
         sessionID: input.sessionID,
         messageID: input.messageID,
         ruleset: input.ruleset,
+        instance: input.instance,
       }),
       abortController: input.abortController,
       maxTurns: input.maxTurns,

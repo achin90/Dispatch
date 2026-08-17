@@ -17,7 +17,7 @@ import { Permission } from "@/permission"
 import { Question } from "@/question"
 import * as Filesystem from "@/util/filesystem"
 import { Instance } from "@/project/instance"
-import { containsPath } from "@/project/instance-context"
+import { containsPath, type InstanceContext } from "@/project/instance-context"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
@@ -131,17 +131,20 @@ function extractFilePath(toolName: string, input: Record<string, unknown>): stri
  * same relative-path format the standard (AI SDK) tool path produces.
  *
  * Standard tools call:
- *   ctx.ask({ permission: "edit", patterns: [path.relative(Instance.worktree, filePath)] })
+ *   ctx.ask({ permission: "edit", patterns: [path.relative(worktree, filePath)] })
  *
  * Without normalisation the SDK bridge would pass the raw absolute path,
  * which doesn't match relative-path permission rules in the agent config.
+ *
+ * The worktree is passed explicitly rather than read from the Instance ALS:
+ * the SDK calls into here from plain async code, so an ambient read is one
+ * more place a lost context fails silently.
  */
-function normaliseFilePatterns(toolName: string, patterns: string[]): string[] {
+function normaliseFilePatterns(toolName: string, patterns: string[], worktree: string): string[] {
   if (!FILE_TOOLS.has(toolName)) return patterns
   // Non-git projects set worktree to "/" (the same sentinel containsPath guards
   // against). Relativising against it would strip the leading slash off every
   // absolute path.
-  const worktree = Instance.worktree
   if (worktree === "/") return patterns
   return patterns.map((p) => {
     if (!path.isAbsolute(p)) return p
@@ -166,7 +169,7 @@ async function checkExternalDirectory(
   opts: CanUseToolBridgeOptions,
   signal: AbortSignal,
 ): Promise<PermissionResult | null> {
-  if (containsPath(filePath, Instance.current)) return null
+  if (containsPath(filePath, opts.instance)) return null
 
   const dir = path.dirname(filePath)
   const glob = path.join(dir, "*")
@@ -240,10 +243,12 @@ async function checkExternalDirectory(
  * Main-thread calls (no agent_id) are passed through so canUseTool keeps owning
  * edit diffs, AskUserQuestion / ExitPlanMode routing, and interactive prompts.
  */
-export function createSubagentPermissionHook(ruleset: PermissionV1.Ruleset) {
+export function createSubagentPermissionHook(ruleset: PermissionV1.Ruleset, worktree: string) {
   // Bind the current Instance ALS context: the SDK fires hooks from a stream
-  // reader context that loses AsyncLocalStorage, and normaliseFilePatterns reads
-  // Instance.worktree. Same reason createCanUseToolBridge binds its callback.
+  // reader context that loses AsyncLocalStorage, and Permission.evaluate runs
+  // through AppRuntime, which resolves the instance from that ALS. Same reason
+  // createCanUseToolBridge binds its callback. Path normalisation no longer
+  // depends on the binding — the worktree is passed in explicitly.
   return Instance.bind(async (input: unknown) => {
     const evt = input as { agent_id?: string; tool_name?: string; tool_input?: Record<string, unknown> }
 
@@ -276,7 +281,7 @@ export function createSubagentPermissionHook(ruleset: PermissionV1.Ruleset) {
 
     const toolInput = evt.tool_input ?? {}
     const permission = derivePermissionName(evt.tool_name)
-    const patterns = normaliseFilePatterns(evt.tool_name, extractPatterns(evt.tool_name, toolInput))
+    const patterns = normaliseFilePatterns(evt.tool_name, extractPatterns(evt.tool_name, toolInput), worktree)
 
     // Combine per-pattern decisions: any deny wins; otherwise all-allow allows;
     // otherwise ask — which the SDK re-routes through canUseTool (with agentID)
@@ -491,6 +496,13 @@ export interface CanUseToolBridgeOptions {
   sessionID: SessionID
   messageID: MessageID
   ruleset?: PermissionV1.Ruleset
+  /**
+   * The instance (directory / worktree / project) this bridge belongs to.
+   * Passed explicitly instead of read from the Instance ALS at call time:
+   * the SDK invokes canUseTool from plain async code, where a missing ALS
+   * context is a silent failure rather than an obvious one.
+   */
+  instance: InstanceContext
 }
 
 /**
@@ -613,7 +625,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       // Gate 2: tool-specific permission check.
       // Normalise file-based patterns to relative paths so the same
       // permission rules work in both the Claude SDK and standard tool paths.
-      const patterns = normaliseFilePatterns(toolName, rawPatterns)
+      const patterns = normaliseFilePatterns(toolName, rawPatterns, options.instance.worktree)
       log.info("canUseTool: permission check", { toolName, permission, patterns, rawPatterns, rulesetLength: options.ruleset?.length ?? 0 })
 
       // Generate diff metadata for edit/write tools

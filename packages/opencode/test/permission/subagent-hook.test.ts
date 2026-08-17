@@ -27,7 +27,7 @@ const decide = (ruleset: PermissionV1.Ruleset, evt: Record<string, unknown>) =>
   WithInstance.provide({
     directory: os.tmpdir(),
     fn: async () => {
-      const out = (await createSubagentPermissionHook(ruleset)(evt)) as {
+      const out = (await createSubagentPermissionHook(ruleset, Instance.worktree)(evt)) as {
         continue?: boolean
         hookSpecificOutput?: { permissionDecision?: string }
       }
@@ -41,7 +41,7 @@ const rewrite = (ruleset: PermissionV1.Ruleset, evt: Record<string, unknown>) =>
   WithInstance.provide({
     directory: os.tmpdir(),
     fn: async () => {
-      const out = (await createSubagentPermissionHook(ruleset)(evt)) as {
+      const out = (await createSubagentPermissionHook(ruleset, Instance.worktree)(evt)) as {
         hookSpecificOutput?: { updatedInput?: Record<string, unknown> }
       }
       return out.hookSpecificOutput?.updatedInput

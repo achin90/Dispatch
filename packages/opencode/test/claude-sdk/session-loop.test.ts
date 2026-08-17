@@ -213,6 +213,49 @@ describe("claude-sdk session loop", () => {
       })
     })
 
+    test("ReasoningPart duration measures the step, excluding tool execution", async () => {
+      await withInstance(async () => {
+        const session = await svc.create({})
+        const assistantMsg = makeAssistantMessage(session.id)
+        await svc.updateMessage(assistantMsg)
+
+        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+        // Mirrors a real turn: the model calls a tool, the tool runs for a long
+        // time, its result comes back, and only then does the model think.
+        async function* stream() {
+          yield systemMessage()
+          yield sdkAssistantMessage([toolUseBlock("Bash", { command: "sleep" })])
+          await sleep(250) // tool execution — must NOT count as thinking
+          yield {
+            type: "user",
+            message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "done" }] },
+            parent_tool_use_id: null,
+            session_id: "s1",
+          } as any
+          await sleep(60) // the model thinking
+          yield sdkAssistantMessage([thinkingBlock("Now I see the answer")])
+          yield resultSuccess({ result: "done" })
+        }
+
+        await processClaudeSdkStream(stream(), {
+          assistantMessage: assistantMsg,
+          sessionID: session.id,
+          abort: new AbortController().signal,
+          cwd: "/tmp",
+        })
+
+        const parts = await AppRuntime.runPromise(MessageV2.parts(assistantMsg.id))
+        const reasoning = parts.find((p): p is SessionV1.ReasoningPart => p.type === "reasoning")
+        expect(reasoning).toBeDefined()
+
+        const duration = reasoning!.time.end! - reasoning!.time.start
+        // Non-zero and roughly the 60ms think, not the 250ms tool run.
+        expect(duration).toBeGreaterThanOrEqual(50)
+        expect(duration).toBeLessThan(250)
+      })
+    })
+
     test("error result sets error on assistant message", async () => {
       await withInstance(async () => {
         const session = await svc.create({})

@@ -1350,6 +1350,7 @@ const layer = Layer.effect(
                   model: model.api.id,
                   systemPrompt,
                   cwd: ctx.directory,
+                  instance: ctx,
                   maxTurns: isLastStep ? 1 : undefined,
                   ruleset: Permission.merge(agent.permission, session.permission ?? []),
                   effort: lastUser.model.variant as "low" | "medium" | "high" | "xhigh" | "max" | undefined,

@@ -18,11 +18,15 @@ import { MessageV2 } from "./message-v2"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionID, MessageID, PartID } from "./schema"
 import { popPendingMeta } from "./claude-sdk-permissions"
-import { assistantMessageToParts, resultMessageToMetadata, type CompletionMetadata } from "./claude-sdk-adapter"
+import {
+  assistantMessageToParts,
+  resultMessageToMetadata,
+  type CompletionMetadata,
+  type ReasoningTime,
+} from "./claude-sdk-adapter"
 import { setSdkSessionID } from "./claude-sdk-session-map"
 import { SessionCompaction } from "./compaction"
 import { EventV2Bridge } from "@/event-v2-bridge"
-import { Instance } from "@/project/instance"
 import { AppRuntime } from "@/effect/app-runtime"
 import * as LogBridge from "@/util/log-bridge"
 
@@ -186,9 +190,19 @@ export async function processClaudeSdkStream(
       }
     | undefined
 
+  // Thinking blocks arrive from the SDK already complete, so we can't observe
+  // them stream. The CLI emits one stream message per content block, so the
+  // window between the previous stream message and a thinking block's arrival
+  // is request latency + the time spent generating that thinking block. Tool
+  // execution and permission waits sit between two other stream messages (the
+  // tool_use assistant message and the tool_result user message), so they are
+  // never attributed to reasoning.
+  let stepStart = Date.now()
+
   try {
     for await (const msg of messages) {
       if (input.abort.aborted) break
+      const arrivedAt = Date.now()
 
       switch (msg.type) {
         case "assistant": {
@@ -208,7 +222,14 @@ export async function processClaudeSdkStream(
               })
             }
           }
-          await processAssistantMessage(assistant, sessionID, assistantMessage, subagentMap, input.setStatus)
+          await processAssistantMessage(
+            assistant,
+            sessionID,
+            assistantMessage,
+            subagentMap,
+            { start: stepStart, end: arrivedAt },
+            input.setStatus,
+          )
           break
         }
 
@@ -249,6 +270,10 @@ export async function processClaudeSdkStream(
         default:
           break
       }
+
+      // The next step starts once we're done handling this message, so our own
+      // persistence work isn't billed to the model's next thinking block.
+      stepStart = Date.now()
     }
   } catch (error) {
     // The SDK throws when the abort signal fires (e.g. user presses Esc).
@@ -363,13 +388,14 @@ async function processAssistantMessage(
   sessionID: SessionID,
   assistantMessage: SessionV1.Assistant,
   subagentMap: Map<string, SubagentContext>,
+  reasoningTime: ReasoningTime,
   setStatus?: ClaudeSdkProcessorInput["setStatus"],
 ): Promise<void> {
   if (msg.parent_tool_use_id === null) {
     // Top-level message — finalize running tools then persist parts.
     // Skip Agent/Task tools since they may still be running subagents.
     await finalizeRunningTools(assistantMessage.id, { skipAgentTools: true })
-    const parts = assistantMessageToParts(msg, sessionID, assistantMessage.id)
+    const parts = assistantMessageToParts(msg, sessionID, assistantMessage.id, reasoningTime)
     for (const part of parts) {
       await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart(part)))
     }
@@ -397,7 +423,7 @@ async function processAssistantMessage(
   // on a different model than the main thread via their `model` setting).
   await syncSubagentModel(ctx, msg.message.model)
 
-  const parts = assistantMessageToParts(msg, ctx.childSessionID, ctx.childMessageID)
+  const parts = assistantMessageToParts(msg, ctx.childSessionID, ctx.childMessageID, reasoningTime)
   for (const part of parts) {
     await AppRuntime.runPromise(Session.Service.use((svc) => svc.updatePart(part)))
   }
@@ -787,7 +813,11 @@ async function handleCompactBoundary(
     summary: true,
     path: {
       cwd: session.directory,
-      root: Instance.worktree,
+      // The parent assistant message was created with the same instance
+      // (prompt.ts sets path: { cwd: ctx.directory, root: ctx.worktree }), so
+      // reuse it rather than reaching back into the Instance ALS from this
+      // plain-async stream handler.
+      root: assistantMessage.path.root,
     },
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },

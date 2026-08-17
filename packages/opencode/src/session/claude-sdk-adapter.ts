@@ -52,10 +52,23 @@ export function textBlockToPart(block: BetaTextBlock, sessionID: SessionID, mess
   }
 }
 
+/**
+ * Window the caller measured for a thinking block. Thinking blocks arrive from
+ * the SDK already complete, so there is no observable start — the processor
+ * supplies `start` (when the previous SDK stream message was handled, i.e. when
+ * this step began) and `end` (when the block arrived). See ReasoningTime in
+ * claude-sdk-processor.ts for why that window is a fair proxy.
+ */
+export interface ReasoningTime {
+  start: number
+  end: number
+}
+
 export function thinkingBlockToPart(
   block: BetaThinkingBlock,
   sessionID: SessionID,
   messageID: MessageID,
+  time: ReasoningTime,
 ): SessionV1.ReasoningPart {
   return {
     id: PartID.ascending(),
@@ -63,10 +76,7 @@ export function thinkingBlockToPart(
     messageID,
     type: "reasoning",
     text: block.thinking,
-    time: {
-      start: Date.now(),
-      end: Date.now(),
-    },
+    time: { start: time.start, end: time.end },
   }
 }
 
@@ -169,12 +179,13 @@ export function contentBlockToPart(
   block: BetaContentBlock,
   sessionID: SessionID,
   messageID: MessageID,
+  reasoningTime: ReasoningTime,
 ): MappedPart | null {
   if (isTextBlock(block)) {
     return textBlockToPart(block, sessionID, messageID)
   }
   if (isThinkingBlock(block)) {
-    return thinkingBlockToPart(block, sessionID, messageID)
+    return thinkingBlockToPart(block, sessionID, messageID, reasoningTime)
   }
   if (isToolUseBlock(block)) {
     return toolUseBlockToPart(block, sessionID, messageID)
@@ -191,9 +202,10 @@ export function assistantMessageToParts(
   msg: SDKAssistantMessage,
   sessionID: SessionID,
   messageID: MessageID,
+  reasoningTime: ReasoningTime,
 ): MappedPart[] {
   return msg.message.content
-    .map((block) => contentBlockToPart(block, sessionID, messageID))
+    .map((block) => contentBlockToPart(block, sessionID, messageID, reasoningTime))
     .filter((part): part is MappedPart => part !== null)
 }
 

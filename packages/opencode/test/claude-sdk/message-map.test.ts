@@ -34,6 +34,8 @@ import { SessionID, MessageID } from "../../src/session/schema"
 
 const sid = SessionID.make("ses_test-session")
 const mid = MessageID.ascending()
+// The window the processor measured for a thinking block: step start → arrival.
+const rtime = { start: 1_700_000_000_000, end: 1_700_000_004_500 }
 
 describe("claude-sdk message mapping", () => {
   describe("type guards", () => {
@@ -77,13 +79,21 @@ describe("claude-sdk message mapping", () => {
   describe("thinkingBlockToPart", () => {
     test("maps ThinkingBlock to SessionV1.ReasoningPart", () => {
       const block = thinkingBlock("Let me think about this carefully")
-      const part = thinkingBlockToPart(block, sid, mid)
+      const part = thinkingBlockToPart(block, sid, mid, rtime)
 
       expect(part.type).toBe("reasoning")
       expect(part.text).toBe("Let me think about this carefully")
       expect(part.sessionID).toBe(sid)
       expect(part.messageID).toBe(mid)
       expect(part.time.start).toBeGreaterThan(0)
+    })
+
+    test("uses the caller-measured window, not a zero-length one", () => {
+      const part = thinkingBlockToPart(thinkingBlock("hmm"), sid, mid, rtime)
+
+      expect(part.time.start).toBe(rtime.start)
+      expect(part.time.end).toBe(rtime.end)
+      expect(part.time.end! - part.time.start).toBe(4500)
     })
   })
 
@@ -119,26 +129,26 @@ describe("claude-sdk message mapping", () => {
 
   describe("contentBlockToPart", () => {
     test("dispatches text blocks", () => {
-      const part = contentBlockToPart(textBlock("test"), sid, mid)
+      const part = contentBlockToPart(textBlock("test"), sid, mid, rtime)
       expect(part).not.toBeNull()
       expect(part!.type).toBe("text")
     })
 
     test("dispatches thinking blocks", () => {
-      const part = contentBlockToPart(thinkingBlock("think"), sid, mid)
+      const part = contentBlockToPart(thinkingBlock("think"), sid, mid, rtime)
       expect(part).not.toBeNull()
       expect(part!.type).toBe("reasoning")
     })
 
     test("dispatches tool_use blocks", () => {
-      const part = contentBlockToPart(toolUseBlock("Edit", {}), sid, mid)
+      const part = contentBlockToPart(toolUseBlock("Edit", {}), sid, mid, rtime)
       expect(part).not.toBeNull()
       expect(part!.type).toBe("tool")
     })
 
     test("returns null for unsupported block types", () => {
       const unsupported = { type: "redacted_thinking", data: "abc" } as any
-      const part = contentBlockToPart(unsupported, sid, mid)
+      const part = contentBlockToPart(unsupported, sid, mid, rtime)
       expect(part).toBeNull()
     })
   })
@@ -146,7 +156,7 @@ describe("claude-sdk message mapping", () => {
   describe("assistantMessageToParts", () => {
     test("maps single text content", () => {
       const msg = assistantMessage([textBlock("Hello")])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
 
       expect(parts).toHaveLength(1)
       expect(parts[0]!.type).toBe("text")
@@ -155,7 +165,7 @@ describe("claude-sdk message mapping", () => {
 
     test("maps single tool_use content", () => {
       const msg = assistantMessage([toolUseBlock("Read", { file_path: "/x" })])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
 
       expect(parts).toHaveLength(1)
       expect(parts[0]!.type).toBe("tool")
@@ -167,7 +177,7 @@ describe("claude-sdk message mapping", () => {
         textBlock("Here's my answer"),
         toolUseBlock("Bash", { command: "ls" }),
       ])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
 
       expect(parts).toHaveLength(3)
       expect(parts[0]!.type).toBe("reasoning")
@@ -181,7 +191,7 @@ describe("claude-sdk message mapping", () => {
         { type: "redacted_thinking", data: "secret" } as any,
         thinkingBlock("visible"),
       ])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
 
       expect(parts).toHaveLength(2)
       expect(parts[0]!.type).toBe("text")
@@ -190,13 +200,13 @@ describe("claude-sdk message mapping", () => {
 
     test("returns empty array for empty content", () => {
       const msg = assistantMessage([])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
       expect(parts).toHaveLength(0)
     })
 
     test("all parts share session and message IDs", () => {
       const msg = assistantMessage([textBlock("a"), textBlock("b")])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
 
       for (const part of parts) {
         expect(part.sessionID).toBe(sid)
@@ -206,7 +216,7 @@ describe("claude-sdk message mapping", () => {
 
     test("each part gets a unique id", () => {
       const msg = assistantMessage([textBlock("a"), textBlock("b"), textBlock("c")])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
       const ids = new Set(parts.map((p) => p.id))
       expect(ids.size).toBe(3)
     })
@@ -277,7 +287,7 @@ describe("claude-sdk message mapping", () => {
     })
 
     test("thinkingBlockToPart output passes SessionV1.ReasoningPart schema", () => {
-      const part = thinkingBlockToPart(thinkingBlock("thinking..."), sid, mid)
+      const part = thinkingBlockToPart(thinkingBlock("thinking..."), sid, mid, rtime)
       const result = safeParse(SessionV1.ReasoningPart, part)
       expect(result.success).toBe(true)
       if (!result.success) {
@@ -300,7 +310,7 @@ describe("claude-sdk message mapping", () => {
         textBlock("Here is the answer"),
         toolUseBlock("Bash", { command: "echo hi" }),
       ])
-      const parts = assistantMessageToParts(msg, sid, mid)
+      const parts = assistantMessageToParts(msg, sid, mid, rtime)
 
       expect(parts).toHaveLength(3)
 

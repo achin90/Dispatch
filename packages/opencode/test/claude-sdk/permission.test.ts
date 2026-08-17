@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { WithInstance } from "@/project/with-instance"
+import { Instance } from "@/project/instance"
 import {
   extractPatterns,
   derivePermissionName,
@@ -191,7 +192,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves allow on 'once' reply via Permission.reply()", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current })
         let capturedPermission: string | undefined
         let capturedPatterns: readonly string[] | undefined
         let capturedSessionID: unknown
@@ -221,7 +222,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves allow on 'always' reply via Permission.reply()", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current })
 
         const unsubscribe = await onPermissionAsked((request) => {
           AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
@@ -241,7 +242,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves deny on 'reject' reply via Permission.reply()", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current })
 
         const unsubscribe = await onPermissionAsked((request) => {
           AppRuntime.runPromise(Permission.Service.use((svc) => svc.reply({
@@ -264,7 +265,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves deny when signal is already aborted", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current })
 
         const result = await bridge(
           "Read",
@@ -281,7 +282,7 @@ describe("claude-sdk permissions", () => {
 
     test("resolves deny when signal aborts while waiting", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current })
         const controller = new AbortController()
 
         const resultPromise = bridge(
@@ -311,7 +312,7 @@ describe("claude-sdk permissions", () => {
       // Bridge is created in the agent's directory (like createClaudeSdkQuery does)
       const bridge = await WithInstance.provide({
         directory: agentDir.path,
-        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
+        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current }),
       })
 
       let capturedID: unknown
@@ -348,7 +349,7 @@ describe("claude-sdk permissions", () => {
 
       const bridge = await WithInstance.provide({
         directory: agentDir.path,
-        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
+        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current }),
       })
 
       const unsubscribe = await onPermissionAsked((request) => {
@@ -379,7 +380,7 @@ describe("claude-sdk permissions", () => {
 
       const bridge = await WithInstance.provide({
         directory: agentDir.path,
-        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid }),
+        fn: () => createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current }),
       })
 
       const unsubscribe = await onPermissionAsked((request) => {
@@ -409,7 +410,7 @@ describe("claude-sdk permissions", () => {
 
     test("request contains tool metadata", async () => {
       await withInstance(async () => {
-        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid })
+        const bridge = createCanUseToolBridge({ sessionID: sid, messageID: mid, instance: Instance.current })
         let capturedRequest: PermissionV1.Request | undefined
 
         const unsubscribe = await onPermissionAsked((request) => {
