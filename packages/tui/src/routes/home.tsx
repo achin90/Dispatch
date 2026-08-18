@@ -447,6 +447,12 @@ export function Home() {
     return flat()[selectedIndex()]
   }
 
+  // Publish the cursor so plugins can act on "the agent I'm looking at" —
+  // voice commands have no other way to know which row is highlighted.
+  createEffect(() => {
+    sync.set("home_selected_session", selected()?.sessionID)
+  })
+
   function insertAgent(entry: AgentEntry) {
     const current: AgentEntry[] = kv.get("agents", [])
     const dir = resolveDir(entry)

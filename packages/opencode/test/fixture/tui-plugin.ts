@@ -322,9 +322,17 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
         permission: opts.state?.session?.permission ?? (() => []),
         question: opts.state?.session?.question ?? (() => []),
       },
+      home: {
+        selectedSessionID: () => undefined,
+      },
       part: opts.state?.part ?? (() => []),
       lsp: opts.state?.lsp ?? (() => []),
       mcp: opts.state?.mcp ?? (() => []),
+      agent: {
+        current: () => undefined,
+        list: () => [],
+        set: () => {},
+      },
     },
     theme: {
       get current() {

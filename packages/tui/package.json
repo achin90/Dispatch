@@ -64,7 +64,9 @@
     "opentui-spinner": "catalog:",
     "remeda": "catalog:",
     "strip-ansi": "7.1.2",
-    "solid-js": "catalog:"
+    "solid-js": "catalog:",
+    "kokoro-js": "^1.2.1",
+    "sherpa-onnx-node": "^1.13.5"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

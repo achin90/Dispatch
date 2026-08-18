@@ -4,6 +4,7 @@ import type { useEvent } from "../context/event"
 import type { useRoute } from "../context/route"
 import type { useSDK } from "../context/sdk"
 import type { useSync } from "../context/sync"
+import type { useLocal } from "../context/local"
 import type { useTheme } from "../context/theme"
 import { Dialog as DialogUI, type useDialog } from "../ui/dialog"
 import type { useOpencodeKeymap } from "../keymap"
@@ -31,6 +32,7 @@ type Input = {
   event: ReturnType<typeof useEvent>
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
+  local: ReturnType<typeof useLocal>
   theme: ReturnType<typeof useTheme>
   toast: ReturnType<typeof useToast>
   renderer: TuiPluginApi["renderer"]
@@ -102,8 +104,24 @@ function mapOptionCb<Value>(cb?: (item: TuiDialogSelectOption<Value>) => void) {
   return (item: SelectOption<Value>) => cb(pickOption(item))
 }
 
-function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
+function stateApi(sync: ReturnType<typeof useSync>, local: ReturnType<typeof useLocal>): TuiPluginApi["state"] {
   return {
+    home: {
+      selectedSessionID() {
+        return sync.data.home_selected_session
+      },
+    },
+    agent: {
+      current() {
+        return local.agent.current()?.name
+      },
+      list() {
+        return local.agent.list().map((item) => item.name)
+      },
+      set(name) {
+        local.agent.set(name)
+      },
+    },
     get ready() {
       return sync.ready
     },
@@ -304,7 +322,7 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
         return input.kv.ready
       },
     },
-    state: stateApi(input.sync),
+    state: stateApi(input.sync, input.local),
     get client() {
       return input.sdk.client
     },

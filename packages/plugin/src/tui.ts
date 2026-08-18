@@ -393,9 +393,22 @@ export type TuiState = {
     permission: (sessionID: string) => ReadonlyArray<PermissionRequest>
     question: (sessionID: string) => ReadonlyArray<QuestionRequest>
   }
+  home: {
+    /** Session under the dashboard cursor, or undefined when nothing is selected. */
+    selectedSessionID: () => string | undefined
+  }
   part: (messageID: string) => ReadonlyArray<Part>
   lsp: () => ReadonlyArray<TuiSidebarLspItem>
   mcp: () => ReadonlyArray<TuiSidebarMcpItem>
+  /**
+   * The agent the next prompt will be sent as — what the prompt UI shows as
+   * Build/Plan/Yolo. `set` is a no-op with a warning toast for an unknown name.
+   */
+  agent: {
+    current: () => string | undefined
+    list: () => ReadonlyArray<string>
+    set: (name: string) => void
+  }
 }
 
 type TuiBindingLookupView = {

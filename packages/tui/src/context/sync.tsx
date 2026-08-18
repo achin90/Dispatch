@@ -114,6 +114,12 @@ export const {
       agent_summary: {
         [sessionID: string]: { text: string; ai: boolean }
       }
+      /**
+       * Session under the dashboard cursor. Lives here rather than in kv so
+       * moving the cursor stays in memory — kv.set does an atomic
+       * read-merge-write under a cross-process lock on every call.
+       */
+      home_selected_session: string | undefined
       vcs: VcsInfo | undefined
     }>({
       provider_next: {
@@ -145,6 +151,7 @@ export const {
       mcp_resource: {},
       formatter: [],
       agent_summary: {},
+      home_selected_session: undefined,
       vcs: undefined,
     })
 
