@@ -320,6 +320,14 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
     // autoCompactWindow setting. This escape hatch asserts first-party
     // semantics; the claudesdk path always authenticates against Anthropic.
     _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1",
+    // Disable the CLI's tool-search / deferred-tools system ("tst" mode, on by
+    // default since SDK 0.3.x). In its "optimistic" variant the ToolSearch tool
+    // returns an EMPTY result body (matches load server-side via the tool-search
+    // beta), which models consistently misread as "MCP servers disconnected".
+    // "false" selects "standard" mode: every MCP tool schema is sent upfront —
+    // more prompt tokens (cached), but schemas are always visible. There is no
+    // deferred-but-non-optimistic setting in the CLI.
+    ENABLE_TOOL_SEARCH: "false",
   }
   if (apiKey) {
     env.ANTHROPIC_API_KEY = apiKey

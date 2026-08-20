@@ -475,6 +475,22 @@ rg -n "healthCheck" packages/opencode/src/server/routes/instance/httpapi/handler
 # Must match — the /mcp/health handler
 ```
 
+### ToolSearch returns empty results — MCP looks dead but is NOT (SDK ≥0.3.x "optimistic" mode)
+
+**Do not chase this as an MCP connection bug.** Since the 0.2.89 → 0.3.220 SDK bump, the bundled `claude` CLI runs ToolSearch in "optimistic" mode: the search executes server-side via the API's tool-search beta, the ToolSearch **tool result body is empty by design**, and matched tools are silently registered (a "Tool loaded." injection appears the next turn). Agents — whose docs still claim ToolSearch returns schemas in a `<functions>` block — see the empty result, conclude "MCP server disconnected", and never attempt the call.
+
+**How to tell the difference:**
+1. Check the log: `rg "resolved MCP servers" ~/.local/share/opencode/log/opencode.log | tail -3` — if `mcpServerNames` lists the servers, connections are up.
+2. Just call an MCP tool directly (e.g. `mcp__linear__list_teams` with no args). If it returns data, MCP is fine and the "empty ToolSearch" is cosmetic. `InputValidationError` also means the tool IS registered; only "tool not found" indicates a real registration problem.
+
+**Dispatch's fix:** `createClaudeSdkQuery` in `session/claude-sdk-query.ts` sets `ENABLE_TOOL_SEARCH: "false"` in the child CLI's env. That selects the CLI's "standard" mode — no ToolSearch tool, no deferred tools, every MCP tool schema sent upfront (prompt-cached). There is no deferred-but-non-optimistic middle setting in the CLI; the mode logic is `WKr()`/`s3()` in the binary (`ENABLE_TOOL_SEARCH` unset → "tst" + optimistic on first-party hosts; `false` → "standard"; `auto:N` → percentage rollout).
+
+**Quick verification after merge:**
+```bash
+rg -n 'ENABLE_TOOL_SEARCH: "false"' packages/opencode/src/session/claude-sdk-query.ts
+# Must match — sits in the env block next to _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL
+```
+
 ### Claude SDK post-turn queued-message check loops forever on stale user messages
 
 The Claude SDK turn loop in `session/prompt.ts` had a post-turn check that scanned for queued user messages using `m.info.id > last.info.id`. Message IDs are not chronologically sortable — a stale user message (e.g. from a prior agent switch) can permanently sort after newer assistant messages and make every iteration `continue`, looping the same turn forever.
