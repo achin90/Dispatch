@@ -1351,6 +1351,11 @@ function sdkProvider(): Info {
   for (const [alias, info] of Object.entries(SDK_MODELS)) {
     const m = buildSdkModel(alias, info, info.name)
     m.variants = mapValues(ProviderTransform.variants(m), (v) => v)
+    // "default" resolves to the same model as a concrete alias (currently
+    // opus-4-8), so the picker would show that model twice. "deprecated"
+    // hides it from the model picker and suggestions while exact-ID lookup
+    // (e.g. a config referencing anthropic/default) keeps resolving.
+    if (alias === "default") m.status = "deprecated"
     models[alias] = m
   }
   return {
