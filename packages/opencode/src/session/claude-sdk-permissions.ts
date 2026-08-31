@@ -369,6 +369,7 @@ async function generateEditDiff(
 async function question(
   input: Record<string, unknown>,
   opts: CanUseToolBridgeOptions,
+  toolUseID: string,
   signal: AbortSignal,
 ): Promise<PermissionResult> {
   const raw = Array.isArray(input.questions) ? input.questions : []
@@ -393,6 +394,7 @@ async function question(
     AppRuntime.runPromise(Question.Service.use((svc) => svc.ask({
       sessionID: opts.sessionID,
       questions,
+      tool: { messageID: opts.messageID, callID: toolUseID },
     }))),
     new Promise<never>((_, reject) => {
       signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
@@ -423,6 +425,7 @@ async function question(
  */
 async function exitPlanMode(
   opts: CanUseToolBridgeOptions,
+  toolUseID: string,
   signal: AbortSignal,
 ): Promise<PermissionResult> {
   log.info("exitPlanMode: called via canUseTool", { sessionID: opts.sessionID })
@@ -432,12 +435,16 @@ async function exitPlanMode(
       questions: [{
         question: "Plan is complete. Which agent would you like to switch to?",
         header: "Switch Agent",
+        // Answers are matched by exact label below, so free-form input would
+        // fall through to "build" and approve the plan the user declined.
+        custom: false,
         options: [
           { label: "Build", description: "Default agent. Asks for permission on edits and bash commands" },
           { label: "Yolo", description: "Auto-approves all tool calls without asking" },
           { label: "Stay in Plan", description: "Continue refining the plan" },
         ],
       }],
+      tool: { messageID: opts.messageID, callID: toolUseID },
     }))),
     new Promise<never>((_, reject) => {
       signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
@@ -594,7 +601,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       // returned via updatedInput.answers (keyed by question text).
       // ------------------------------------------------------------------
       if (toolName === "AskUserQuestion") {
-        return question(input, options, signal)
+        return question(input, options, callOptions.toolUseID, signal)
       }
 
       // ------------------------------------------------------------------
@@ -602,7 +609,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       // synthetic user message so the main loop picks up the new agent.
       // ------------------------------------------------------------------
       if (toolName === "ExitPlanMode") {
-        return exitPlanMode(options, signal)
+        return exitPlanMode(options, callOptions.toolUseID, signal)
       }
 
       const rawPatterns = extractPatterns(toolName, input)
