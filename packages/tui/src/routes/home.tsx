@@ -530,7 +530,7 @@ export function Home() {
     setDialogOpen(false)
     if (!name) return
     const root = dir === "." ? sync.path.directory : sync.path.directory + "/" + dir
-    const result = await sdk.client.session.create({ directory: root })
+    const result = await sdk.client.session.create({ directory: root, title: name })
     if (!result.data) return
     const wt = (await sdk.client.worktree.info({ directory: root })).data
     insertAgent({
@@ -567,7 +567,7 @@ export function Home() {
     const dir = worktree.directory.replace(/\/+$/, "")
     pending.set(worktree.branch ?? name, dir)
     setDiffStats((prev) => ({ ...prev, [dir]: { additions: 0, deletions: 0, files: 0 } }))
-    const session = (await sdk.client.session.create({ directory: worktree.directory })).data
+    const session = (await sdk.client.session.create({ directory: worktree.directory, title: name })).data
     if (!session) return
     insertAgent({
       id: crypto.randomUUID(),
