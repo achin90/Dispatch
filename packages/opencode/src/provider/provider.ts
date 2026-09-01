@@ -1230,6 +1230,14 @@ export const SDK_MODELS: Record<
     description: "Most capable for complex work",
     reasoning: true,
   },
+  "fable-5-1": {
+    resolves: "claude-fable-5-1",
+    name: "Fable 5.1",
+    context: 1_000_000,
+    output: 64_000,
+    description: "Most intelligent, for the hardest problems · $10/$50 per Mtok",
+    reasoning: true,
+  },
   "fable-5": {
     resolves: "claude-fable-5",
     name: "Fable 5",
