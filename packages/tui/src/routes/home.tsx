@@ -416,6 +416,14 @@ export function Home() {
 
   // Poll every 60s while dashboard is visible
   onMount(() => {
+    // Attachments live in the server's memory, so the dashboard reconciles on
+    // entry rather than trusting anything cached locally.
+    sdk.client.session
+      .remoteControlList()
+      // Leave state alone when the call fails: this client reports errors in
+      // the result rather than throwing, and overwriting would drop live state.
+      .then((res) => res.data && sync.set("remote_sessions", [...res.data]))
+      .catch(() => {})
     const timer = setInterval(() => fetchPRs(), 300000)
     onCleanup(() => clearInterval(timer))
   })
@@ -937,6 +945,9 @@ export function Home() {
                                 overflow="hidden"
                                 wrapMode="none"
                               >
+                                <Show when={sync.data.remote_sessions.includes(agent.sessionID)}>
+                                  <span style={{ fg: isSelected() ? fg : theme.success }}>◉ </span>
+                                </Show>
                                 {agent.name}
                               </text>
                             </box>

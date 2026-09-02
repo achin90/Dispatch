@@ -9,9 +9,12 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
  * user's reply via Permission.reply().
  */
 
-import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk"
+import type { CanUseTool, PermissionResult, SDKMessage } from "@anthropic-ai/claude-agent-sdk"
 import { createTwoFilesPatch } from "diff"
+import { Effect } from "effect"
 import path from "path"
+import { EventV2 } from "@opencode-ai/core/event"
+import { EventV2Bridge } from "@/event-v2-bridge"
 import * as LogBridge from "@/util/log-bridge"
 import { Permission } from "@/permission"
 import { Question } from "@/question"
@@ -24,6 +27,8 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionID, MessageID, PartID } from "@/session/schema"
 import { Provider } from "@/provider/provider"
 import { AppRuntime } from "@/effect/app-runtime"
+import { getMirror, registerRemoteQuestion, type MirrorHandle } from "./claude-sdk-bridge"
+import type { QuestionID } from "@/question/schema"
 
 const log = LogBridge.create({ service: "claude-sdk-permissions" })
 
@@ -362,6 +367,99 @@ async function generateEditDiff(
 // ---------------------------------------------------------------------------
 
 /**
+ * Renders one question of a request as plain text in the mirrored transcript.
+ *
+ * claude.ai does not render our question dialog — tried, and the question
+ * reached neither surface — so the remote copy is an ordinary assistant
+ * message and the answer comes back as an ordinary typed reply. Options are
+ * numbered so a reply can name one without retyping it.
+ */
+function writeRemoteQuestion(mirror: MirrorHandle, questions: Question.Info[], at: number): Promise<void> {
+  const question = questions[at]!
+  const heading = questions.length > 1 ? `**${question.header}** (${at + 1}/${questions.length})` : `**${question.header}**`
+  const text = [
+    heading,
+    question.question,
+    "",
+    ...question.options.map((o, i) => `${i + 1}. **${o.label}**${o.description ? ` — ${o.description}` : ""}`),
+    "",
+    question.custom === false
+      ? "_Reply with the option number or its exact label._"
+      : "_Reply with the option number, its exact label, or type your own answer._",
+  ].join("\n")
+  mirror.write({
+    type: "assistant",
+    parent_tool_use_id: null,
+    session_id: "",
+    message: {
+      id: MessageID.ascending(),
+      type: "message",
+      role: "assistant",
+      model: "unknown",
+      content: [{ type: "text", text }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  } as unknown as SDKMessage)
+  // Writes are queued and uploaded in batches, so without draining the question
+  // sits in the queue. The result ends the turn: a session claude.ai still
+  // believes is working shows a spinner instead of a composer, and the answer
+  // has to be typed there.
+  return mirror.flush().then(() => mirror.result())
+}
+
+/**
+ * Decides whether text typed on claude.ai answers `question`, in order: an
+ * exact option label (case-insensitive, trimmed), a 1-based option number,
+ * then — only when the question accepts a typed-in answer — the raw text.
+ * Returns undefined when none apply, leaving the text to be submitted as an
+ * ordinary prompt.
+ */
+function matchRemoteAnswer(question: Question.Info, text: string): string | undefined {
+  const trimmed = text.trim()
+  const labelled = question.options.find((o) => o.label.trim().toLowerCase() === trimmed.toLowerCase())
+  if (labelled) return labelled.label
+  const index = Number(trimmed)
+  if (trimmed !== "" && Number.isInteger(index) && index >= 1 && index <= question.options.length) {
+    return question.options[index - 1]!.label
+  }
+  if (question.custom === false) return undefined
+  return trimmed
+}
+
+/**
+ * The inbound half of the fan-out: interprets replies typed on claude.ai and
+ * answers the pending request through Question.reply — the same call the TUI
+ * makes over HTTP, so the two surfaces resolve one shared pending entry and
+ * whichever answers first wins.
+ *
+ * A reply is one line of text but Question.reply answers the whole request at
+ * once, so a multi-question request is filled in order: each accepted reply
+ * answers the current question and the next one is written to the transcript.
+ */
+function remoteQuestionAnswerer(requestID: QuestionID, questions: Question.Info[], mirror: MirrorHandle) {
+  const collected: string[][] = []
+  let at = 0
+  return (text: string) => {
+    const question = questions[at]
+    if (!question) return false
+    const answer = matchRemoteAnswer(question, text)
+    if (answer === undefined) return false
+    collected[at] = [answer]
+    at++
+    if (at < questions.length) {
+      void writeRemoteQuestion(mirror, questions, at)
+      return true
+    }
+    // Rejected when the TUI answered in the interim — its reply already removed
+    // the pending entry, so there is nothing left to resolve.
+    AppRuntime.runPromise(Question.Service.use((svc) => svc.reply({ requestID, answers: collected }))).catch(() => {})
+    return true
+  }
+}
+
+/**
  * Converts the SDK's AskUserQuestionInput into opencode Question.Info[],
  * calls Question.ask() to show the TUI prompt, waits for answers, then
  * returns them in the format the SDK expects ({ [questionText]: answerStr }).
@@ -390,28 +488,72 @@ async function question(
     return { behavior: "deny", message: "No questions provided" }
   }
 
-  const answers = await Promise.race([
-    AppRuntime.runPromise(Question.Service.use((svc) => svc.ask({
-      sessionID: opts.sessionID,
-      questions,
-      tool: { messageID: opts.messageID, callID: toolUseID },
-    }))),
-    new Promise<never>((_, reject) => {
-      signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
-    }),
-  ]).catch(() => null)
+  // Fan out to claude.ai when this session is mirrored, so the question can be
+  // answered from the phone as well as the TUI. Unlike the permission fan-out
+  // there is no second arm to race: the remote answer goes through
+  // Question.reply, which resolves the very request ask() is awaiting, so one
+  // pending entry backs both surfaces and the first answer wins outright.
+  //
+  // ask() mints the request id itself, so — as with permissions — nothing is
+  // sent up front; we watch for the Asked event carrying our toolUseID, which
+  // is published at exactly the point the TUI dialog appears.
+  const mirror = getMirror(opts.sessionID)
+  let unregister: (() => void) | undefined
+  let announced = false
+  // A failed subscription costs the phone its copy of the question; the local
+  // flow below is untouched.
+  const unlisten = mirror
+    ? await AppRuntime.runPromise(
+        EventV2Bridge.Service.use((events) =>
+          events.listen((event) =>
+            Effect.sync(() => {
+              if (event.type !== Question.Event.Asked.type) return
+              const asked = event.data as EventV2.Data<typeof Question.Event.Asked>
+              if (asked.tool?.callID !== toolUseID || announced) return
+              announced = true
+              unregister = registerRemoteQuestion(
+                opts.sessionID,
+                remoteQuestionAnswerer(asked.id, questions, mirror),
+              )
+              void writeRemoteQuestion(mirror, questions, 0)
+              // Documented signal for "the session needs the user".
+              mirror.state("requires_action")
+            }),
+          ),
+        ),
+      ).catch(() => undefined)
+    : undefined
 
-  if (!answers) {
-    return { behavior: "deny", message: "User dismissed the question" }
-  }
+  try {
+    const answers = await Promise.race([
+      AppRuntime.runPromise(Question.Service.use((svc) => svc.ask({
+        sessionID: opts.sessionID,
+        questions,
+        tool: { messageID: opts.messageID, callID: toolUseID },
+      }))),
+      new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
+      }),
+    ]).catch(() => null)
 
-  // The SDK expects answers as { [questionText]: answerString }.
-  // Multi-select answers are comma-separated.
-  const result = Object.fromEntries(questions.map((q, i) => [q.question, answers[i] ? answers[i].join(", ") : ""]))
+    if (!answers) {
+      return { behavior: "deny", message: "User dismissed the question" }
+    }
 
-  return {
-    behavior: "allow",
-    updatedInput: { ...input, answers: result },
+    // The SDK expects answers as { [questionText]: answerString }.
+    // Multi-select answers are comma-separated.
+    const result = Object.fromEntries(questions.map((q, i) => [q.question, answers[i] ? answers[i].join(", ") : ""]))
+
+    return {
+      behavior: "allow",
+      updatedInput: { ...input, answers: result },
+    }
+  } finally {
+    if (unlisten) await AppRuntime.runPromise(unlisten).catch(() => {})
+    // However it ended — answered here, answered on the phone, or aborted —
+    // later remote messages are prompts again.
+    unregister?.()
+    if (announced) mirror?.state("running")
   }
 }
 
@@ -601,6 +743,10 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
       // returned via updatedInput.answers (keyed by question text).
       // ------------------------------------------------------------------
       if (toolName === "AskUserQuestion") {
+        // Tried releasing this to the SDK while mirrored so claude.ai could
+        // render it natively: the question reached neither surface and the
+        // tool came back empty, so the app does not render this dialog kind
+        // over our bridge. Keep it local.
         return question(input, options, callOptions.toolUseID, signal)
       }
 
@@ -661,6 +807,80 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
 
       const toolMessageID = options.messageID
 
+      // Fan out to claude.ai when this session is mirrored, so the prompt can
+      // be answered from the phone as well as the TUI. First answer wins and
+      // the loser is dismissed. With no mirror this is the local flow verbatim.
+      //
+      // The control request is deliberately NOT sent up front: Permission.ask
+      // returns without prompting whenever the ruleset (plus this session's
+      // "always" approvals, which live in instance state and are not readable
+      // from here) already allows every pattern. Sending eagerly meant every
+      // auto-allowed read/glob/allowed-bash fired a phone notification for a
+      // prompt that never appeared locally.
+      //
+      // Instead we watch for Permission.Event.Asked, which ask() publishes at
+      // exactly the point the pending entry is registered and the TUI dialog
+      // appears, and fan out only then. The promise itself is created up front
+      // so it can still be an arm of the race below.
+      const mirror = getMirror(options.sessionID)
+      let fanOut: (() => void) | undefined
+      let fannedOut = false
+      const remote = mirror
+        ? new Promise<void>((resolve, reject) => {
+            fanOut = () => {
+              fannedOut = true
+              mirror
+                .askPermission({
+                  type: "control_request",
+                  request_id: requestID,
+                  request: {
+                    subtype: "can_use_tool",
+                    tool_name: toolName,
+                    input,
+                    tool_use_id: callOptions.toolUseID,
+                    title: callOptions.title,
+                    ...(callOptions.agentID ? { agent_id: callOptions.agentID } : {}),
+                  },
+                })
+                .then((result) => {
+                  // Dismiss the TUI prompt. reply() deletes the pending entry and
+                  // publishes Replied, which is what closes the dialog; if the TUI
+                  // already answered, the entry is gone and this is a no-op.
+                  AppRuntime.runPromise(
+                    Permission.Service.use((svc) =>
+                      svc.reply({ requestID, reply: result.behavior === "allow" ? "once" : "reject" }),
+                    ),
+                  ).catch(() => {})
+                  // A remote updatedInput is deliberately ignored: claude.ai answers
+                  // yes/no here, it does not get to rewrite what the tool runs.
+                  if (result.behavior === "deny") throw new Error(result.message)
+                })
+                .then(resolve, reject)
+              // Documented signal for "a prompt is waiting" — without it claude.ai has
+              // no reason to surface the session as needing the user.
+              mirror.state("requires_action")
+            }
+          })
+        : undefined
+      // A failed subscription costs the phone its copy of the prompt; the local
+      // flow below is untouched.
+      const unlisten = mirror
+        ? await AppRuntime.runPromise(
+            EventV2Bridge.Service.use((events) =>
+              events.listen((event) =>
+                Effect.sync(() => {
+                  if (event.type !== Permission.Event.Asked.type) return
+                  const asked = event.data as EventV2.Data<typeof Permission.Event.Asked>
+                  if (asked.id !== requestID) return
+                  const send = fanOut
+                  fanOut = undefined
+                  send?.()
+                }),
+              ),
+            ),
+          ).catch(() => undefined)
+        : undefined
+
       try {
         // Use Permission.ask() which registers in the pending map,
         // publishes the Bus event for the TUI, and waits for the user's reply.
@@ -683,6 +903,7 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
           new Promise<never>((_, reject) => {
             signal.addEventListener("abort", () => reject(new Error("Request aborted")), { once: true })
           }),
+          ...(remote ? [remote] : []),
         ])
         // Store diff metadata so the TUI can display it. The pending map entry
         // (set above, before awaiting approval) covers the case where
@@ -723,6 +944,17 @@ export function createCanUseToolBridge(options: CanUseToolBridgeOptions): CanUse
         await markToolDenied(toolMessageID, callOptions.toolUseID, msg)
 
         return { behavior: "deny", message: msg }
+      } finally {
+        if (unlisten) await AppRuntime.runPromise(unlisten).catch(() => {})
+        // Whoever lost the race is dismissed here — including on abort, where
+        // neither surface answered and claude.ai would otherwise keep showing
+        // a prompt for a tool call that no longer exists. Skipped entirely when
+        // no prompt appeared: nothing was sent, and reporting "running" for a
+        // tool call claude.ai was never told about is pure noise.
+        if (fannedOut) {
+          mirror?.cancelPermission(requestID)
+          mirror?.state("running")
+        }
       }
     },
   )

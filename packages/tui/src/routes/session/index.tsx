@@ -669,6 +669,64 @@ export function Session() {
       },
     },
     {
+      title: "Start remote session",
+      value: "session.remote",
+      category: "Session",
+      enabled: !sync.data.remote_sessions.includes(route.sessionID),
+      slash: {
+        name: "remote",
+      },
+      run: async () => {
+        await sdk.client.session
+          .remoteControl({
+            sessionID: route.sessionID,
+          })
+          .then(() => {
+            sync.set("remote_sessions", [...sync.data.remote_sessions, route.sessionID])
+            toast.show({ message: "Session is now available in the Claude app", variant: "success", duration: 4000 })
+          })
+          .catch((error) => {
+            toast.show({
+              message: error instanceof Error ? error.message : "Failed to start remote session",
+              variant: "error",
+            })
+          })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Stop remote session",
+      value: "session.remote.stop",
+      category: "Session",
+      enabled: sync.data.remote_sessions.includes(route.sessionID),
+      slash: {
+        name: "remote-stop",
+      },
+      run: async () => {
+        await sdk.client.session
+          .remoteControlStop({
+            sessionID: route.sessionID,
+          })
+          .then((res) => {
+            sync.set(
+              "remote_sessions",
+              sync.data.remote_sessions.filter((id) => id !== route.sessionID),
+            )
+            toast.show({
+              message: res.data ? "Remote session stopped" : "No remote session was running",
+              variant: "success",
+            })
+          })
+          .catch((error) => {
+            toast.show({
+              message: error instanceof Error ? error.message : "Failed to stop remote session",
+              variant: "error",
+            })
+          })
+        dialog.clear()
+      },
+    },
+    {
       title: "Undo previous message",
       value: "session.undo",
       category: "Session",
@@ -1224,6 +1282,19 @@ export function Session() {
   // snap to bottom when session changes
   createEffect(on(() => route.sessionID, toBottom))
 
+  // Attachments live in the server's memory, so entering a session reconciles
+  // rather than trusting whatever the store happens to hold.
+  createEffect(
+    on(
+      () => route.sessionID,
+      () =>
+        sdk.client.session
+          .remoteControlList()
+          .then((res) => res.data && sync.set("remote_sessions", [...res.data]))
+          .catch(() => {}),
+    ),
+  )
+
   return (
     <LocationProvider location={location()}>
       <context.Provider
@@ -1401,7 +1472,14 @@ export function Session() {
                       }}
                       sessionID={route.sessionID}
                       directory={sync.session.get(route.sessionID)?.directory}
-                      right={<pluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
+                      right={
+                        <>
+                          <Show when={sync.data.remote_sessions.includes(route.sessionID)}>
+                            <text fg={theme.success}>{"◉ remote  "}</text>
+                          </Show>
+                          <pluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />
+                        </>
+                      }
                     />
                   </pluginRuntime.Slot>
                 </Show>

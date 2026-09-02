@@ -10460,6 +10460,108 @@ export type SessionSummarizeResponses = {
 
 export type SessionSummarizeResponse = SessionSummarizeResponses[keyof SessionSummarizeResponses]
 
+export type SessionRemoteControlData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/remote-control"
+}
+
+export type SessionRemoteControlErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+  /**
+   * InternalServerError
+   */
+  500: EffectHttpApiErrorInternalServerError
+}
+
+export type SessionRemoteControlError = SessionRemoteControlErrors[keyof SessionRemoteControlErrors]
+
+export type SessionRemoteControlResponses = {
+  /**
+   * claude.ai code session id
+   */
+  200: string
+}
+
+export type SessionRemoteControlResponse = SessionRemoteControlResponses[keyof SessionRemoteControlResponses]
+
+export type SessionRemoteControlListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/remote-control"
+}
+
+export type SessionRemoteControlListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type SessionRemoteControlListError = SessionRemoteControlListErrors[keyof SessionRemoteControlListErrors]
+
+export type SessionRemoteControlListResponses = {
+  /**
+   * session ids with a live remote session
+   */
+  200: Array<string>
+}
+
+export type SessionRemoteControlListResponse =
+  SessionRemoteControlListResponses[keyof SessionRemoteControlListResponses]
+
+export type SessionRemoteControlStopData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/remote-control/stop"
+}
+
+export type SessionRemoteControlStopErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type SessionRemoteControlStopError = SessionRemoteControlStopErrors[keyof SessionRemoteControlStopErrors]
+
+export type SessionRemoteControlStopResponses = {
+  /**
+   * whether a remote session was attached
+   */
+  200: boolean
+}
+
+export type SessionRemoteControlStopResponse =
+  SessionRemoteControlStopResponses[keyof SessionRemoteControlStopResponses]
+
 export type SessionPromptAsyncData = {
   body?: {
     messageID?: string

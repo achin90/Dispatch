@@ -97,6 +97,9 @@ export const SessionPaths = {
   share: `${root}/:sessionID/share`,
   init: `${root}/:sessionID/init`,
   summarize: `${root}/:sessionID/summarize`,
+  remoteControl: `${root}/:sessionID/remote-control`,
+  remoteControlStop: `${root}/:sessionID/remote-control/stop`,
+  remoteControlList: `${root}/remote-control`,
   prompt: `${root}/:sessionID/message`,
   promptAsync: `${root}/:sessionID/prompt_async`,
   command: `${root}/:sessionID/command`,
@@ -132,6 +135,18 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.status",
             summary: "Get session status",
             description: "Retrieve the current status of all sessions, including active, idle, and completed states.",
+          }),
+        ),
+        // Declared before `get`, whose /:sessionID would otherwise swallow the
+        // static /remote-control segment and 404 as a missing session.
+        HttpApiEndpoint.get("remoteControlList", SessionPaths.remoteControlList, {
+          query: WorkspaceRoutingQuery,
+          success: described(Schema.Array(Schema.String), "session ids with a live remote session"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.remoteControlList",
+            summary: "List remote sessions",
+            description: "Session ids currently attached to claude.ai/code.",
           }),
         ),
         HttpApiEndpoint.get("get", SessionPaths.get, {
@@ -328,6 +343,32 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.summarize",
             summary: "Summarize session",
             description: "Generate a concise summary of the session using AI compaction to preserve key information.",
+          }),
+        ),
+        HttpApiEndpoint.post("remoteControl", SessionPaths.remoteControl, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          success: described(Schema.String, "claude.ai code session id"),
+          error: [HttpApiError.InternalServerError, ApiNotFoundError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.remoteControl",
+            summary: "Start remote session",
+            description:
+              "Attach the session to claude.ai/code so it can be viewed and continued from the Claude app, replaying the transcript so far.",
+          }),
+        ),
+        HttpApiEndpoint.post("remoteControlStop", SessionPaths.remoteControlStop, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          success: described(Schema.Boolean, "whether a remote session was attached"),
+          error: [ApiNotFoundError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.remoteControlStop",
+            summary: "Stop remote session",
+            description:
+              "Detach the session from claude.ai/code. The remote conversation is kept, so starting again resumes it.",
           }),
         ),
         HttpApiEndpoint.post("prompt", SessionPaths.prompt, {

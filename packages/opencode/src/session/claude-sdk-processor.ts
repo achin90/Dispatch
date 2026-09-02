@@ -25,6 +25,7 @@ import {
   type ReasoningTime,
 } from "./claude-sdk-adapter"
 import { setSdkSessionID } from "./claude-sdk-session-map"
+import type { MirrorHandle } from "./claude-sdk-bridge"
 import { SessionCompaction } from "./compaction"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -144,6 +145,12 @@ export interface ClaudeSdkProcessorInput {
   cwd: string
   compaction?: CompactionRef
   setStatus?: (sessionID: SessionID, status: { type: string; activity?: string }) => void
+  /**
+   * Outbound-only claude.ai mirror. Every SDKMessage is teed to it so the
+   * session is viewable from claude.ai/code and the Claude mobile app. Absent
+   * unless OPENCODE_REMOTE_CONTROL=1.
+   */
+  bridge?: MirrorHandle
 }
 
 export interface ClaudeSdkProcessorResult {
@@ -199,10 +206,14 @@ export async function processClaudeSdkStream(
   // never attributed to reasoning.
   let stepStart = Date.now()
 
+  input.bridge?.state("running")
+
   try {
     for await (const msg of messages) {
       if (input.abort.aborted) break
       const arrivedAt = Date.now()
+
+      input.bridge?.write(msg)
 
       switch (msg.type) {
         case "assistant": {
@@ -238,6 +249,8 @@ export async function processClaudeSdkStream(
           await finalizeRunningTools(assistantMessage.id)
           completionMeta = processResultMessage(msg as SDKResultMessage, assistantMessage, lastTurnUsage)
           await AppRuntime.runPromise(Session.Service.use((svc) => svc.updateMessage(assistantMessage)))
+          input.bridge?.result()
+          input.bridge?.state("idle")
           break
 
         case "system": {

@@ -16,11 +16,13 @@ import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Summarize } from "@/session/summarize"
 import { Todo } from "@/session/todo"
+import { Instance } from "@/project/instance"
 import { WithInstance } from "@/project/with-instance"
 import { InstanceStore } from "@/project/instance-store"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Cause, Effect, Option, Schema, Scope } from "effect"
+import path from "path"
 import * as Stream from "effect/Stream"
 import { InstanceState } from "@/effect/instance-state"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -367,6 +369,48 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return true
     })
 
+    const remoteControl = Effect.fn("SessionHttpApi.remoteControl")(function* (ctx: {
+      params: { sessionID: SessionID }
+    }) {
+      const info = yield* requireSession(ctx.params.sessionID)
+      // claude.ai fixes the title when the code session is created and offers
+      // no rename, so a session still carrying the "New session - <ISO>"
+      // placeholder would be stuck with it on the phone forever.
+      const title = Session.isDefaultTitle(info.title) ? path.basename(info.directory) : info.title
+      // Lazy: the claude-sdk modules import AppRuntime, whose layer list
+      // reaches back into the session modules.
+      const { attachMirror } = yield* Effect.promise(() => import("@/session/claude-sdk-bridge"))
+      const mirror = yield* withSessionInstance(
+        ctx.params.sessionID,
+        Effect.gen(function* () {
+          // Instance.restore: attachMirror's inbound callbacks capture the ALS
+          // context here, and a remote prompt must run in the instance that
+          // owns the session rather than the requester's.
+          const instance = yield* InstanceState.context
+          return yield* Effect.promise(() =>
+            Instance.restore(instance, () =>
+              attachMirror({ sessionID: ctx.params.sessionID, title, cwd: info.directory }),
+            ),
+          )
+        }),
+      )
+      if (!mirror) return yield* new HttpApiError.InternalServerError({})
+      return mirror.codeSessionID
+    })
+
+    const remoteControlStop = Effect.fn("SessionHttpApi.remoteControlStop")(function* (ctx: {
+      params: { sessionID: SessionID }
+    }) {
+      yield* requireSession(ctx.params.sessionID)
+      const { detachMirror } = yield* Effect.promise(() => import("@/session/claude-sdk-bridge"))
+      return yield* Effect.promise(() => detachMirror(ctx.params.sessionID))
+    })
+
+    const remoteControlList = Effect.fn("SessionHttpApi.remoteControlList")(function* () {
+      const { mirroredSessions } = yield* Effect.promise(() => import("@/session/claude-sdk-bridge"))
+      return mirroredSessions()
+    })
+
     const prompt = Effect.fn("SessionHttpApi.prompt")(function* (ctx: {
       params: { sessionID: SessionID }
       payload: typeof PromptPayload.Type
@@ -519,6 +563,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("share", share)
       .handle("unshare", unshare)
       .handle("summarize", summarize)
+      .handle("remoteControl", remoteControl)
+      .handle("remoteControlStop", remoteControlStop)
+      .handle("remoteControlList", remoteControlList)
       .handle("prompt", prompt)
       .handle("promptAsync", promptAsync)
       .handle("command", command)

@@ -120,6 +120,8 @@ export const {
        * read-merge-write under a cross-process lock on every call.
        */
       home_selected_session: string | undefined
+      /** Sessions attached to claude.ai/code, from session.remoteControlList. */
+      remote_sessions: string[]
       vcs: VcsInfo | undefined
     }>({
       provider_next: {
@@ -152,6 +154,7 @@ export const {
       formatter: [],
       agent_summary: {},
       home_selected_session: undefined,
+      remote_sessions: [],
       vcs: undefined,
     })
 

@@ -1311,8 +1311,13 @@ const layer = Layer.effect(
             const [
               { createClaudeSdkQuery, resolveMcpServers, createPluginToolMcpServer, PLUGIN_TOOL_SERVER_NAME },
               { processClaudeSdkStream },
+              { getMirror },
             ] = yield* Effect.promise(() =>
-              Promise.all([import("./claude-sdk-query"), import("./claude-sdk-processor")]),
+              Promise.all([
+                import("./claude-sdk-query"),
+                import("./claude-sdk-processor"),
+                import("./claude-sdk-bridge"),
+              ]),
             )
 
             const hooks = yield* plugin.list()
@@ -1374,6 +1379,15 @@ const layer = Layer.effect(
               ),
             )
 
+            // Outbound-only mirror to claude.ai/code so the session is
+            // viewable from the Claude app. Best-effort: attachMirror returns
+            // undefined on any failure rather than throwing.
+            // Attaching is the palette command's job; a turn only streams to an
+            // attachment that already exists.
+            const bridge = getMirror(sessionID)
+            // The SDK stream carries no echo of the prompt, so mirror it here.
+            bridge?.user(lastUser.id)
+
             const result = yield* Effect.promise(() =>
               Instance.restore(ctx, () =>
                 processClaudeSdkStream(sdkQuery, {
@@ -1383,6 +1397,7 @@ const layer = Layer.effect(
                   cwd: ctx.directory,
                   compaction: compactRef,
                   setStatus: (sid, s) => run.fork(status.set(sid, s as any)),
+                  bridge,
                 }),
               ),
             ).pipe(Effect.onInterrupt(() => Effect.sync(() => abortController.abort())))

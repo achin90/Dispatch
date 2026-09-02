@@ -219,6 +219,12 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionRemoteControlErrors,
+  SessionRemoteControlListErrors,
+  SessionRemoteControlListResponses,
+  SessionRemoteControlResponses,
+  SessionRemoteControlStopErrors,
+  SessionRemoteControlStopResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -4377,6 +4383,112 @@ export class Session2 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Start remote session
+   *
+   * Attach the session to claude.ai/code so it can be viewed and continued from the Claude app, replaying the transcript so far.
+   */
+  public remoteControl<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionRemoteControlResponses,
+      SessionRemoteControlErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/remote-control",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * List remote sessions
+   *
+   * Session ids currently attached to claude.ai/code.
+   */
+  public remoteControlList<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      SessionRemoteControlListResponses,
+      SessionRemoteControlListErrors,
+      ThrowOnError
+    >({
+      url: "/session/remote-control",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Stop remote session
+   *
+   * Detach the session from claude.ai/code. The remote conversation is kept, so starting again resumes it.
+   */
+  public remoteControlStop<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionRemoteControlStopResponses,
+      SessionRemoteControlStopErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/remote-control/stop",
+      ...options,
+      ...params,
     })
   }
 
