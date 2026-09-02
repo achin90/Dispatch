@@ -333,8 +333,12 @@ export async function attachMirror(input: AttachMirrorInput): Promise<MirrorHand
   const creds = await fetchRemoteCredentials(codeSessionID, BASE_URL, token, TIMEOUT_MS)
   if (creds === null || isCredentialsFailure(creds) || isCredentialsRejection(creds)) {
     // A stale mapping (session deleted server-side) surfaces here as a
-    // rejection — drop it so the next turn creates a fresh session.
-    if (existing) await forgetCodeSession(input.sessionID)
+    // structured rejection — drop it so the next turn creates a fresh session.
+    // A null is transient (a blip on restart is the common one), and the
+    // mapping is still good: dropping it there would orphan the remote session
+    // the phone is attached to, leaving it unreachable until a manual
+    // re-attach. Keep it and let the next attempt retry the same session.
+    if (existing && creds !== null) await forgetCodeSession(input.sessionID)
     log.error("attachMirror: fetchRemoteCredentials failed", {
       codeSessionID,
       detail: creds === null ? "transient" : JSON.stringify(creds),
