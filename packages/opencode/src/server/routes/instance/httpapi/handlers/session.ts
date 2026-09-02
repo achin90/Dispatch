@@ -245,6 +245,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const remove = Effect.fn("SessionHttpApi.remove")(function* (ctx: { params: { sessionID: SessionID } }) {
+      // A deleted session should stop mirroring, and its remote mapping is dead
+      // weight once the id can never come back.
+      const { detachMirror } = yield* Effect.promise(() => import("@/session/claude-sdk-bridge"))
+      yield* Effect.promise(() => detachMirror(ctx.params.sessionID, { forget: true }))
       yield* SessionError.mapStorageNotFound(session.remove(ctx.params.sessionID))
       return true
     })

@@ -189,7 +189,10 @@ export function mirroredSessions(): string[] {
  * itself is left in place and stays mapped, so starting again resumes the same
  * remote conversation rather than opening a second one.
  */
-export async function detachMirror(sessionID: SessionID): Promise<boolean> {
+export async function detachMirror(sessionID: SessionID, options?: { forget?: boolean }): Promise<boolean> {
+  // Forgetting is for a session that no longer exists. Stopping normally keeps
+  // the mapping so starting again resumes the same remote conversation.
+  if (options?.forget) await forgetCodeSession(sessionID)
   const mirror = attached.get(sessionID)
   if (!mirror) return false
   await mirror.close()
@@ -197,12 +200,6 @@ export async function detachMirror(sessionID: SessionID): Promise<boolean> {
   return true
 }
 
-/**
- * Replays the session's existing messages so the remote transcript opens with
- * the conversation so far rather than empty. Text only: tool calls are reduced
- * to a one-line note, since a faithful tool_use/tool_result replay would have
- * to reconstruct block ids the SDK never gave us.
- */
 /** Write one stored user message to the remote transcript. */
 async function writeUserMessage(sessionID: SessionID, messageID: MessageID, mirror: MirrorHandle) {
   const { MessageV2 } = await import("./message-v2")
@@ -220,6 +217,12 @@ async function writeUserMessage(sessionID: SessionID, messageID: MessageID, mirr
   log.info("attachMirror: mirrored local prompt", { sessionID, messageID })
 }
 
+/**
+ * Replays the session's existing messages so the remote transcript opens with
+ * the conversation so far rather than empty. Text only: tool calls are reduced
+ * to a one-line note, since a faithful tool_use/tool_result replay would have
+ * to reconstruct block ids the SDK never gave us.
+ */
 async function backfill(sessionID: SessionID, mirror: MirrorHandle, model?: string): Promise<void> {
   const { MessageV2 } = await import("./message-v2")
   const history = await AppRuntime.runPromise(MessageV2.stream(sessionID)).catch(() => [])
