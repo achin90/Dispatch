@@ -342,6 +342,11 @@ export async function attachMirror(input: AttachMirrorInput): Promise<MirrorHand
     return undefined
   }
 
+  // Prompts typed on claude.ai are already in the remote transcript before we
+  // ever see them, so mirroring the user message the turn creates for them
+  // would show the text twice. Minting the id here lets user() recognize it.
+  const remoteOrigin = new Set<string>()
+
   const handle: BridgeSessionHandle = await attachBridgeSession({
     sessionId: codeSessionID,
     ingressToken: creds.worker_jwt,
@@ -374,15 +379,18 @@ export async function attachMirror(input: AttachMirrorInput): Promise<MirrorHand
       }
       log.info("attachMirror: inbound prompt", { sessionID: input.sessionID, length: text.length })
       const { SessionPrompt } = await import("./prompt")
+      const messageID = MessageID.ascending()
+      remoteOrigin.add(messageID)
       await AppRuntime.runPromise(
         SessionPrompt.Service.use((svc) =>
-          svc.prompt({ sessionID: input.sessionID, agent: REMOTE_AGENT, parts: [{ type: "text", text }] }),
+          svc.prompt({ sessionID: input.sessionID, messageID, agent: REMOTE_AGENT, parts: [{ type: "text", text }] }),
         ),
-      ).catch((err) =>
+      ).catch((err) => {
+        remoteOrigin.delete(messageID)
         log.error("attachMirror: inbound prompt failed", {
           error: err instanceof Error ? err.message : String(err),
-        }),
-      )
+        })
+      })
     }),
     onPermissionResponse: (res) => {
       const resolve = pendingPermissions.get(res.response.request_id)
@@ -442,6 +450,8 @@ export async function attachMirror(input: AttachMirrorInput): Promise<MirrorHand
     user: (messageID) => {
       if (lastUserWritten === messageID) return
       lastUserWritten = messageID
+      // Came from claude.ai; echoing it back would duplicate it there.
+      if (remoteOrigin.delete(messageID)) return
       void writeUserMessage(input.sessionID, messageID, mirror)
     },
     result: () => safe("sendResult", () => handle.sendResult()),
