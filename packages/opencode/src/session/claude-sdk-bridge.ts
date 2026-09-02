@@ -46,6 +46,7 @@ import path from "path"
 const log = LogBridge.create({ service: "claude-sdk-bridge" })
 
 const BASE_URL = "https://api.anthropic.com"
+const KEYCHAIN_SERVICE = "Claude Code-credentials"
 const TIMEOUT_MS = 30_000
 
 /** See the note on permissions above. */
@@ -60,11 +61,7 @@ const REMOTE_AGENT = "yolo"
  * server-side.
  */
 async function readOauthToken(): Promise<string | undefined> {
-  const creds = await Filesystem.readJson(path.join(Global.Path.home, ".claude", ".credentials.json")).catch(
-    () => undefined,
-  )
-  const oauth = (creds as { claudeAiOauth?: { accessToken?: string; expiresAt?: number; scopes?: string[] } })
-    ?.claudeAiOauth
+  const oauth = (await readCredentials())?.claudeAiOauth
   if (!oauth?.accessToken) {
     log.info("readOauthToken: no claudeAiOauth credential found — run `claude login`")
     return undefined
@@ -78,6 +75,31 @@ async function readOauthToken(): Promise<string | undefined> {
     return undefined
   }
   return oauth.accessToken
+}
+
+type Credentials = { claudeAiOauth?: { accessToken?: string; expiresAt?: number; scopes?: string[] } }
+
+/**
+ * The Claude CLI stores the credential differently per platform: Linux and
+ * Windows write ~/.claude/.credentials.json, while macOS puts the same JSON in
+ * the login Keychain and never writes that file.
+ */
+async function readCredentials(): Promise<Credentials | undefined> {
+  const file = await Filesystem.readJson<Credentials>(
+    path.join(Global.Path.home, ".claude", ".credentials.json"),
+  ).catch(() => undefined)
+  if (file) return file
+  if (process.platform !== "darwin") return undefined
+  const security = Bun.spawn(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"], {
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  const creds = await new Response(security.stdout).json().catch(() => undefined)
+  if ((await security.exited) !== 0) {
+    log.info("readCredentials: keychain lookup failed", { service: KEYCHAIN_SERVICE })
+    return undefined
+  }
+  return creds as Credentials | undefined
 }
 
 /**
