@@ -177,7 +177,7 @@ function hasManagedTextareaFocus(renderer: CliRenderer) {
   return editor instanceof TextareaRenderable && !(editor instanceof InputRenderable)
 }
 
-function leaderDisplay(config: FormatConfig) {
+export function leaderDisplay(config: FormatConfig) {
   const key = config.keybinds.get(LEADER_TOKEN)?.[0]?.key
   if (!key) return TuiKeybind.LeaderDefault
   return typeof key === "string" ? key : stringifyKeyStroke(key)

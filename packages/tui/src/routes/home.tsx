@@ -45,7 +45,7 @@ import { Locale } from "../util/locale"
 import { Spinner } from "../component/spinner"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
-import { useBindings, useCommandShortcut, useLeaderActive, LEADER_TOKEN } from "../keymap"
+import { useBindings, useCommandShortcut, useLeaderActive, leaderDisplay, LEADER_TOKEN } from "../keymap"
 import { useTuiConfig } from "../config"
 import { TuiKeybind } from "../config/keybind"
 import { useExit } from "../context/exit"
@@ -216,7 +216,6 @@ export function Home() {
   const toast = useToast()
   const tuiConfig = useTuiConfig()
   const leaderActive = useLeaderActive()
-  const dashboardShortcut = useCommandShortcut("session.dashboard")
   const paletteShortcut = useCommandShortcut("command.palette.show")
   const exit = useExit()
   const renderer = useRenderer()
@@ -698,7 +697,8 @@ export function Home() {
     const bgInts = theme.primary.toInts()
     PtyAttach.open(agent.id, dir, renderer, {
       leader: byte,
-      label: dashboardShortcut(),
+      // The PTY detaches on leader + bare Escape, not the dashboard command binding.
+      label: `${leaderDisplay(tuiConfig)} esc`,
       dir: shortDir(dir),
       fg: [fgInts[0], fgInts[1], fgInts[2]],
       bg: [bgInts[0], bgInts[1], bgInts[2]],
