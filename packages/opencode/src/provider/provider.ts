@@ -1238,14 +1238,6 @@ export const SDK_MODELS: Record<
     description: "Most intelligent, for the hardest problems · $10/$50 per Mtok",
     reasoning: true,
   },
-  "fable-5": {
-    resolves: "claude-fable-5",
-    name: "Fable 5",
-    context: 1_000_000,
-    output: 64_000,
-    description: "Most intelligent, for the hardest problems · $10/$50 per Mtok",
-    reasoning: true,
-  },
   // The Opus models carry BOTH context.native_1m and context.supports_1m_suffix
   // in the SDK model registry, and the suffix is the opt-in: passing a bare
   // "claude-opus-5" makes the SDK report contextWindow 200000, which trips its
