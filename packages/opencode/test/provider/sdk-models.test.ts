@@ -17,7 +17,8 @@ describe("SDK_MODELS", () => {
   test("contains all expected aliases", () => {
     const aliases = Object.keys(SDK_MODELS)
     expect(aliases).toContain("default")
-    expect(aliases).toContain("opus-5")
+    expect(aliases).toContain("opus-5-5")
+    expect(aliases).toContain("opus-4-6[1m]")
     expect(aliases).toContain("sonnet")
     expect(aliases).toContain("haiku")
   })
@@ -38,13 +39,13 @@ describe("SDK_MODELS", () => {
     expect(SDK_MODELS.default.context).toBe(1_000_000)
   })
 
-  // Opus 5 supports_1m_suffix in the SDK model registry, and the suffix is the
-  // opt-in: a bare "claude-opus-5" makes the SDK report a 200K contextWindow
+  // Opus 5.5 supports_1m_suffix in the SDK model registry, and the suffix is the
+  // opt-in: a bare "claude-opus-5-5" makes the SDK report a 200K contextWindow
   // and auto-compact early. Every Opus entry claiming 1M must carry [1m].
-  test("opus-5 resolves to claude-opus-5[1m] for a real 1M context", () => {
-    expect(SDK_MODELS["opus-5"].resolves).toBe("claude-opus-5[1m]")
-    expect(SDK_MODELS["opus-5"].context).toBe(1_000_000)
-    expect(SDK_MODELS["opus-5"].reasoning).toBe(true)
+  test("opus-5-5 resolves to claude-opus-5-5[1m] for a real 1M context", () => {
+    expect(SDK_MODELS["opus-5-5"].resolves).toBe("claude-opus-5-5[1m]")
+    expect(SDK_MODELS["opus-5-5"].context).toBe(1_000_000)
+    expect(SDK_MODELS["opus-5-5"].reasoning).toBe(true)
   })
 
   test("every 1M Opus entry carries the [1m] suffix", () => {

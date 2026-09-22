@@ -1223,8 +1223,8 @@ export const SDK_MODELS: Record<
   }
 > = {
   default: {
-    resolves: "claude-opus-4-8[1m]",
-    name: "Opus 4.8",
+    resolves: "claude-opus-5-5[1m]",
+    name: "Opus 5.5",
     context: 1_000_000,
     output: 64_000,
     description: "Most capable for complex work",
@@ -1240,7 +1240,7 @@ export const SDK_MODELS: Record<
   },
   // The Opus models carry BOTH context.native_1m and context.supports_1m_suffix
   // in the SDK model registry, and the suffix is the opt-in: passing a bare
-  // "claude-opus-5" makes the SDK report contextWindow 200000, which trips its
+  // "claude-opus-5-5" makes the SDK report contextWindow 200000, which trips its
   // own auto-compaction well before opencode's. Keep the [1m] suffix on every
   // Opus entry that claims context: 1_000_000 here.
   //
@@ -1252,38 +1252,6 @@ export const SDK_MODELS: Record<
     context: 1_000_000,
     output: 64_000,
     description: "Most capable for complex work",
-    reasoning: true,
-  },
-  "opus-5": {
-    resolves: "claude-opus-5[1m]",
-    name: "Opus 5",
-    context: 1_000_000,
-    output: 64_000,
-    description: "Most capable for complex work",
-    reasoning: true,
-  },
-  "opus-4-8": {
-    resolves: "claude-opus-4-8[1m]",
-    name: "Opus 4.8",
-    context: 1_000_000,
-    output: 64_000,
-    description: "Most capable for complex work",
-    reasoning: true,
-  },
-  "opus-4-7": {
-    resolves: "claude-opus-4-7[1m]",
-    name: "Opus 4.7",
-    context: 1_000_000,
-    output: 64_000,
-    description: "Previous generation Opus",
-    reasoning: true,
-  },
-  "opus-4-6": {
-    resolves: "claude-opus-4-6",
-    name: "Opus 4.6",
-    context: 200_000,
-    output: 64_000,
-    description: "Previous generation Opus",
     reasoning: true,
   },
   "opus-4-6[1m]": {
