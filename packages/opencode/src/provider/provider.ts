@@ -1246,6 +1246,14 @@ export const SDK_MODELS: Record<
   //
   // Sonnet 5 is the exception — it has native_1m but no supports_1m_suffix, so
   // it gets 1M without (and rejects) the suffix.
+  "opus-5-5": {
+    resolves: "claude-opus-5-5[1m]",
+    name: "Opus 5.5",
+    context: 1_000_000,
+    output: 64_000,
+    description: "Most capable for complex work",
+    reasoning: true,
+  },
   "opus-5": {
     resolves: "claude-opus-5[1m]",
     name: "Opus 5",
