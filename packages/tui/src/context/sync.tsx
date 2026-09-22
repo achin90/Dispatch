@@ -204,7 +204,12 @@ export const {
     event.subscribe((event, { directory, workspace }) => {
       switch (event.type) {
         case "server.instance.disposed":
-          void bootstrap()
+          // Only re-bootstrap when the TUI's own instance is disposed.
+          // Cross-directory dispose events (e.g. worktree deletion) arrive
+          // on the global stream but shouldn't trigger a full reload —
+          // bootstrap scopes the session list to this directory and would
+          // wipe sessions belonging to other directories.
+          if (directory === project.data.instance.path.directory) void bootstrap()
           break
         case "permission.replied": {
           const requests = store.permission[event.properties.sessionID]
@@ -478,6 +483,7 @@ export const {
 
     async function bootstrap(input: { fatal?: boolean } = {}) {
       const fatal = input.fatal ?? true
+      fullSyncedSessions.clear()
       const workspace = project.workspace.current()
       const projectPromise = project.sync()
       const sessionListPromise = projectPromise.then(() => listSessions())
