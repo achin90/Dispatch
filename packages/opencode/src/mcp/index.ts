@@ -757,6 +757,10 @@ const layer = Layer.effect(
       const override = { ...mcp, enabled: true }
       s.config[name] = override
       yield* createAndStore(name, override)
+      // The Claude SDK tool cache only refreshes on ToolsChanged. Servers that never
+      // send tools/list_changed (e.g. local stdio servers) would otherwise stay hidden
+      // until restart.
+      yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.catchCause(() => Effect.void))
     })
 
     const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
@@ -765,6 +769,7 @@ const layer = Layer.effect(
       yield* closeClient(s, name)
       delete s.clients[name]
       s.status[name] = { status: "disabled" }
+      yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.catchCause(() => Effect.void))
     })
 
     function requestTimeout(s: State, name: string, configured: McpEntry | undefined, fallback?: number) {
