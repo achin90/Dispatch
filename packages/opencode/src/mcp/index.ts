@@ -502,7 +502,6 @@ const layer = Layer.effect(
       }
     }
 
-    const RECONNECT_MAX_ATTEMPTS = 5
     const RECONNECT_DELAYS = [5_000, 10_000, 30_000, 60_000, 60_000]
 
     function setupReconnect(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape) {
@@ -544,7 +543,6 @@ const layer = Layer.effect(
         const tryReconnect = async () => {
           if (s.status[name]?.status === "connected" || s.status[name]?.status === "disabled") return
           if (s.reconnecting.has(name)) return
-          if (attempt >= RECONNECT_MAX_ATTEMPTS) return
 
           s.reconnecting.add(name)
           attempt++
@@ -575,12 +573,26 @@ const layer = Layer.effect(
                 if (stored.changed)
                   yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.catchCause(() => Effect.void))
                 return true
-              }).pipe(Effect.catch(() => Effect.succeed(false))),
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("mcp reconnect attempt failed", {
+                    server: name,
+                    attempt,
+                    error: Cause.pretty(cause),
+                  }).pipe(Effect.as(false)),
+                ),
+              ),
             )
             .catch(() => false)
           s.reconnecting.delete(name)
-          if (reconnected) return
+          if (reconnected) {
+            bridge.fork(Effect.logInfo("mcp reconnected", { server: name, attempt }).pipe(Effect.ignore))
+            return
+          }
 
+          // Keep retrying at the capped delay. Giving up left remote servers (which
+          // drop their SSE stream every so often, and stay down across laptop sleep)
+          // gone until restart.
           setTimeout(tryReconnect, RECONNECT_DELAYS[Math.min(attempt - 1, RECONNECT_DELAYS.length - 1)])
         }
 
@@ -902,7 +914,10 @@ const layer = Layer.effect(
     const getMcpConfig = Effect.fnUntraced(function* (mcpName: string) {
       if (s.config[mcpName]) return s.config[mcpName]
 
-      const cfg = yield* cfgSvc.get()
+      // Reconnects run through initBridge, which has no Instance context. Config.get()
+      // is instance-scoped and would defect there, so fall back to the global config
+      // the server was originally connected from.
+      const cfg = (yield* InstanceRef) ? yield* cfgSvc.get() : yield* cfgSvc.getGlobal()
       const mcpConfig = cfg.mcp?.[mcpName]
       if (!mcpConfig || !isMcpConfigured(mcpConfig)) return undefined
       return mcpConfig
