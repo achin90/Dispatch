@@ -50,7 +50,9 @@ it.instance("returns default native agents when no config", () =>
     const names = agents.map((a) => a.name)
     expect(names).toContain("build")
     expect(names).toContain("yolo")
-    expect(names).toContain("plan")
+    expect(names).toContain("assistant")
+    // Dispatch removed the built-in plan agent
+    expect(names).not.toContain("plan")
     expect(names).toContain("general")
     expect(names).toContain("explore")
     expect(names).toContain("compaction")
@@ -72,17 +74,6 @@ it.instance("build agent has correct default properties", () =>
   }),
 )
 
-it.instance("plan agent denies edits except .opencode/plans/*", () =>
-  Effect.gen(function* () {
-    const plan = yield* load((svc) => svc.get("plan"))
-    expect(plan).toBeDefined()
-    // Wildcard is denied
-    expect(evalPerm(plan, "edit")).toBe("deny")
-    // But specific path is allowed
-    expect(Permission.evaluate("edit", ".opencode/plans/foo.md", plan!.permission).action).toBe("allow")
-  }),
-)
-
 it.instance("yolo agent allows all permissions", () =>
   Effect.gen(function* () {
     const yolo = yield* load((svc) => svc.get("yolo"))
@@ -97,33 +88,19 @@ it.instance("yolo agent allows all permissions", () =>
   }),
 )
 
-it.instance("plan agent denies the general subagent by default", () =>
+it.instance("assistant agent allows all permissions and uses the devin wiki prompt", () =>
   Effect.gen(function* () {
-    const plan = yield* load((svc) => svc.get("plan"))
-    expect(plan).toBeDefined()
-    expect(Permission.evaluate("task", "general", plan!.permission).action).toBe("deny")
-    expect(Permission.evaluate("task", "explore", plan!.permission).action).toBe("allow")
-    expect(Permission.evaluate("task", "custom", plan!.permission).action).toBe("allow")
+    const assistant = yield* load((svc) => svc.get("assistant"))
+    expect(assistant).toBeDefined()
+    expect(assistant?.mode).toBe("primary")
+    expect(assistant?.native).toBe(true)
+    expect(evalPerm(assistant, "edit")).toBe("allow")
+    expect(evalPerm(assistant, "bash")).toBe("allow")
+    expect(evalPerm(assistant, "write")).toBe("allow")
+    expect(evalPerm(assistant, "question")).toBe("allow")
+    expect(assistant?.prompt).toContain("mcp__devin__ask_wiki_question")
+    expect(assistant?.prompt).toContain("Double-check before you answer")
   }),
-)
-
-it.instance(
-  "user permission can allow the general subagent from plan mode",
-  () =>
-    Effect.gen(function* () {
-      const plan = yield* load((svc) => svc.get("plan"))
-      expect(plan).toBeDefined()
-      expect(Permission.evaluate("task", "general", plan!.permission).action).toBe("allow")
-    }),
-  {
-    config: {
-      permission: {
-        task: {
-          general: "allow",
-        },
-      },
-    },
-  },
 )
 
 it.instance("explore agent denies edit and write", () =>
@@ -320,15 +297,15 @@ it.instance(
   () =>
     Effect.gen(function* () {
       const build = yield* load((svc) => svc.get("build"))
-      const plan = yield* load((svc) => svc.get("plan"))
+      const yolo = yield* load((svc) => svc.get("yolo"))
       expect(build?.steps).toBe(50)
-      expect(plan?.steps).toBe(100)
+      expect(yolo?.steps).toBe(100)
     }),
   {
     config: {
       agent: {
         build: { steps: 50 },
-        plan: { maxSteps: 100 },
+        yolo: { maxSteps: 100 },
       },
     },
   },
@@ -451,17 +428,30 @@ it.instance(
   },
 )
 
+it.instance("Agent.list orders the primary modes build, yolo, assistant", () =>
+  Effect.gen(function* () {
+    const names = (yield* load((svc) => svc.list()))
+      .filter((a) => a.mode !== "subagent" && !a.hidden)
+      .map((a) => a.name)
+    expect(names).toEqual(["build", "yolo", "assistant"])
+  }),
+)
+
 it.instance(
-  "Agent.list keeps the default agent first and sorts the rest by name",
+  "Agent.list keeps the default agent first, then built-ins in order, then custom agents by name",
   () =>
     Effect.gen(function* () {
-      const names = (yield* load((svc) => svc.list())).map((a) => a.name)
-      expect(names[0]).toBe("plan")
-      expect(names.slice(1)).toEqual(names.slice(1).toSorted((a, b) => a.localeCompare(b)))
+      const agents = yield* load((svc) => svc.list())
+      const names = agents.map((a) => a.name)
+      expect(names[0]).toBe("assistant")
+      expect(names.slice(0, 3)).toEqual(["assistant", "build", "yolo"])
+      const custom = agents.filter((a) => !a.native).map((a) => a.name)
+      expect(custom).toEqual(["alpha", "zebra"])
+      expect(names.slice(-2)).toEqual(["alpha", "zebra"])
     }),
   {
     config: {
-      default_agent: "plan",
+      default_agent: "assistant",
       agent: {
         zebra: {
           description: "Zebra",
@@ -679,15 +669,15 @@ it.instance("defaultInfo returns resolved build agent when no default_agent conf
 )
 
 it.instance(
-  "defaultAgent respects default_agent config set to plan",
+  "defaultAgent respects default_agent config set to yolo",
   () =>
     Effect.gen(function* () {
       const agent = yield* load((svc) => svc.defaultAgent())
-      expect(agent).toBe("plan")
+      expect(agent).toBe("yolo")
     }),
   {
     config: {
-      default_agent: "plan",
+      default_agent: "yolo",
     },
   },
 )
@@ -742,12 +732,12 @@ it.instance(
 )
 
 it.instance(
-  "defaultAgent returns plan when build is disabled and default_agent not set",
+  "defaultAgent returns yolo when build is disabled and default_agent not set",
   () =>
     Effect.gen(function* () {
       const agent = yield* load((svc) => svc.defaultAgent())
-      // build is disabled, so it should return plan (next primary agent)
-      expect(agent).toBe("plan")
+      // build is disabled, so it should return yolo (next primary agent)
+      expect(agent).toBe("yolo")
     }),
   {
     config: {
@@ -766,7 +756,7 @@ it.instance(
       agent: {
         build: { disable: true },
         yolo: { disable: true },
-        plan: { disable: true },
+        assistant: { disable: true },
       },
     },
   },

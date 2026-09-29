@@ -402,7 +402,7 @@ export type TuiState = {
   mcp: () => ReadonlyArray<TuiSidebarMcpItem>
   /**
    * The agent the next prompt will be sent as — what the prompt UI shows as
-   * Build/Plan/Yolo. `set` is a no-op with a warning toast for an unknown name.
+   * Build/Yolo/Assistant. `set` is a no-op with a warning toast for an unknown name.
    */
   agent: {
     current: () => string | undefined

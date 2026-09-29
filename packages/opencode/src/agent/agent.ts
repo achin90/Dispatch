@@ -10,6 +10,7 @@ import { Auth } from "../auth"
 import { ProviderTransform } from "@/provider/transform"
 
 import PROMPT_GENERATE from "./generate.txt"
+import PROMPT_ASSISTANT from "./prompt/assistant.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
@@ -146,38 +147,9 @@ const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
-                plan_enter: "allow",
                 bash: "ask",
                 edit: "ask",
                 write: "ask",
-              }),
-              user,
-            ),
-            mode: "primary",
-            native: true,
-          },
-          plan: {
-            name: "plan",
-            description: "Plan mode. Disallows all edit tools.",
-            options: {},
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                question: "allow",
-                plan_exit: "allow",
-                task: {
-                  general: "deny",
-                },
-                external_directory: {
-                  [path.join(Global.Path.data, "plans", "*")]: "allow",
-                  [path.join(Global.Path.config, "plans", "*")]: "allow",
-                },
-                edit: {
-                  "*": "deny",
-                  [path.join(".opencode", "plans", "*.md")]: "allow",
-                  [path.relative(ctx.worktree, path.join(Global.Path.data, "plans", "*.md"))]: "allow",
-                  [path.relative(ctx.worktree, path.join(Global.Path.config, "plans", "*.md"))]: "allow",
-                },
               }),
               user,
             ),
@@ -195,6 +167,21 @@ const layer = Layer.effect(
               }),
               user,
             ),
+            mode: "primary",
+            native: true,
+          },
+          assistant: {
+            name: "assistant",
+            description: "Autonomous assistant. Auto-runs tools, uses the Devin wiki, and double-checks answers.",
+            options: {},
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                "*": "allow",
+              }),
+              user,
+            ),
+            prompt: PROMPT_ASSISTANT,
             mode: "primary",
             native: true,
           },
@@ -337,9 +324,13 @@ const layer = Layer.effect(
           return pipe(
             agents,
             values(),
+            // Built-in agents keep their declaration order (build, yolo, assistant)
+            // so the mode switcher cycles in that order; custom agents follow, sorted
+            // by name. sortBy is stable, so equal keys keep insertion order.
             sortBy(
               [(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"), "desc"],
-              [(x) => x.name, "asc"],
+              [(x) => (x.native ? 0 : 1), "asc"],
+              [(x) => (x.native ? "" : x.name), "asc"],
             ),
           )
         })

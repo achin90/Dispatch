@@ -113,16 +113,16 @@ const COMMAND_PATTERNS: Array<{
     },
   },
   {
-    // Anchored so it only fires on the bare phrase — "Jarvis, plan the
+    // Anchored so it only fires on the bare phrase — "Jarvis, build the
     // migration" stays dictation rather than becoming a mode switch.
     // "yellow"/"solo" are here because the recognizer has no "yolo" in its
     // vocabulary and reliably substitutes a real word for it.
-    pattern: /^(?:switch(?:ed)?\s+(?:to|a)\s+|use\s+)?(build|plan|yolo|yellow|solo)(?:\s+mode)?$/i,
+    pattern: /^(?:switch(?:ed)?\s+(?:to|a)\s+|use\s+)?(build|yolo|yellow|solo|assistant)(?:\s+mode)?$/i,
     command: "set-agent",
     extract: (m) => ({ agent: m[1]!.toLowerCase() }),
     help: {
-      phrase: "Jarvis, plan mode",
-      description: 'Switch the agent to build, plan, or yolo. Also "switch to build".',
+      phrase: "Jarvis, yolo mode",
+      description: 'Switch the agent to build, yolo, or assistant. Also "switch to build".',
       category: "Session",
     },
   },
@@ -231,9 +231,9 @@ const FUZZY_PHRASES: Array<{ phrase: string; command: string; args?: Record<stri
   { phrase: "what did it say", command: "summarize-last" },
   { phrase: "go to the dashboard", command: "go-home" },
   { phrase: "switch to build mode", command: "set-agent", args: { agent: "build" } },
-  { phrase: "switch to plan mode", command: "set-agent", args: { agent: "plan" } },
   { phrase: "switch to yolo mode", command: "set-agent", args: { agent: "yolo" } },
   { phrase: "switch to yellow mode", command: "set-agent", args: { agent: "yolo" } },
+  { phrase: "switch to assistant mode", command: "set-agent", args: { agent: "assistant" } },
 ]
 
 function parseCommand(text: string): CommandMatch | undefined {
