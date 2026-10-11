@@ -1932,6 +1932,7 @@ export type Config = {
   enabled_providers?: Array<string>
   model?: string
   small_model?: string
+  advisor?: string
   default_agent?: string
   subagent_depth?: number
   username?: string
@@ -9830,6 +9831,35 @@ export type SessionStatusResponses = {
 
 export type SessionStatusResponse = SessionStatusResponses[keyof SessionStatusResponses]
 
+export type SessionRemoteControlListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/remote-control"
+}
+
+export type SessionRemoteControlListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type SessionRemoteControlListError = SessionRemoteControlListErrors[keyof SessionRemoteControlListErrors]
+
+export type SessionRemoteControlListResponses = {
+  /**
+   * session ids with a live remote session
+   */
+  200: Array<string>
+}
+
+export type SessionRemoteControlListResponse =
+  SessionRemoteControlListResponses[keyof SessionRemoteControlListResponses]
+
 export type SessionDeleteData = {
   body?: never
   path: {
@@ -10497,35 +10527,6 @@ export type SessionRemoteControlResponses = {
 }
 
 export type SessionRemoteControlResponse = SessionRemoteControlResponses[keyof SessionRemoteControlResponses]
-
-export type SessionRemoteControlListData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/session/remote-control"
-}
-
-export type SessionRemoteControlListErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type SessionRemoteControlListError = SessionRemoteControlListErrors[keyof SessionRemoteControlListErrors]
-
-export type SessionRemoteControlListResponses = {
-  /**
-   * session ids with a live remote session
-   */
-  200: Array<string>
-}
-
-export type SessionRemoteControlListResponse =
-  SessionRemoteControlListResponses[keyof SessionRemoteControlListResponses]
 
 export type SessionRemoteControlStopData = {
   body?: never

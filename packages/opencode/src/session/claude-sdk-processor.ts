@@ -19,7 +19,9 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionID, MessageID, PartID } from "./schema"
 import { popPendingMeta } from "./claude-sdk-permissions"
 import {
+  advisorResultState,
   assistantMessageToParts,
+  isAdvisorResultBlock,
   resultMessageToMetadata,
   type CompletionMetadata,
   type ReasoningTime,
@@ -390,6 +392,45 @@ async function finalizeRunningTools(messageID: MessageID, opts?: { skipAgentTool
 }
 
 /**
+ * Complete advisor tool parts from the advisor_tool_result blocks in this
+ * message. Must run before finalizeRunningTools, which would otherwise mark
+ * them completed with an empty output.
+ */
+async function completeAdvisorCalls(msg: SDKAssistantMessage, messageID: MessageID): Promise<void> {
+  const results = (msg.message.content as unknown[]).filter(isAdvisorResultBlock)
+  if (!results.length) return
+  const parts = await AppRuntime.runPromise(MessageV2.parts(messageID))
+  for (const result of results) {
+    const part = parts.find(
+      (p): p is SessionV1.ToolPart =>
+        p.type === "tool" && p.callID === result.tool_use_id && p.state.status === "running",
+    )
+    if (!part) continue
+    const runState = part.state as SessionV1.ToolStateRunning
+    const time = { start: runState.time.start, end: Date.now() }
+    const outcome = advisorResultState(result)
+    await AppRuntime.runPromise(
+      Session.Service.use((svc) =>
+        svc.updatePart({
+          ...part,
+          state:
+            "error" in outcome
+              ? { status: "error", input: runState.input, error: outcome.error, time }
+              : {
+                  status: "completed",
+                  input: runState.input,
+                  output: outcome.output,
+                  title: "",
+                  metadata: {},
+                  time,
+                },
+        }),
+      ),
+    )
+  }
+}
+
+/**
  * Mark all "running" tool parts as "error" on abort/unexpected exit.
  */
 async function abortRunningTools(messageID: MessageID): Promise<void> {
@@ -428,6 +469,7 @@ async function processAssistantMessage(
   if (msg.parent_tool_use_id === null) {
     // Top-level message — finalize running tools then persist parts.
     // Skip Agent/Task tools since they may still be running subagents.
+    await completeAdvisorCalls(msg, assistantMessage.id)
     await finalizeRunningTools(assistantMessage.id, { skipAgentTools: true })
     const parts = assistantMessageToParts(msg, sessionID, assistantMessage.id, reasoningTime)
     for (const part of parts) {
@@ -450,6 +492,7 @@ async function processAssistantMessage(
     subagentMap.set(parentToolUseId, ctx)
   } else {
     // Subsequent turn — previous tools in child session must be complete
+    await completeAdvisorCalls(msg, ctx.childMessageID)
     await finalizeRunningTools(ctx.childMessageID)
   }
 

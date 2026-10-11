@@ -62,6 +62,12 @@ export interface ClaudeSdkQueryInput {
   hooks?: Options["hooks"]
   contextWindow?: number
   /**
+   * Model for the CLI's server-side advisor tool (e.g. "opus"). The CLI skips
+   * it silently when the account isn't eligible or the advisor is less capable
+   * than the main model.
+   */
+  advisorModel?: string
+  /**
    * Instance (directory / worktree / project) this query belongs to. Threaded
    * down to the permission bridge so path normalisation and the
    * external_directory gate never depend on the ALS surviving into an SDK
@@ -384,11 +390,14 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
         ...(input.hooks ?? {}),
         PreToolUse: [...(input.hooks?.PreToolUse ?? []), { hooks: [subagentPermissionHook] }],
       },
-      // Clamp to the CLI settings schema range (1e5..1e6) — out-of-range
-      // values are silently dropped by its zod .catch(undefined).
-      ...(input.contextWindow
-        ? { settings: { autoCompactWindow: Math.min(Math.max(input.contextWindow, 100_000), 1_000_000) } }
-        : {}),
+      settings: {
+        // Clamp to the CLI settings schema range (1e5..1e6) — out-of-range
+        // values are silently dropped by its zod .catch(undefined).
+        ...(input.contextWindow
+          ? { autoCompactWindow: Math.min(Math.max(input.contextWindow, 100_000), 1_000_000) }
+          : {}),
+        ...(input.advisorModel ? { advisorModel: input.advisorModel } : {}),
+      },
     }
   }
 
@@ -401,6 +410,7 @@ export async function createClaudeSdkQuery(input: ClaudeSdkQueryInput): Promise<
     hasMcpServers: !!options.mcpServers,
     mcpServerNames: options.mcpServers ? Object.keys(options.mcpServers) : [],
     model: options.model,
+    advisorModel: input.advisorModel,
     hasResume: !!entry?.uuid,
     cwd: options.cwd,
   })

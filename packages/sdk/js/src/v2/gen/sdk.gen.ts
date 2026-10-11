@@ -3768,6 +3768,40 @@ export class Session2 extends HeyApiClient {
   }
 
   /**
+   * List remote sessions
+   *
+   * Session ids currently attached to claude.ai/code.
+   */
+  public remoteControlList<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      SessionRemoteControlListResponses,
+      SessionRemoteControlListErrors,
+      ThrowOnError
+    >({
+      url: "/session/remote-control",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Delete session
    *
    * Delete a session and permanently remove all associated data, including messages and history.
@@ -4417,40 +4451,6 @@ export class Session2 extends HeyApiClient {
       ThrowOnError
     >({
       url: "/session/{sessionID}/remote-control",
-      ...options,
-      ...params,
-    })
-  }
-
-  /**
-   * List remote sessions
-   *
-   * Session ids currently attached to claude.ai/code.
-   */
-  public remoteControlList<ThrowOnError extends boolean = false>(
-    parameters?: {
-      directory?: string
-      workspace?: string
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-          ],
-        },
-      ],
-    )
-    return (options?.client ?? this.client).get<
-      SessionRemoteControlListResponses,
-      SessionRemoteControlListErrors,
-      ThrowOnError
-    >({
-      url: "/session/remote-control",
       ...options,
       ...params,
     })

@@ -17,6 +17,8 @@ import {
   contentBlockToPart,
   assistantMessageToParts,
   resultMessageToMetadata,
+  isAdvisorResultBlock,
+  advisorResultState,
 } from "../../src/session/claude-sdk-adapter"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Result, Schema } from "effect"
@@ -150,6 +152,55 @@ describe("claude-sdk message mapping", () => {
       const unsupported = { type: "redacted_thinking", data: "abc" } as any
       const part = contentBlockToPart(unsupported, sid, mid, rtime)
       expect(part).toBeNull()
+    })
+
+    // Block shapes captured from a live CLI run with advisorModel set.
+    test("maps an advisor server_tool_use to a running advisor tool part", () => {
+      const block = { type: "server_tool_use", id: "srvtoolu_01", name: "advisor", input: {} } as any
+      const part = contentBlockToPart(block, sid, mid, rtime)
+      expect(part).toMatchObject({ type: "tool", tool: "advisor", callID: "srvtoolu_01" })
+      expect((part as SessionV1.ToolPart).state.status).toBe("running")
+    })
+
+    test("skips non-advisor server_tool_use and advisor results", () => {
+      const search = { type: "server_tool_use", id: "srvtoolu_02", name: "web_search", input: {} } as any
+      const result = {
+        type: "advisor_tool_result",
+        tool_use_id: "srvtoolu_01",
+        content: { type: "advisor_redacted_result", encrypted_content: "abc" },
+      } as any
+      expect(contentBlockToPart(search, sid, mid, rtime)).toBeNull()
+      expect(contentBlockToPart(result, sid, mid, rtime)).toBeNull()
+    })
+  })
+
+  describe("advisor results", () => {
+    const result = (content: Record<string, unknown>) => ({
+      type: "advisor_tool_result",
+      tool_use_id: "srvtoolu_01",
+      content,
+    })
+
+    test("recognizes advisor_tool_result blocks", () => {
+      expect(isAdvisorResultBlock(result({ type: "advisor_result", text: "hi" }))).toBe(true)
+      expect(isAdvisorResultBlock({ type: "tool_result", tool_use_id: "x" })).toBe(false)
+    })
+
+    test("shows plain advisor text", () => {
+      expect(advisorResultState(result({ type: "advisor_result", text: "Check the cache" }) as any)).toEqual({
+        output: "Check the cache",
+      })
+    })
+
+    test("explains redacted advice instead of showing nothing", () => {
+      const state = advisorResultState(result({ type: "advisor_redacted_result", encrypted_content: "abc" }) as any)
+      expect("output" in state && state.output).toContain("isn't shown")
+    })
+
+    test("reports advisor errors", () => {
+      expect(
+        advisorResultState(result({ type: "advisor_tool_result_error", error_code: "overloaded" }) as any),
+      ).toEqual({ error: "Advisor unavailable (overloaded)" })
     })
   })
 

@@ -34,6 +34,43 @@ export function isToolUseBlock(block: BetaContentBlock): block is BetaToolUseBlo
   return block.type === "tool_use"
 }
 
+// The CLI's server-side advisor tool isn't in the SDK's Beta types yet, so its
+// blocks are read structurally. The call (server_tool_use) and its result
+// (advisor_tool_result) both arrive as assistant content, never as a
+// user-message tool_result.
+export interface AdvisorCallBlock {
+  type: "server_tool_use"
+  id: string
+  name: "advisor"
+}
+
+export interface AdvisorResultBlock {
+  type: "advisor_tool_result"
+  tool_use_id: string
+  content: { type: string; text?: string; error_code?: string }
+}
+
+export function isAdvisorCallBlock(block: unknown): block is AdvisorCallBlock {
+  const value = block as Partial<AdvisorCallBlock> | null
+  return value?.type === "server_tool_use" && value.name === "advisor" && typeof value.id === "string"
+}
+
+export function isAdvisorResultBlock(block: unknown): block is AdvisorResultBlock {
+  const value = block as Partial<AdvisorResultBlock> | null
+  return value?.type === "advisor_tool_result" && typeof value.tool_use_id === "string" && !!value.content
+}
+
+/**
+ * Result content is one of advisor_result (plain text), advisor_redacted_result
+ * (encrypted, only the model can read it) or advisor_tool_result_error.
+ */
+export function advisorResultState(block: AdvisorResultBlock): { error: string } | { output: string } {
+  if (block.content.type === "advisor_tool_result_error")
+    return { error: `Advisor unavailable (${block.content.error_code ?? "unknown error"})` }
+  if (block.content.type === "advisor_result" && block.content.text) return { output: block.content.text }
+  return { output: "The advisor reviewed the conversation. Its advice went straight to the model and isn't shown here." }
+}
+
 // ---------------------------------------------------------------------------
 // Content block → MessageV2 Part mappers
 // ---------------------------------------------------------------------------
@@ -190,7 +227,22 @@ export function contentBlockToPart(
   if (isToolUseBlock(block)) {
     return toolUseBlockToPart(block, sessionID, messageID)
   }
-  // Unsupported block types (redacted_thinking, server_tool_use, etc.) are skipped
+  // Widened first: the Beta types have no "advisor" server tool, so narrowing
+  // the typed block itself would yield never.
+  const raw: unknown = block
+  if (isAdvisorCallBlock(raw)) {
+    return {
+      id: PartID.ascending(),
+      sessionID,
+      messageID,
+      type: "tool",
+      callID: raw.id,
+      tool: "advisor",
+      state: { status: "running", input: {}, time: { start: Date.now() } },
+    }
+  }
+  // Other unsupported block types (redacted_thinking, other server_tool_use,
+  // advisor_tool_result — handled by the processor) are skipped
   return null
 }
 

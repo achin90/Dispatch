@@ -13,6 +13,10 @@ import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
 
+// Global config keys that take effect without restarting instances. Each must
+// be read through Config.getGlobal() at use time, not the per-instance config.
+const LIVE_GLOBAL_KEYS = new Set(["advisor"])
+
 function eventData(data: unknown): Sse.Event {
   return {
     _tag: "Event",
@@ -85,7 +89,10 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
 
     const configUpdate = Effect.fn("GlobalHttpApi.configUpdate")(function* (ctx) {
       const result = yield* config.updateGlobal(ctx.payload)
-      if (result.changed) bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
+      // Keys read straight from the global config on each use don't need the
+      // full instance restart, which also resets the TUI's session list.
+      const live = Object.keys(ctx.payload).every((key) => LIVE_GLOBAL_KEYS.has(key))
+      if (result.changed && !live) bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
       return result.info
     })
 

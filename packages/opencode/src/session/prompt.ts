@@ -1339,6 +1339,10 @@ const layer = Layer.effect(
             // processClaudeSdkStream reads it when handling compact_boundary.
             const compactRef: CompactionRef = {}
 
+            // Global config, not the per-instance copy: /advisor saves without
+            // restarting instances, so only the global cache sees the change.
+            const advisor = (yield* config.getGlobal()).advisor
+
             const abortController = new AbortController()
             const abort = abortController.signal
 
@@ -1363,6 +1367,7 @@ const layer = Layer.effect(
                   mcpServers,
                   abortController,
                   contextWindow: model.limit.context,
+                  advisorModel: advisor && advisor !== "off" ? advisor : undefined,
                   hooks: {
                     PostCompact: [
                       {
