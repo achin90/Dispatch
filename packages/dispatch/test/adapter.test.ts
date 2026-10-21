@@ -46,10 +46,16 @@ describe("normalizeInput", () => {
     })
   })
 
-  test("subagents carry the agent name lowercased", () => {
+  test("subagents carry the agent name lowercased and always run in the foreground", () => {
     expect(
-      SdkAdapter.normalizeInput("Agent", { description: "d", prompt: "p", subagent_type: "Explore", model: "opus" }),
-    ).toEqual({ description: "d", prompt: "p", agent: "explore" })
+      SdkAdapter.normalizeInput("Agent", {
+        description: "d",
+        prompt: "p",
+        subagent_type: "Explore",
+        model: "opus",
+        run_in_background: true,
+      }),
+    ).toEqual({ description: "d", prompt: "p", agent: "explore", background: false })
   })
 
   test("questions map to v2 question prompts", () => {

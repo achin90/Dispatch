@@ -12,7 +12,8 @@ const IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
 
 /**
  * Session messages the next SDK turn answers: everything after the last reply or compaction that
- * carries model-facing text (prompts, synthetic notes, invoked skills and instruction updates).
+ * carries model-facing text (prompts, synthetic notes, invoked skills, instruction updates and
+ * finished `!cmd` shell runs).
  */
 export function pending(messages: ReadonlyArray<SessionMessage.Info>) {
   const last = messages.findLastIndex((message) => message.type === "assistant" || message.type === "compaction")
@@ -23,7 +24,9 @@ export function pending(messages: ReadonlyArray<SessionMessage.Info>) {
         message.type === "user" ||
         message.type === "synthetic" ||
         message.type === "skill" ||
-        message.type === "system",
+        message.type === "system" ||
+        // Background shell results arrive through their completion inbox item, as on the stock runner.
+        (message.type === "shell" && message.status !== "running" && message.metadata?.background !== true),
     )
 }
 
@@ -31,6 +34,9 @@ const text = (message: SessionMessage.Info) => {
   if (message.type === "user" || message.type === "synthetic" || message.type === "skill") return message.text
   // Instruction updates (an edited AGENTS.md, a new day) ride along as a reminder, not as the user's words.
   if (message.type === "system") return `<system-reminder>\n${message.text}\n</system-reminder>`
+  // Same wording as the stock runner (core session/runner/to-llm-message.ts).
+  if (message.type === "shell")
+    return `The following shell command was executed by the user:\n\nCommand:\n${message.command}\n\nOutput:\n${message.output?.output ?? ""}`
   return ""
 }
 
