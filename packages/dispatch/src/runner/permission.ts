@@ -15,6 +15,7 @@ import { fileDiff } from "@opencode/core/tool/plugin/file-diff"
 import { Cause, Effect, Exit, Option } from "effect"
 import { readFile } from "node:fs/promises"
 import { SdkAdapter } from "../sdk/adapter.js"
+import type { DispatchBridge } from "../bridge/service.js"
 
 /** Services the SDK callbacks reach through the runner's captured context. */
 export type Requirements =
@@ -70,6 +71,8 @@ export interface Options {
   readonly metadata: Map<string, Tool.Metadata>
   /** Called when the user declines without feedback, which ends the turn as interrupted. */
   readonly onDecline?: () => void
+  /** Dispatch bridge: offers prompts to a claude.ai mirror as well (see bridge/service.ts). */
+  readonly remote?: DispatchBridge.Remote
 }
 
 /** The `canUseTool` bridge: every main-thread SDK tool call asks v2's Permission service. */
@@ -83,20 +86,76 @@ export function canUseTool(options: Options): CanUseTool {
       agent: options.agent,
       messageID: source && !call.agentID ? source.messageID : undefined,
       id: call.toolUseID,
+      permissionID: Permission.ID.create(),
+      formID: Form.ID.create(),
     }
     const extra = { tool: toolName, input, ...(call.agentID ? { agentID: call.agentID } : {}) }
-    const result =
-      toolName === "AskUserQuestion"
-        ? await options.run(question(input, invocation, options.metadata), call.signal)
-        : decision(
-            await options
-              .run(authorize(toolName, input, invocation, extra, options.metadata).pipe(Effect.exit), call.signal)
-              .catch((error: unknown) => Exit.die(error)),
-            input,
-          )
-    if (result.behavior === "deny" && result.interrupt) options.onDecline?.()
-    return result
+    // Dispatch bridge: while mirrored, the prompt is offered to claude.ai too; first answer wins.
+    const release = fanOut(options, toolName, input, invocation, call.agentID)
+    try {
+      const result =
+        toolName === "AskUserQuestion"
+          ? await options.run(question(input, invocation, options.metadata), call.signal)
+          : decision(
+              await options
+                .run(authorize(toolName, input, invocation, extra, options.metadata).pipe(Effect.exit), call.signal)
+                .catch((error: unknown) => Exit.die(error)),
+              input,
+            )
+      if (result.behavior === "deny" && result.interrupt) options.onDecline?.()
+      return result
+    } finally {
+      release()
+    }
   }
+}
+
+/**
+ * Dispatch bridge: offers this call's permission prompt or question to the Session's claude.ai
+ * mirror. The remote answer goes through the same `reply` the TUI uses, so the one pending request
+ * settles once and whichever surface answers first wins. Returns the cleanup that dismisses the
+ * remote copy.
+ */
+function fanOut(
+  options: Options,
+  toolName: string,
+  input: Record<string, unknown>,
+  invocation: Invocation,
+  agentID: string | undefined,
+) {
+  if (!options.remote) return () => {}
+  if (toolName === "AskUserQuestion")
+    return options.remote.question({
+      sessionID: invocation.sessionID,
+      formID: invocation.formID,
+      prompts: SdkAdapter.questions(input),
+      reply: (answer) =>
+        options.run(
+          Effect.gen(function* () {
+            const forms = yield* Form.Service
+            yield* forms.reply({ id: invocation.formID, answer })
+          }),
+        ),
+    })
+  return options.remote.permission({
+    sessionID: invocation.sessionID,
+    requestID: invocation.permissionID,
+    toolName,
+    input,
+    toolUseID: invocation.id,
+    ...(agentID ? { agentID } : {}),
+    reply: (answer) =>
+      options.run(
+        Effect.gen(function* () {
+          const permission = yield* Permission.Service
+          yield* permission.reply({
+            requestID: invocation.permissionID,
+            reply: answer.allow ? "once" : "reject",
+            ...(answer.message ? { message: answer.message } : {}),
+          })
+        }),
+      ),
+  })
 }
 
 interface Invocation {
@@ -104,9 +163,13 @@ interface Invocation {
   readonly agent: Agent.ID
   readonly messageID: string | undefined
   readonly id: string
+  /** Dispatch bridge: the ids this call's prompt is created with, so a mirror can answer it. */
+  readonly permissionID: Permission.ID
+  readonly formID: Form.ID
 }
 
 const assertSource = (invocation: Invocation) => ({
+  id: invocation.permissionID,
   sessionID: invocation.sessionID,
   agent: invocation.agent,
   ...(invocation.messageID
@@ -140,7 +203,12 @@ const authorize = Effect.fn("SdkPermission.authorize")(function* (
   const permission = yield* Permission.Service
   const access = yield* FileAccess.Service
   const location = yield* Location.Service
-  const context = { ...invocation, messageID: invocation.messageID ?? "", id: invocation.id } as FileAccess.Invocation
+  const context = {
+    sessionID: invocation.sessionID,
+    agent: invocation.agent,
+    messageID: invocation.messageID ?? "",
+    id: invocation.id,
+  } as FileAccess.Invocation
   const file = SdkAdapter.filePath(toolName, input)
   if (file) {
     const target = yield* access.resolve({ path: file, kind: "file" })
@@ -220,6 +288,7 @@ const question = Effect.fn("SdkPermission.question")(function* (
   if (Exit.isFailure(allowed)) return decision(allowed, input)
   const state = yield* forms
     .ask({
+      id: invocation.formID,
       sessionID: invocation.sessionID,
       title: "Questions",
       metadata: {
