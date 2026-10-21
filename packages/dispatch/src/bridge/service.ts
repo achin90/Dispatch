@@ -193,7 +193,7 @@ export const make = Effect.fn("DispatchBridge.make")(function* (dependencies: De
               reason: `Could not attach to claude.ai: ${error instanceof Error ? error.message : String(error)}`,
             }),
         })
-        yield* Effect.sync(() => handle.reportMetadata({ cwd })).pipe(Effect.ignore)
+        yield* Effect.try(() => handle.reportMetadata({ cwd })).pipe(Effect.ignore)
         const mirror = BridgeMirror.make(handle, {
           sessionID,
           codeSessionID,
