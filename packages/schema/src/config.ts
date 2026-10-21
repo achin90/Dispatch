@@ -110,6 +110,10 @@ export class Info extends Schema.Class<Info>("Config.Info")({
     description: "Keep recently active sessions warm with transient model requests (default: false)",
   }),
   providers: Schema.Record(Schema.String, ConfigProvider.Info).pipe(optional),
+  // Dispatch: Claude Agent SDK advisor model, read by packages/dispatch on every turn.
+  advisor: Schema.String.pipe(optional).annotate({
+    description: 'Claude Agent SDK advisor model, e.g. "opus"; "off" or unset disables it',
+  }),
   experimental: ConfigExperimental.Info.pipe(optional),
 }) {}
 

@@ -2339,6 +2339,7 @@ export type ConfigEntry =
             }
           }
         }
+        advisor?: string
         experimental?: {
           portable_shell_scanner?: boolean
           todo?: boolean
