@@ -13,6 +13,7 @@ import { DispatchRpc } from "./rpc"
 import { dispatchState, type DispatchState } from "./state"
 
 const PR_POLL_MS = 300_000
+const REMOTE_POLL_MS = 15_000
 
 /** Diffstat per agent directory: the Dispatch RPC when present, else the v2 VCS working diff. */
 export async function refreshDiffStats(context: Plugin.Context, store: DispatchState, only?: string) {
@@ -42,7 +43,7 @@ export async function refreshDiffStats(context: Plugin.Context, store: DispatchS
 
 /** PR status per worktree branch. Without the Dispatch GitHub RPC the PR column stays empty. */
 export async function refreshPullRequests(context: Plugin.Context, store: DispatchState) {
-  const status = await DispatchRpc.optional(context.client, "github.status", undefined)
+  const status = await DispatchRpc.optional(context.client, "github.status", {})
   store.setState((draft) => {
     draft.github = status?.authenticated
   })
@@ -64,7 +65,7 @@ export async function refreshPullRequests(context: Plugin.Context, store: Dispat
 }
 
 export async function refreshRemote(context: Plugin.Context, store: DispatchState) {
-  const list = await DispatchRpc.optional(context.client, "session.remoteControlList", undefined)
+  const list = await DispatchRpc.optional(context.client, "session.remoteControlList", {})
   if (!list) return
   store.setState((draft) => {
     draft.remote = [...list]
@@ -128,7 +129,12 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
     ),
   )
   const timer = setInterval(() => void refreshPullRequests(context, store), PR_POLL_MS)
-  onCleanup(() => clearInterval(timer))
+  // Mirrors start and stop from claude.ai too, so the ◉ indicator polls.
+  const remoteTimer = setInterval(() => void refreshRemote(context, store), REMOTE_POLL_MS)
+  onCleanup(() => {
+    clearInterval(timer)
+    clearInterval(remoteTimer)
+  })
 
   const fetching = new Set<string>()
   const summarize = (sessionID: string) => {

@@ -4,7 +4,6 @@ import { useDialog } from "../../ui/dialog"
 import { useToast } from "../../ui/toast"
 import { useClient } from "../../context/client"
 import { errorMessage } from "../../util/error"
-import { DispatchRpc } from "./rpc"
 
 const options = [
   { value: "off", title: "Off", description: "No advisor" },
@@ -14,8 +13,8 @@ const options = [
 ]
 
 /**
- * The Claude Agent SDK advisor model, the global `advisor` config key. The runner reads it on every
- * turn, so a change applies to the next turn without reloading any location.
+ * The Claude Agent SDK advisor model, the global `advisor` config key, written with
+ * `config.update({ advisor })`. The runner reads it on every turn; no location reloads.
  */
 export function DialogAdvisor() {
   const client = useClient()
@@ -32,7 +31,9 @@ export function DialogAdvisor() {
       onSelect={async (option) => {
         dialog.clear()
         if (current() === option.value) return
-        await DispatchRpc.call(client.api, "advisor.set", { advisor: option.value })
+        // `off` is stored as-is; the runner treats "off" and unset alike.
+        await client.api.config
+          .update({ advisor: option.value })
           .then(() =>
             toast.show({
               message: option.value === "off" ? "Advisor turned off" : `Advisor set to ${option.title}`,
@@ -41,10 +42,7 @@ export function DialogAdvisor() {
           )
           .catch((error: unknown) =>
             toast.show({
-              message:
-                error instanceof DispatchRpc.UnavailableError
-                  ? "This server cannot change the advisor"
-                  : errorMessage(error),
+              message: errorMessage(error),
               variant: "error",
             }),
           )
@@ -55,8 +53,6 @@ export function DialogAdvisor() {
 
 // Config entries run lowest to highest precedence, so the last document that sets the key wins.
 async function readAdvisor(api: ReturnType<typeof useClient>["api"]) {
-  const live = await DispatchRpc.optional(api, "advisor.get", undefined)
-  if (live) return live.advisor ?? "off"
   const entries = await api.config.get().catch(() => [])
   return (
     entries.flatMap((entry) => (entry.type === "document" && entry.info.advisor ? [entry.info.advisor] : [])).at(-1) ??

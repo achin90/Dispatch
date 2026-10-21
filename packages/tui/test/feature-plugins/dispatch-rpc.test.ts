@@ -26,10 +26,10 @@ test("calls /api/rpc/dispatch/<method> with the input and the target directory",
   ])
 })
 
-test("methods without input send no input field", async () => {
+test("bridge methods go to the dispatch-bridge RPC with an empty input", async () => {
   const { api, calls } = server(() => json({ output: ["ses_a"] }))
-  expect(await DispatchRpc.call(api, "session.remoteControlList", undefined)).toEqual(["ses_a"])
-  expect(calls[0]).toEqual({ path: "/api/rpc/dispatch/session.remoteControlList", directory: null, body: {} })
+  expect(await DispatchRpc.call(api, "session.remoteControlList", {})).toEqual(["ses_a"])
+  expect(calls[0]).toEqual({ path: "/api/rpc/dispatch-bridge/session.remoteControlList", directory: null, body: { input: {} } })
 })
 
 test("a missing method degrades to undefined and is not called again", async () => {
@@ -39,11 +39,11 @@ test("a missing method degrades to undefined and is not called again", async () 
       { status: 400 },
     ),
   )
-  expect(await DispatchRpc.optional(api, "github.status", undefined)).toBeUndefined()
+  expect(await DispatchRpc.optional(api, "github.status", {})).toBeUndefined()
   expect(DispatchRpc.isUnavailable("github.status")).toBe(true)
-  expect(await DispatchRpc.optional(api, "github.status", undefined)).toBeUndefined()
+  expect(await DispatchRpc.optional(api, "github.status", {})).toBeUndefined()
   expect(calls).toHaveLength(1)
-  await expect(DispatchRpc.call(api, "github.status", undefined)).rejects.toBeInstanceOf(DispatchRpc.UnavailableError)
+  await expect(DispatchRpc.call(api, "github.status", {})).rejects.toBeInstanceOf(DispatchRpc.UnavailableError)
 })
 
 test("other failures still reject without marking the method unavailable", async () => {

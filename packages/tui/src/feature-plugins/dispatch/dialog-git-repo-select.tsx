@@ -18,7 +18,7 @@ export function DialogGitRepoSelect(props: { title: string; root: string; onSele
   const paths = usePathFormatter()
   const [repos] = createResource(
     () => props.root,
-    (root) => DispatchRpc.optional(client.api, "gitRepos.list", { root }, root).then((result) => result ?? []),
+    (root) => DispatchRpc.optional(client.api, "gitRepos.list", { root }, root).then((result) => result?.repos ?? []),
     { initialValue: [] },
   )
   const options = createMemo<DialogSelectOption<string>[]>(() => {
