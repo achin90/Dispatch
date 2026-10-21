@@ -70,7 +70,10 @@ export function make(mcp: Mcp.Interface, registry: Tool.Interface) {
           inputSchema: (tool.inputSchema ?? { type: "object", properties: {} }) as Record<string, unknown>,
         })),
       )
-    const known = new Set((yield* mcp.servers()).map((server) => server.name))
+    // A reconnecting server keeps its cached tools; one the user disconnected (or config disables) does not.
+    const known = new Set(
+      (yield* mcp.servers()).filter((server) => server.status.status !== "disabled").map((server) => server.name),
+    )
     return Object.fromEntries(
       Array.from(cache)
         .filter(([server, tools]) => known.has(server) && tools.length > 0)
