@@ -13,6 +13,8 @@ export default Runtime.handler(
     function* (input) {
       intro("Upgrade")
       const updater = yield* Updater.Service
+      // Dispatch: the fork has no managed upgrade path.
+      if (updater.disabled) return yield* Effect.fail(new Error(updater.disabled))
       const method = Option.getOrUndefined(input.method) ?? (yield* updater.method())
       if (!method)
         return yield* Effect.fail(

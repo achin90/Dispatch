@@ -121,22 +121,25 @@ export default Runtime.handler(Commands, (input) =>
         get: () => runPromise(config.get()),
         update: (update) => runPromise(config.update(update)),
       },
-      updater: {
-        remote: requestedServer !== undefined,
-        subscribe: (notify) => {
-          if (latest) notify(latest)
-          resultListeners.add(notify)
-          return () => resultListeners.delete(notify)
-        },
-        check: (signal, notify) => {
-          if (installing) notify(installing)
-          installListeners.add(notify)
-          return runPromise(checking.withPermits(1)(updater.check()), { signal }).finally(() =>
-            installListeners.delete(notify),
-          )
-        },
-        apply: (version) => runPromise(checking.withPermits(1)(updater.apply(version))),
-      },
+      // Dispatch: no update source when the updater is disabled, so the TUI shows no notification and no /update.
+      updater: updater.disabled
+        ? undefined
+        : {
+            remote: requestedServer !== undefined,
+            subscribe: (notify) => {
+              if (latest) notify(latest)
+              resultListeners.add(notify)
+              return () => resultListeners.delete(notify)
+            },
+            check: (signal, notify) => {
+              if (installing) notify(installing)
+              installListeners.add(notify)
+              return runPromise(checking.withPermits(1)(updater.check()), { signal }).finally(() =>
+                installListeners.delete(notify),
+              )
+            },
+            apply: (version) => runPromise(checking.withPermits(1)(updater.apply(version))),
+          },
       packages: {
         prepare: (spec, install = true) => runPromise(install ? npm.add(spec) : npm.resolve(spec)),
       },
