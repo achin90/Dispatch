@@ -459,7 +459,6 @@ function forceRequired(error: unknown) {
 
 function GroupHeader(props: { context: Plugin.Context; directory: string; agents: DispatchModel.AgentEntry[] }) {
   const theme = useTheme()
-  const paths = usePathFormatter()
   const store = dispatchState(props.context)
   const stat = () => store.state.diffstats[props.directory]
   const pr = () => {
@@ -479,7 +478,7 @@ function GroupHeader(props: { context: Plugin.Context; directory: string; agents
   return (
     <box paddingTop={1} flexDirection="row" flexShrink={0}>
       <text fg={theme.hue.accent[200]} attributes={TextAttributes.BOLD} overflow="hidden" wrapMode="none">
-        {paths.format(props.directory)}
+        {props.context.ui.format.path(props.directory)}
       </text>
       <Show when={stat()}>
         {(value) => (
@@ -656,7 +655,9 @@ function PermissionDetail(props: { request: PermissionRequest; selected: boolean
         </Match>
         <Match when={props.request.action === "shell"}>
           <text fg={theme.text.base} wrapMode="word" overflow="hidden">
-            {presentation().lines[0] ?? `$ ${props.request.resources[0] ?? ""}`}
+            {presentation().lines[0]?.startsWith("$ ")
+              ? presentation().lines[0]
+              : `$ ${props.request.resources[0] ?? ""}`}
           </text>
         </Match>
         <Match when={true}>
