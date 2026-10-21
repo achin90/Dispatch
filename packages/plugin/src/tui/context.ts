@@ -541,8 +541,43 @@ export interface UI {
   readonly slot: (claim: SlotClaim) => () => void
 }
 
+// Dispatch: client state that plugins such as the Jarvis voice plugin act on.
+export interface DashboardAgent {
+  readonly id: string
+  readonly name: string
+  readonly sessionID: string
+  readonly createdAt: number
+  readonly directory?: string
+  readonly worktree?: {
+    readonly branch: string
+    readonly directory: string
+    readonly sourceRepo: string
+  }
+}
+
+export interface State {
+  readonly home: {
+    /** Session under the agent dashboard cursor, or undefined when nothing is selected. Reactive. */
+    selectedSessionID(): string | undefined
+  }
+  /** The agent the next prompt is sent as, e.g. build, yolo or assistant. */
+  readonly agent: {
+    /** Agent ID. Reactive when read in a Solid computation. */
+    current(): string | undefined
+    /** Agent IDs. Reactive when read in a Solid computation. */
+    list(): readonly string[]
+    /** Selects an agent by ID; an unknown ID shows a warning toast and changes nothing. */
+    set(id: string): void
+  }
+  readonly dashboard: {
+    /** Agents on the dashboard, in display order within each directory. Reactive. */
+    agents(): readonly DashboardAgent[]
+  }
+}
+
 export interface Context {
   readonly options: Readonly<Record<string, any>>
+  readonly state: State
   readonly location: LocationRef | undefined
   readonly app: App
   readonly renderer: CliRenderer
