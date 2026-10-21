@@ -39,7 +39,7 @@ const until = Effect.fnUntraced(function* (condition: Effect.Effect<boolean>) {
   return yield* Effect.die(new Error("condition never became true within 15s"))
 })
 
-const setup = Effect.fnUntraced(function* () {
+const setup = Effect.fnUntraced(function* (environment: Record<string, string> = {}) {
   const dir = yield* tmpdirScoped()
   const log = path.join(dir.path, "starts")
   const mcp = yield* Mcp.Service
@@ -48,7 +48,7 @@ const setup = Effect.fnUntraced(function* () {
     new ConfigMCP.Local({
       type: "local",
       command: [process.execPath, path.join(import.meta.dir, "fixture/mcp-reconnect.ts")],
-      environment: { MCP_RECONNECT_LOG: log },
+      environment: { MCP_RECONNECT_LOG: log, ...environment },
     }),
   )
   const status = mcp.servers().pipe(Effect.map((servers) => servers.find((item) => item.name === server)?.status))
@@ -106,6 +106,19 @@ describe("mcp reconnect", () => {
       const fixture = yield* setup()
       expect(yield* fixture.mcp.health()).toEqual([{ server, healthy: true }])
       expect(yield* fixture.starts).toHaveLength(1)
+    }),
+  )
+
+  it.effect("health check restarts a server that stopped answering", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup({ MCP_RECONNECT_UNRESPONSIVE: "1" })
+      const [first] = yield* fixture.starts
+      expect(yield* fixture.mcp.health()).toEqual([{ server, healthy: false }])
+      yield* until(fixture.is("connected"))
+      const starts = yield* fixture.starts
+      expect(starts).toHaveLength(2)
+      expect(starts[1]).not.toBe(first)
+      expect((yield* fixture.mcp.tools()).map((tool) => tool.name)).toEqual(["echo"])
     }),
   )
 })
