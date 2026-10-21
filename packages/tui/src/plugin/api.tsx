@@ -150,19 +150,22 @@ export function createPluginContext(input: {
     cleanups = undefined
     active?.forEach((dispose) => dispose())
   })
-  // Dispatch: the dashboard publishes its cursor and agent list through shared storage.
-  const [dispatchAgents] = host.storage.store(DispatchModel.AGENTS_STORAGE_KEY, { initial: DispatchModel.emptyAgents() })
-  const [dispatchState] = host.storage.memory(DispatchModel.STATE_MEMORY_KEY, { initial: DispatchModel.emptyState() })
+  // Dispatch: the dashboard publishes its cursor and agent list through shared storage, which
+  // memoizes per key, so reading on demand returns the same live stores.
+  const dispatchAgents = () =>
+    host.storage.store(DispatchModel.AGENTS_STORAGE_KEY, { initial: DispatchModel.emptyAgents() })[0]
+  const dispatchState = () =>
+    host.storage.memory(DispatchModel.STATE_MEMORY_KEY, { initial: DispatchModel.emptyState() })[0]
   context = {
     options: input.options ?? {},
     state: {
-      home: { selectedSessionID: () => dispatchState.selected },
+      home: { selectedSessionID: () => dispatchState().selected },
       agent: {
         current: () => host.local.agent.current()?.id,
         list: () => host.local.agent.list().map((agent) => agent.id),
         set: (id) => host.local.agent.set(id),
       },
-      dashboard: { agents: () => dispatchAgents.agents },
+      dashboard: { agents: () => dispatchAgents().agents },
     },
     get location() {
       return host.location.current

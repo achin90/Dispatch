@@ -88,9 +88,10 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
   const dashboard = () => !args.noDashboard
   const isAgent = (sessionID: string) => store.agents.agents.some((agent) => agent.sessionID === sessionID)
 
-  // The dashboard is the home screen unless startup asked for a session or a prompt.
+  // Once there is an agent, the dashboard is the home screen unless startup asked for a session or a
+  // prompt. With none, launch keeps the stock composer; `<leader>d` or /dashboard opens it.
   onMount(() => {
-    if (!dashboard() || route.data.type !== "home") return
+    if (!dashboard() || route.data.type !== "home" || store.agents.agents.length === 0) return
     if (args.prompt || args.sessionID || args.continue || args.newSessionID) return
     context.ui.router.navigate({ type: "plugin", name: props.route })
   })
