@@ -130,6 +130,8 @@ export interface Connection {
     readonly args?: Record<string, unknown>
     readonly sessionID?: Session.ID
   }) => Effect.Effect<CallToolResult, Error>
+  // Dispatch: liveness probe for the health check; fails when the server does not answer in time.
+  readonly ping: (timeout: number) => Effect.Effect<void, Error>
   readonly onClose: (callback: (reason: string) => void) => void
   readonly onSessionExpired: (callback: () => void) => void
   readonly onToolsChanged: (callback: () => void) => void
@@ -294,6 +296,18 @@ export const connect = Effect.fnUntraced(function* (
   }).pipe(Effect.exit)
   if (Exit.isSuccess(exit)) {
     const client = exit.value
+    // Dispatch: a transport error (an SSE timeout, a dead stream) can leave the client "connected"
+    // without ever firing onclose. Close it once so onclose runs and the Mcp service reconnects.
+    // Armed only after connect so it cannot race the startup retries. HTTP status errors belong to a
+    // request that already reports them (session expiry recovers through `failure`), so they pass.
+    const record = client.onerror
+    let closing = false
+    client.onerror = (error) => {
+      record?.(error)
+      if (error.name === "AbortError" || error instanceof SdkHttpError || closing) return
+      closing = true
+      void client.close().catch(() => {})
+    }
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         // Close only aborts streams; the legacy session lives on until the server expires it unless
@@ -378,6 +392,8 @@ export const connect = Effect.fnUntraced(function* (
             { signal, timeout: execution, onprogress: () => {} },
           ),
         ).pipe(Effect.map(toCallToolResult)),
+      ping: (timeout) =>
+        request("ping MCP server", (signal) => client.ping({ signal, timeout })).pipe(Effect.asVoid),
       onClose: (callback) => {
         client.onclose = () => callback(lastError ? `Connection closed: ${lastError}` : "Connection closed")
       },

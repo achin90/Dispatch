@@ -136,7 +136,13 @@ export interface Interface extends State.Transformable<Editor> {
     readonly server: ServerName | string
     readonly uri: string
   }) => Effect.Effect<ResourceContent | undefined, Error>
+  // Dispatch: pings every connected server and restarts the ones that do not answer.
+  readonly health: () => Effect.Effect<ReadonlyArray<{ readonly server: ServerName; readonly healthy: boolean }>>
 }
+
+// Dispatch: delays between reconnect attempts after a connection drops; the last one repeats forever.
+export const RECONNECT_DELAYS = [5_000, 10_000, 30_000, 60_000, 60_000] as const
+const HEALTH_TIMEOUT = 5_000
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/MCP") {}
 
@@ -407,6 +413,8 @@ export const layer = (options?: Options) =>
               entry.status = { status: "failed", error: reason }
               yield* stopServer(name, entry)
               yield* bus.publish(McpEvent.StatusChanged, { server: name })
+              // Dispatch: an unexpected close keeps retrying until the server is back or disconnected.
+              fork(reconnectDropped(name, entry))
             }),
           ),
         )
@@ -479,6 +487,29 @@ export const layer = (options?: Options) =>
           Effect.ensuring(entry.startup.open),
           Effect.annotateLogs({ server: name, directory: location.directory, connectionID: crypto.randomUUID() }),
         )
+
+      // Dispatch: reconnects a dropped server with backoff. It stops once the entry is replaced or
+      // removed, connects, needs auth, or is disconnected: `disconnect` sets "disabled" and `connect`
+      // clears it, so the user's choice overrides the configured `disabled` flag while it lasts.
+      const reconnecting = new Set<ServerEntry>()
+      const reconnectDropped = (name: ServerName, entry: ServerEntry) =>
+        Effect.gen(function* () {
+          if (reconnecting.has(entry)) return
+          reconnecting.add(entry)
+          const attempt = (index: number): Effect.Effect<void> =>
+            Effect.gen(function* () {
+              yield* Effect.sleep(RECONNECT_DELAYS[Math.min(index, RECONNECT_DELAYS.length - 1)])
+              const done = yield* Effect.gen(function* () {
+                if (entries.get(name) !== entry || entry.client) return true
+                if (entry.status.status === "disabled" || entry.status.status === "needs_auth") return true
+                yield* Effect.logInfo("mcp reconnecting", { server: name, attempt: index + 1 })
+                yield* startServer(name, entry)
+                return entry.status.status !== "failed"
+              }).pipe(locks.withLock(name))
+              if (!done) yield* attempt(index + 1)
+            })
+          yield* attempt(0).pipe(Effect.ensuring(Effect.sync(() => reconnecting.delete(entry))))
+        })
 
       const stopServer = Effect.fnUntraced(function* (name: ServerName, entry: ServerEntry) {
         const scope = entry.scope
@@ -730,6 +761,33 @@ export const layer = (options?: Options) =>
           yield* target.entry.startup.await
           if (!target.entry.client) return ResourceCatalog.make({ resources: [], templates: [] })
           return mergeCatalogs([yield* loadCatalog(target.name, target.entry, target.entry.client)])
+        }),
+        // Dispatch: v1 parity. A server that stopped answering is restarted; one that then fails to
+        // start falls into the reconnect loop.
+        health: Effect.fn("MCP.health")(function* () {
+          return yield* Effect.forEach(
+            Array.from(entries).filter(([, entry]) => entry.client && entry.status.status === "connected"),
+            ([name, entry]) =>
+              Effect.gen(function* () {
+                const connection = entry.client
+                if (!connection) return { server: name, healthy: true }
+                const healthy = yield* connection.ping(HEALTH_TIMEOUT).pipe(
+                  Effect.as(true),
+                  Effect.orElseSucceed(() => false),
+                )
+                if (healthy) return { server: name, healthy }
+                yield* Effect.logWarning("mcp health check failed, reconnecting", { server: name })
+                yield* Effect.gen(function* () {
+                  // Another path may have replaced the connection during the ping.
+                  if (entry.client !== connection) return
+                  yield* stopServer(name, entry)
+                  yield* startServer(name, entry)
+                  if (entry.status.status === "failed") fork(reconnectDropped(name, entry))
+                }).pipe(locks.withLock(name))
+                return { server: name, healthy }
+              }),
+            { concurrency: "unbounded" },
+          )
         }),
         readResource: Effect.fn("MCP.readResource")(function* (input) {
           const target = yield* requireServer(input.server)
