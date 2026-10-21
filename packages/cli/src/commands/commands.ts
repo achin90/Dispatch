@@ -56,6 +56,11 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
       Flag.optional,
     ),
     prompt: Flag.String("prompt").pipe(Flag.withDescription("Prompt to use"), Flag.optional),
+    // Dispatch: start on the session composer instead of the agent dashboard.
+    noDashboard: Flag.Boolean("no-dashboard").pipe(
+      Flag.withDescription("Skip the agent dashboard and start on a new session"),
+      Flag.withDefault(false),
+    ),
   },
   commands: [
     Spec.make("upgrade", {
