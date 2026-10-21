@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { $ } from "bun"
+import { existsSync, realpathSync } from "fs"
 import { mkdir, rm } from "fs/promises"
 import path from "path"
 import { Script } from "@opencode/script"
@@ -15,7 +16,12 @@ import { resolveOpencodePty } from "./opencode-pty"
 import { NativeArch } from "../../../script/native-arch"
 
 const dir = path.resolve(import.meta.dirname, "..")
-const binary = "opencode"
+// Dispatch: the fork ships as `dispatch`, packaged as `dispatch-tui-<platform>-<arch>` like the v1 releases.
+const binary = "dispatch"
+const packageName = "dispatch-tui"
+// Dispatch: a channel of its own keeps the background service registration, port and database apart from a stock
+// opencode install on the same machine. Preview builds get their own channel so they never share a release's service.
+const channel = Script.channel === "latest" ? "dispatch" : `dispatch-${Script.channel}`
 const outdir = path.resolve(
   dir,
   process.argv.find((arg) => arg.startsWith("--outdir="))?.slice("--outdir=".length) ?? "dist",
@@ -31,7 +37,9 @@ const requestedTarget = process.argv.find((arg) => arg.startsWith("--target="))?
 const skipInstall = process.argv.includes("--skip-install")
 const skipWebUi = process.argv.includes("--skip-web-ui")
 const solidPlugin = createSolidTransformPlugin()
-const highlights = Script.preview ? undefined : embed(process.env.OPENCODE_RELEASE_NOTES)
+// Dispatch: never embed opencode's release highlights (OPENCODE_RELEASE_NOTES). With none embedded the TUI hides
+// /highlights; Dispatch releases may opt in with their own notes.
+const highlights = process.env.DISPATCH_RELEASE_NOTES ? embed(process.env.DISPATCH_RELEASE_NOTES) : undefined
 const releaseAssets = new Map<string, Promise<Map<string, string>>>()
 
 const allTargets: {
@@ -68,6 +76,7 @@ if (!targets.length) throw new Error(`Unknown build target: ${requestedTarget}`)
 
 if (!skipInstall)
   await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]} @opencode-ai/pty@${pkg.dependencies["@opencode-ai/pty"]}`
+const claudeSdkDir = await installClaudeSdk()
 const appArchive = path.join(dir, ".cache", "bun-app-archive.bin")
 await Bun.write(appArchive, await buildAppArchive(Script.channel, { skipBuild: skipWebUi }))
 const appAssetsPlugin: BunPlugin = {
@@ -149,8 +158,25 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
       }))
     },
   }
+  const claudeBin = claudeSdkDir ? resolveClaudeBin(claudeSdkDir, item) : undefined
+  // Dispatch: packages/dispatch/src/sdk/bin.ts does `await import("./bin.gen.ts")` and extracts the embedded file
+  // from $bunfs. The module never exists on disk, so in dev the import fails and the SDK finds its own binary.
+  const claudeBinPlugin: BunPlugin = {
+    name: "dispatch-claude-bin",
+    setup(build) {
+      build.onResolve({ filter: /^\.\/bin\.gen(?:\.ts)?$/ }, (args) =>
+        /dispatch[/\\]src[/\\]sdk[/\\]/.test(args.importer) ? { path: "claude-bin", namespace: "dispatch" } : undefined,
+      )
+      build.onLoad({ filter: /^claude-bin$/, namespace: "dispatch" }, () => ({
+        loader: "js",
+        contents: claudeBin
+          ? `import file from ${JSON.stringify(claudeBin)} with { type: "file" }\nexport default file`
+          : "export default undefined",
+      }))
+    },
+  }
   const target = targetName(item)
-  const name = target.replace(binary, "cli")
+  const name = target.replace(binary, packageName)
   const executablePath = await compileExecutable(item)
   console.log(`building ${name}`)
   const result = await Bun.build({
@@ -163,6 +189,7 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
       opencodePtyPlugin,
       pluginRuntimePlugin,
       simulationGraphPlugin,
+      claudeBinPlugin,
     ],
     external: ["node-gyp"],
     format: "esm",
@@ -178,19 +205,13 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
       target: target.replace(binary, "bun") as Bun.Build.CompileTarget,
       ...(executablePath ? { executablePath } : {}),
       outfile: path.join(outdir, name, "bin", binary),
-      execArgv: [
-        "--smol",
-        `--user-agent=opencode/${Script.channel}/${Script.version}/cli`,
-        "--use-system-ca",
-        "--no-warnings",
-        "--",
-      ],
+      execArgv: ["--smol", `--user-agent=dispatch/${Script.version}`, "--use-system-ca", "--no-warnings", "--"],
       windows: {},
     },
     define: {
       OPENCODE_VERSION: `'${Script.version}'`,
-      OPENCODE_CLI_NAME: "'opencode'",
-      OPENCODE_CHANNEL: `'${Script.channel}'`,
+      OPENCODE_CLI_NAME: `'${binary}'`,
+      OPENCODE_CHANNEL: `'${channel}'`,
       OPENCODE_ARTIFACT: `'cli'`,
       ...(highlights ? { OPENCODE_RELEASE_HIGHLIGHTS: JSON.stringify(highlights) } : {}),
       OPENCODE_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "undefined",
@@ -211,10 +232,10 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
     path.join(outdir, name, "package.json"),
     JSON.stringify(
       {
-        name: `@opencode/${name}`,
+        name,
         version: Script.version,
         license: "MIT",
-        repository: { type: "git", url: "git+https://github.com/anomalyco/opencode.git" },
+        repository: { type: "git", url: "git+https://github.com/achin90/Dispatch.git" },
         os: [item.os],
         cpu: [item.arch],
       },
@@ -223,6 +244,38 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
     ),
   )
   await verifyArtifact(path.join(outdir, name))
+}
+
+// Dispatch: installs every platform's native Claude CLI so each target can embed its own. Returns the SDK's real
+// directory, or undefined (with a warning) when packages/dispatch or its SDK dependency is missing.
+async function installClaudeSdk() {
+  const dispatchDir = path.resolve(dir, "../dispatch")
+  if (!existsSync(path.join(dispatchDir, "package.json"))) {
+    console.warn("packages/dispatch not found; building without the embedded Claude CLI")
+    return
+  }
+  const dispatchPkg = await Bun.file(path.join(dispatchDir, "package.json")).json()
+  const version =
+    dispatchPkg.dependencies?.["@anthropic-ai/claude-agent-sdk"] ??
+    dispatchPkg.devDependencies?.["@anthropic-ai/claude-agent-sdk"]
+  if (!version) {
+    console.warn("packages/dispatch does not depend on @anthropic-ai/claude-agent-sdk; building without the Claude CLI")
+    return
+  }
+  // Run from packages/dispatch, where the SDK is already a dependency, so this never edits another package.json.
+  if (!skipInstall) await $`bun install --os="*" --cpu="*" @anthropic-ai/claude-agent-sdk@${version}`.cwd(dispatchDir)
+  // The platform packages are optional deps of the SDK, so under Bun's isolated linker they only resolve from the
+  // SDK's real store directory, not from packages/dispatch.
+  return realpathSync(path.join(dispatchDir, "node_modules/@anthropic-ai/claude-agent-sdk"))
+}
+
+function resolveClaudeBin(sdkDir: string, item: (typeof allTargets)[number]) {
+  const name = `@anthropic-ai/claude-agent-sdk-${item.os}-${item.arch}${item.abi === "musl" ? "-musl" : ""}`
+  try {
+    return Bun.resolveSync(`${name}/${item.os === "win32" ? "claude.exe" : "claude"}`, sdkDir).replaceAll("\\", "/")
+  } catch {
+    console.warn(`${name} is not installed; this target falls back to the SDK's own binary lookup`)
+  }
 }
 
 async function compileExecutable(item: (typeof allTargets)[number]) {

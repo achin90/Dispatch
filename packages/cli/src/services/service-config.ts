@@ -124,7 +124,10 @@ const paths = Effect.gen(function* () {
     legacyConfigFile: legacy ? path.join(global.config, legacy) : undefined,
     legacyRegistrationFiles: [
       ...(legacy ? [path.join(global.state, legacy)] : []),
-      ...(name !== "service.json" && OPENCODE_CHANNEL !== "local" ? [path.join(global.state, "service.json")] : []),
+      // Dispatch: service.json belongs to a stock opencode install; never adopt its server.
+      ...(name !== "service.json" && OPENCODE_CHANNEL !== "local" && !OPENCODE_CHANNEL.startsWith("dispatch")
+        ? [path.join(global.state, "service.json")]
+        : []),
     ],
     configFile: path.join(global.config, name),
   }
