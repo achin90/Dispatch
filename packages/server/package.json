@@ -28,6 +28,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
     "@opencode/core": "workspace:*",
+    "@opencode/dispatch": "workspace:*",
     "@opencode/protocol": "workspace:*",
     "@opencode/schema": "workspace:*",
     "@opencode/simulation": "workspace:*",

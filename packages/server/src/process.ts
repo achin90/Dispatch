@@ -17,6 +17,8 @@ import { isAllowedCorsOrigin } from "./cors"
 import { authorizedRequest, unauthorizedResponse } from "./middleware/authorization"
 import { withoutParentSpan } from "./request-tracing"
 import { createRoutes } from "./routes"
+// Dispatch: Claude Agent SDK runner and plugins are wired in as layer replacements.
+import { DispatchOverrides } from "@opencode/dispatch/overrides"
 import { ServerInfo } from "./server-info"
 import { Status } from "./service-status"
 import type { ServerOptions } from "./options"
@@ -101,6 +103,8 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
           password,
         },
         urls,
+        // Dispatch: route Anthropic sessions through the Claude Agent SDK runner.
+        DispatchOverrides.replacements,
       ).pipe(Layer.provideMerge(NodeHttpServer.layerHttpServices)),
       applicationScope,
     )
