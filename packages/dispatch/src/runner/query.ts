@@ -10,17 +10,33 @@ type UserContent = Exclude<MessageParam["content"], string>
 type Image = "image/png" | "image/jpeg" | "image/gif" | "image/webp"
 const IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
 
-/** Session messages the next SDK turn answers: everything after the last reply or compaction. */
+/**
+ * Session messages the next SDK turn answers: everything after the last reply or compaction that
+ * carries model-facing text (prompts, synthetic notes, invoked skills and instruction updates).
+ */
 export function pending(messages: ReadonlyArray<SessionMessage.Info>) {
   const last = messages.findLastIndex((message) => message.type === "assistant" || message.type === "compaction")
-  return messages.slice(last + 1).filter((message) => message.type === "user" || message.type === "synthetic")
+  return messages
+    .slice(last + 1)
+    .filter(
+      (message) =>
+        message.type === "user" ||
+        message.type === "synthetic" ||
+        message.type === "skill" ||
+        message.type === "system",
+    )
+}
+
+const text = (message: SessionMessage.Info) => {
+  if (message.type === "user" || message.type === "synthetic" || message.type === "skill") return message.text
+  // Instruction updates (an edited AGENTS.md, a new day) ride along as a reminder, not as the user's words.
+  if (message.type === "system") return `<system-reminder>\n${message.text}\n</system-reminder>`
+  return ""
 }
 
 /** The user turn: plain text, or a Messages API user message when it carries images or PDFs. */
 export function prompt(messages: ReadonlyArray<SessionMessage.Info>): string | MessageParam {
-  const text = messages
-    .flatMap((message) => (message.type === "user" || message.type === "synthetic" ? [message.text] : []))
-    .filter((value) => value.trim().length > 0)
+  const texts = messages.map(text).filter((value) => value.trim().length > 0)
   const files = messages.flatMap((message) => (message.type === "user" ? (message.files ?? []) : []))
   const media = files.flatMap((file): UserContent => {
     if (file.mime === "application/pdf")
@@ -35,7 +51,7 @@ export function prompt(messages: ReadonlyArray<SessionMessage.Info>): string | M
     if (!file.mime.startsWith("text/") && file.mime !== "application/json") return [`Attached file: ${name}`]
     return [`<file name="${name}">\n${Buffer.from(file.data, "base64").toString("utf8")}\n</file>`]
   })
-  const body = [...text, ...inline].join("\n\n")
+  const body = [...texts, ...inline].join("\n\n")
   if (media.length === 0) return body
   return { role: "user", content: [...media, ...(body ? [{ type: "text" as const, text: body }] : [])] }
 }

@@ -59,7 +59,11 @@ const insertSession = (id: SessionSchema.ID, parent?: SessionSchema.ID) =>
 /** Routes frames through a real Bus and projector, then reads the projected Session messages. */
 const route = (
   frames: SDKMessage[],
-  options: { readonly summary?: string; readonly metadata?: Map<string, Tool.Metadata> } = {},
+  options: {
+    readonly summary?: string
+    readonly metadata?: Map<string, Tool.Metadata>
+    readonly declined?: boolean
+  } = {},
 ) =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -87,6 +91,7 @@ const route = (
           ),
         onInit: (uuid) => Effect.sync(() => void inits.push(uuid)),
         compactSummary: () => options.summary,
+        declined: () => options.declined === true,
       })
       for (const frame of frames) yield* router.handle(frame)
       const read = (id: SessionSchema.ID) =>
@@ -319,6 +324,23 @@ describe("SDK frames → v2 messages", () => {
     )
     const compaction = out.main.find((message) => message.type === "compaction")
     expect(compaction).toMatchObject({ status: "completed", reason: "auto", summary: "We listed files." })
+  })
+
+  test("the error result after a decline settles the message as interrupted, not failed", async () => {
+    const out = await route(
+      [
+        ...sdk.toolTurn("msg_1", { id: "toolu_x", name: "Write", input: { file_path: "/p/a" } }, usage),
+        sdk.toolResult("toolu_x", "The user doesn't want to proceed with this tool use.", true),
+        sdk.result({
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: ["[ede_diagnostic] result_type=user"],
+        }),
+      ],
+      { declined: true },
+    )
+    const [message] = assistants(out.main)
+    expect(message.error).toEqual({ type: "aborted", message: "Step interrupted" })
   })
 
   test("an error result before any output publishes nothing, so a stale resume can retry silently", async () => {

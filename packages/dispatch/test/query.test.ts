@@ -23,6 +23,15 @@ describe("turn input", () => {
     expect(SdkQuery.pending([user("a"), assistant()])).toEqual([])
   })
 
+  test("invoked skills and instruction updates reach the CLI", () => {
+    const skill = { id: SessionMessage.ID.create(), type: "skill", skill: "s", name: "s", text: "SKILL BODY", time }
+    const system = { id: SessionMessage.ID.create(), type: "system", text: "AGENTS.md changed", time }
+    const messages = [assistant(), skill, system, user("go")] as unknown as SessionMessage.Info[]
+    expect(SdkQuery.prompt(SdkQuery.pending(messages))).toBe(
+      "SKILL BODY\n\n<system-reminder>\nAGENTS.md changed\n</system-reminder>\n\ngo",
+    )
+  })
+
   test("plain text prompts join the pending messages", () => {
     expect(SdkQuery.prompt([user("one"), user("two")])).toBe("one\n\ntwo")
   })

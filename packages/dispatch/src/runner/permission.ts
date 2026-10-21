@@ -68,6 +68,8 @@ export interface Options {
   readonly directory: Directory
   /** UI metadata computed before approval (edit diffs, answers), keyed by tool call id. */
   readonly metadata: Map<string, Tool.Metadata>
+  /** Called when the user declines without feedback, which ends the turn as interrupted. */
+  readonly onDecline?: () => void
 }
 
 /** The `canUseTool` bridge: every main-thread SDK tool call asks v2's Permission service. */
@@ -83,11 +85,17 @@ export function canUseTool(options: Options): CanUseTool {
       id: call.toolUseID,
     }
     const extra = { tool: toolName, input, ...(call.agentID ? { agentID: call.agentID } : {}) }
-    if (toolName === "AskUserQuestion") return options.run(question(input, invocation, options.metadata), call.signal)
-    const exit = await options
-      .run(authorize(toolName, input, invocation, extra, options.metadata).pipe(Effect.exit), call.signal)
-      .catch((error: unknown) => Exit.die(error))
-    return decision(exit, input)
+    const result =
+      toolName === "AskUserQuestion"
+        ? await options.run(question(input, invocation, options.metadata), call.signal)
+        : decision(
+            await options
+              .run(authorize(toolName, input, invocation, extra, options.metadata).pipe(Effect.exit), call.signal)
+              .catch((error: unknown) => Exit.die(error)),
+            input,
+          )
+    if (result.behavior === "deny" && result.interrupt) options.onDecline?.()
+    return result
   }
 }
 

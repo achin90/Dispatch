@@ -32,7 +32,11 @@ export interface Input {
   readonly onInit: (uuid: string) => Effect.Effect<void>
   /** The summary the PostCompact hook captured, if it has fired. */
   readonly compactSummary: () => string | undefined
+  /** Whether the user declined a call; the error result that follows is then an interruption. */
+  readonly declined?: () => boolean
 }
+
+const INTERRUPTED = { type: "aborted", message: "Step interrupted" } as const
 
 export type Outcome = { readonly type: "result"; readonly result: SDKResultMessage } | { readonly type: "incomplete" }
 
@@ -173,6 +177,7 @@ export function make(input: Input) {
         result = message
         for (const found of children.values()) yield* found.close()
         if (!message.is_error) return yield* main.close()
+        if (input.declined?.()) return yield* main.fail(INTERRUPTED, true)
         // Without output the runner decides: a stale resume retries silently.
         if (!output) return
         return yield* main.fail({

@@ -15,9 +15,13 @@ const bridge = Effect.fn("test.bridge")(function* (rules: Permission.Ruleset) {
   const services = yield* Effect.context<SdkPermission.Requirements>()
   const directory = SdkPermission.directory()
   const metadata = new Map()
+  const declines = { count: 0 }
   const options = {
     sessionID,
     agent,
+    onDecline: () => {
+      declines.count++
+    },
     run: <A, E>(effect: Effect.Effect<A, E, SdkPermission.Requirements>, signal?: AbortSignal) =>
       Effect.runPromiseWith(services)(effect, { signal }),
     directory,
@@ -29,7 +33,7 @@ const bridge = Effect.fn("test.bridge")(function* (rules: Permission.Ruleset) {
     directory.register(toolUseID, { sessionID, messageID: SessionMessage.ID.create() })
     return { toolUseID, answer: canUseTool(tool, input, { signal, toolUseID, requestId: "req" }) }
   }
-  return { call, metadata, hook: SdkPermission.subagentHook(options) }
+  return { call, metadata, declines, hook: SdkPermission.subagentHook(options) }
 })
 
 const reply = (input: Omit<Permission.ReplyInput, "requestID">) =>
@@ -76,10 +80,13 @@ describe("canUseTool bridge", () => {
   test("a plain reject denies and interrupts the turn, as a v2 decline ends the step", async () => {
     const result = await fixture.run(
       Effect.gen(function* () {
-        const { call } = yield* bridge([{ action: "edit", resource: "*", effect: "ask" }])
+        const { call, declines } = yield* bridge([{ action: "edit", resource: "*", effect: "ask" }])
         const decided = call("Edit", { file_path: `${fixture.directory}/a.ts`, old_string: "a", new_string: "b" })
         yield* reply({ reply: "reject" })
-        return yield* answer(decided.answer)
+        const result = yield* answer(decided.answer)
+        // The runner ends the step as interrupted once a call is declined.
+        expect(declines.count).toBe(1)
+        return result
       }),
     )
     expect(result).toEqual({ behavior: "deny", message: "The user declined this tool call", interrupt: true })
@@ -88,10 +95,12 @@ describe("canUseTool bridge", () => {
   test("reject with feedback keeps the turn going with the feedback", async () => {
     const result = await fixture.run(
       Effect.gen(function* () {
-        const { call } = yield* bridge([{ action: "shell", resource: "*", effect: "ask" }])
+        const { call, declines } = yield* bridge([{ action: "shell", resource: "*", effect: "ask" }])
         const decided = call("Bash", { command: "rm -rf build" })
         yield* reply({ reply: "reject", message: "use the clean script" })
-        return yield* answer(decided.answer)
+        const result = yield* answer(decided.answer)
+        expect(declines.count).toBe(0)
+        return result
       }),
     )
     expect(result).toEqual({

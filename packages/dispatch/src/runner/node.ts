@@ -178,7 +178,17 @@ const layer = Layer.effect(
       const directory = SdkPermission.directory()
       const metadata = new Map<string, Tool.Metadata>()
       const compaction: { summary?: string } = {}
-      const permissions = { sessionID: session.id, agent: loaded.agent.id, run, directory, metadata }
+      const declined = { value: false }
+      const permissions = {
+        sessionID: session.id,
+        agent: loaded.agent.id,
+        run,
+        directory,
+        metadata,
+        onDecline: () => {
+          declined.value = true
+        },
+      }
       const router = SdkRouter.make({
         bus,
         sessionID: session.id,
@@ -199,6 +209,7 @@ const layer = Layer.effect(
             Effect.catchCause((cause) => Effect.logWarning("failed to record SDK session", { cause })),
           ),
         compactSummary: () => compaction.summary,
+        declined: () => declined.value,
       })
       const options = SdkQuery.options({
         model: SdkModels.cliModel(info?.modelID ?? loaded.model.ref.id),
@@ -225,6 +236,7 @@ const layer = Layer.effect(
         resume: resume?.uuid,
         cwd,
         mcpServers: Object.keys(options.mcpServers ?? {}),
+        systemPromptChars: typeof options.systemPrompt === "string" ? options.systemPrompt.length : undefined,
       })
       const stream = yield* Effect.sync(() => query({ prompt: SdkQuery.input(prompt), options }))
       const consumed = yield* Stream.fromAsyncIterable(stream as AsyncIterable<SDKMessage>, (error) => error).pipe(
@@ -236,8 +248,14 @@ const layer = Layer.effect(
         Effect.exit,
       )
       if (Exit.isFailure(consumed) && Cause.hasInterruptsOnly(consumed.cause)) return yield* Effect.interrupt
+      // A decline without feedback ends the step as interrupted, as it does on the stock runner.
+      if (declined.value) {
+        yield* router.abort(INTERRUPTED, true)
+        return yield* Effect.interrupt
+      }
       const result = router.result()
-      const failure = Exit.isFailure(consumed) ? Cause.squash(consumed.cause) : undefined
+      // The CLI also throws after an error result; the result carries the useful message.
+      const failure = Exit.isFailure(consumed) && !result ? Cause.squash(consumed.cause) : undefined
       const message =
         failure !== undefined
           ? SdkAdapter.errorMessage(failure)
