@@ -205,7 +205,9 @@ export function advisorResultState(block: AdvisorResultBlock): { error: string }
   if (block.content.type === "advisor_tool_result_error")
     return { error: `Advisor unavailable (${block.content.error_code ?? "unknown error"})` }
   if (block.content.type === "advisor_result" && block.content.text) return { output: block.content.text }
-  return { output: "The advisor reviewed the conversation. Its advice went straight to the model and isn't shown here." }
+  return {
+    output: "The advisor reviewed the conversation. Its advice went straight to the model and isn't shown here.",
+  }
 }
 
 /** Maps SDK and API stop reasons to v2 finish reasons. */

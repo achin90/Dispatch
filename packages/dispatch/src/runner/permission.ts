@@ -84,10 +84,9 @@ export function canUseTool(options: Options): CanUseTool {
     }
     const extra = { tool: toolName, input, ...(call.agentID ? { agentID: call.agentID } : {}) }
     if (toolName === "AskUserQuestion") return options.run(question(input, invocation, options.metadata), call.signal)
-    const exit = await options.run(
-      authorize(toolName, input, invocation, extra, options.metadata).pipe(Effect.exit),
-      call.signal,
-    ).catch((error: unknown) => Exit.die(error))
+    const exit = await options
+      .run(authorize(toolName, input, invocation, extra, options.metadata).pipe(Effect.exit), call.signal)
+      .catch((error: unknown) => Exit.die(error))
     return decision(exit, input)
   }
 }
@@ -250,7 +249,11 @@ function toField(prompt: SdkAdapter.Question, index: number): Form.Field {
     title: prompt.header,
     description: prompt.question,
     type: prompt.multiple ? "multiselect" : "string",
-    options: prompt.options.map((option) => ({ value: option.label, label: option.label, description: option.description })),
+    options: prompt.options.map((option) => ({
+      value: option.label,
+      label: option.label,
+      description: option.description,
+    })),
     custom: true,
   }
 }
@@ -310,7 +313,10 @@ export function subagentHook(options: Pick<Options, "sessionID" | "agent" | "run
 }
 
 /** Agent rules, then Session rules, then saved approvals, in the order Permission evaluates them. */
-const sessionRules = Effect.fn("SdkPermission.sessionRules")(function* (sessionID: SessionSchema.ID, agentID: Agent.ID) {
+const sessionRules = Effect.fn("SdkPermission.sessionRules")(function* (
+  sessionID: SessionSchema.ID,
+  agentID: Agent.ID,
+) {
   const agents = yield* Agent.Service
   const store = yield* SessionStore.Service
   const saved = yield* PermissionSaved.Service

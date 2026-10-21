@@ -130,5 +130,4 @@ export const isSdkModel = (ref: { readonly providerID: string }) => ref.provider
 export const cliModel = (modelID: string) => definitions[modelID]?.resolves ?? modelID
 
 /** Normalize a wire model id to the catalog style, e.g. "claude-haiku-4-5-20251001" → "haiku-4-5". */
-export const normalizeWireModel = (model: string | undefined) =>
-  model?.replace(/^claude-/, "").replace(/-\d{8}$/, "")
+export const normalizeWireModel = (model: string | undefined) => model?.replace(/^claude-/, "").replace(/-\d{8}$/, "")

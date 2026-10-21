@@ -185,7 +185,13 @@ export function make(input: Input) {
       return
     }
     if (event.type === "content_block_start") {
-      const block = event.content_block as { type: string; id?: string; name?: string; text?: string; thinking?: string }
+      const block = event.content_block as {
+        type: string
+        id?: string
+        name?: string
+        text?: string
+        thinking?: string
+      }
       const id = `${current.sdkID}:${event.index}`
       current.published.add(event.index)
       if (block.type === "text") {
@@ -253,7 +259,10 @@ export function make(input: Input) {
     const streamed = current.published.size > 0
     for (const block of message.message.content as ContentBlock[]) yield* completeBlock(current, block, streamed)
     if (message.error && !current.publisher.record().failure)
-      yield* current.publisher.failAssistant({ type: "provider.unknown", message: `Claude API error: ${message.error}` })
+      yield* current.publisher.failAssistant({
+        type: "provider.unknown",
+        message: `Claude API error: ${message.error}`,
+      })
   })
 
   const completeBlock = Effect.fnUntraced(function* (current: Turn, block: ContentBlock, streamed: boolean) {
@@ -395,7 +404,9 @@ function parseJson(text: string): Record<string, unknown> {
   if (!text) return {}
   try {
     const value: unknown = JSON.parse(text)
-    return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
   } catch {
     return {}
   }
@@ -407,7 +418,11 @@ export function toContent(content: unknown): Tool.Content[] {
   if (!Array.isArray(content)) return []
   return content.flatMap((item: unknown): Tool.Content[] => {
     if (typeof item !== "object" || item === null) return []
-    const block = item as { type?: string; text?: string; source?: { type?: string; media_type?: string; data?: string } }
+    const block = item as {
+      type?: string
+      text?: string
+      source?: { type?: string; media_type?: string; data?: string }
+    }
     if (block.type === "text" && typeof block.text === "string") return [{ type: "text", text: block.text }]
     if (block.type === "image" && block.source?.type === "base64" && block.source.media_type && block.source.data)
       return [

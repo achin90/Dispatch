@@ -34,9 +34,7 @@ export interface Input {
   readonly compactSummary: () => string | undefined
 }
 
-export type Outcome =
-  | { readonly type: "result"; readonly result: SDKResultMessage }
-  | { readonly type: "incomplete" }
+export type Outcome = { readonly type: "result"; readonly result: SDKResultMessage } | { readonly type: "incomplete" }
 
 /**
  * Routes one query's SDK frames: top-level frames to the Session's writer, subagent frames
@@ -106,8 +104,7 @@ export function make(input: Input) {
     yield* main.close()
     yield* input.bus.publish(SessionEvent.Compaction.Started, { sessionID: input.sessionID, reason: trigger })
     // The PostCompact hook and the boundary frame race; give the hook a moment.
-    for (let waited = 0; input.compactSummary() === undefined && waited < 3_000; waited += 50)
-      yield* Effect.sleep(50)
+    for (let waited = 0; input.compactSummary() === undefined && waited < 3_000; waited += 50) yield* Effect.sleep(50)
     yield* input.bus.publish(SessionEvent.Compaction.Ended, {
       sessionID: input.sessionID,
       reason: trigger,
@@ -178,7 +175,8 @@ export function make(input: Input) {
         if (!output) return
         return yield* main.fail({
           type: "provider.unknown",
-          message: ("errors" in message && message.errors.length > 0 ? message.errors.join("; ") : undefined) ??
+          message:
+            ("errors" in message && message.errors.length > 0 ? message.errors.join("; ") : undefined) ??
             ("result" in message ? message.result : "The Claude Agent SDK reported an error"),
         })
     }

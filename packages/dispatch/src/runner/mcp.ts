@@ -3,7 +3,7 @@ export * as SdkMcp from "./mcp.js"
 import { createSdkMcpServer, type McpServerConfig } from "@anthropic-ai/claude-agent-sdk"
 import { Mcp } from "@opencode/core/mcp/index"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { Effect } from "effect"
+import { Effect, Schedule } from "effect"
 
 type Definition = { name: string; description?: string; inputSchema: Record<string, unknown> }
 
@@ -24,6 +24,15 @@ export function make(mcp: Mcp.Interface) {
   const cache = new Map<string, Definition[]>()
 
   const servers = Effect.fn("SdkMcp.servers")(function* (run: Run) {
+    // A query's MCP servers are fixed when it starts, unlike the stock runner which re-snapshots tools
+    // every step, so give servers still connecting after Location boot a bounded moment to finish.
+    yield* mcp.servers().pipe(
+      Effect.repeat({
+        until: (servers) => !servers.some((server) => server.status.status === "pending"),
+        schedule: Schedule.spaced("200 millis"),
+      }),
+      Effect.timeoutOption("10 seconds"),
+    )
     const listed = Map.groupBy(yield* mcp.tools(), (tool) => tool.server)
     for (const [server, tools] of listed)
       cache.set(
@@ -69,7 +78,9 @@ function proxy(server: string, tools: Definition[], run: Run): McpServerConfig {
               ? { type: "text" as const, text: part.text }
               : { type: "image" as const, data: part.data, mimeType: part.mimeType },
           ),
-          ...(result.structured === undefined ? {} : { structuredContent: result.structured as Record<string, unknown> }),
+          ...(result.structured === undefined
+            ? {}
+            : { structuredContent: result.structured as Record<string, unknown> }),
         }
       }).pipe(
         Effect.catch((error) =>

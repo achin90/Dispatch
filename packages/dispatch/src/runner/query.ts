@@ -1,12 +1,6 @@
 export * as SdkQuery from "./query.js"
 
-import type {
-  CanUseTool,
-  HookCallback,
-  McpServerConfig,
-  Options,
-  SDKUserMessage,
-} from "@anthropic-ai/claude-agent-sdk"
+import type { CanUseTool, HookCallback, McpServerConfig, Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
 import type { SessionMessage } from "@opencode/core/session/message"
 import { SdkEnv } from "../sdk/env.js"
 

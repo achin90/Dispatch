@@ -85,7 +85,9 @@ const layer = Layer.effect(
 
     const drain = Effect.fn("DispatchRunner.drain")(function* (input: Parameters<SessionRunner.Interface["drain"]>[0]) {
       const session = yield* store.get(input.sessionID)
-      const resolved = session ? yield* context.resolveModel(session).pipe(Effect.orElseSucceed(() => undefined)) : undefined
+      const resolved = session
+        ? yield* context.resolveModel(session).pipe(Effect.orElseSucceed(() => undefined))
+        : undefined
       if (!resolved || !SdkModels.isSdkModel(resolved.ref)) return yield* inner.drain(input)
       return yield* drainSdk(input)
     })
@@ -142,7 +144,10 @@ const layer = Layer.effect(
     })
 
     /** One SDK query answering every Session message since the last reply. */
-    const turn = Effect.fn("DispatchRunner.turn")(function* (loaded: SessionContext.Loaded, selected: SessionContext.Selection) {
+    const turn = Effect.fn("DispatchRunner.turn")(function* (
+      loaded: SessionContext.Loaded,
+      selected: SessionContext.Selection,
+    ) {
       const pending = SdkQuery.pending(loaded.messages)
       if (pending.length === 0) return
       const prompt = SdkQuery.prompt(pending)
@@ -153,7 +158,10 @@ const layer = Layer.effect(
         sessionID: loaded.session.id,
         uuid: entry.uuid,
       })
-      yield* SdkSessionMap.remove(loaded.session.id).pipe(Effect.provideService(Session.Service, sessions), Effect.orDie)
+      yield* SdkSessionMap.remove(loaded.session.id).pipe(
+        Effect.provideService(Session.Service, sessions),
+        Effect.orDie,
+      )
       yield* attempt(loaded, selected, prompt, undefined)
     })
 
@@ -181,7 +189,11 @@ const layer = Layer.effect(
         metadata,
         createChild: (child) => createChild(session, child),
         onInit: (uuid) =>
-          Effect.logInfo("claude agent sdk session", { sessionID: session.id, uuid, resumed: resume?.uuid === uuid }).pipe(
+          Effect.logInfo("claude agent sdk session", {
+            sessionID: session.id,
+            uuid,
+            resumed: resume?.uuid === uuid,
+          }).pipe(
             Effect.andThen(SdkSessionMap.write(session.id, { uuid, cwd })),
             Effect.provideService(Session.Service, sessions),
             Effect.catchCause((cause) => Effect.logWarning("failed to record SDK session", { cause })),
@@ -270,9 +282,7 @@ const layer = Layer.effect(
       if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
       const connection = yield* integrations.connection.active(Integration.ID.make(SdkModels.providerID))
       if (!connection) return undefined
-      const credential = yield* integrations.connection
-        .resolve(connection)
-        .pipe(Effect.orElseSucceed(() => undefined))
+      const credential = yield* integrations.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
       return credential?.type === "key" ? credential.key : undefined
     })
 
