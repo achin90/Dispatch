@@ -12,6 +12,7 @@ import { SessionSchema } from "@opencode/core/session/schema"
 import { SessionStore } from "@opencode/core/session/store"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Effect, Layer } from "effect"
+import { SdkEnv } from "../sdk/env.js"
 import { SdkModels } from "../sdk/models.js"
 import { DispatchRpc } from "./definition.js"
 import { DispatchGit } from "./git.js"
@@ -32,14 +33,6 @@ const layer = Layer.effectDiscard(
     const instances = yield* Instance.Service
     const llm = yield* LLMClient.Service
     const integrations = yield* Integration.Service
-
-    const apiKey = Effect.fn("DispatchRpc.apiKey")(function* () {
-      if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-      const connection = yield* integrations.connection.active(Integration.ID.make(SdkModels.providerID))
-      if (!connection) return undefined
-      const credential = yield* integrations.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
-      return credential?.type === "key" ? credential.key : undefined
-    })
 
     /** The Session's small (title) model, resolved at the Session's own Location. */
     const small = (session: SessionSchema.Info, input: string) =>
@@ -65,7 +58,7 @@ const layer = Layer.effectDiscard(
       const model = found.last?.type === "assistant" ? found.last.model : undefined
       return yield* DispatchLastResponse.respond(found.text, (input) =>
         model && SdkModels.isSdkModel(model)
-          ? apiKey().pipe(Effect.flatMap((key) => DispatchLastResponse.anthropic(input, key)))
+          ? SdkEnv.apiKey(integrations).pipe(Effect.flatMap((key) => DispatchLastResponse.anthropic(input, key)))
           : small(session, input),
       )
     })

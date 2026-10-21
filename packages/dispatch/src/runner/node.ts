@@ -40,6 +40,7 @@ import { DispatchBridge } from "../bridge/service.js"
 import { DispatchBridgeRpc } from "../bridge/rpc.js"
 import { SdkAdapter } from "../sdk/adapter.js"
 import { SdkBin } from "../sdk/bin.js"
+import { SdkEnv } from "../sdk/env.js"
 import { SdkModels } from "../sdk/models.js"
 import { SdkSessionMap } from "../sdk/session-map.js"
 import { SdkMcp } from "./mcp.js"
@@ -224,7 +225,7 @@ const layer = Layer.effect(
         systemPrompt: yield* systemPrompt(selected),
         cwd,
         resume: resume?.uuid,
-        apiKey: yield* apiKey(),
+        apiKey: yield* SdkEnv.apiKey(integrations),
         effort: loaded.model.ref.variant,
         contextWindow: loaded.model.limit.context,
         advisorModel: yield* advisor(),
@@ -309,15 +310,6 @@ const layer = Layer.effect(
         .join("\n\n")
     })
 
-    /** An API key when one is configured; otherwise the CLI uses the Claude Code login (subscription). */
-    const apiKey = Effect.fn("DispatchRunner.apiKey")(function* () {
-      if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-      const connection = yield* integrations.connection.active(Integration.ID.make(SdkModels.providerID))
-      if (!connection) return undefined
-      const credential = yield* integrations.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
-      return credential?.type === "key" ? credential.key : undefined
-    })
-
     /** Config `advisor` (e.g. "opus"); "off" or unset disables. Read per turn so a change applies live. */
     const advisor = Effect.fn("DispatchRunner.advisor")(function* () {
       const value = Config.latest(yield* config.entries(), "advisor")
@@ -352,7 +344,7 @@ const layer = Layer.effect(
           systemPrompt: "",
           cwd: entry.cwd,
           resume: entry.uuid,
-          apiKey: yield* apiKey(),
+          apiKey: yield* SdkEnv.apiKey(integrations),
           contextWindow: loaded.model.limit.context,
           abortController,
           canUseTool: SdkPermission.canUseTool(permissions),
