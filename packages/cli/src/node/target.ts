@@ -44,4 +44,6 @@ export const attentionSoundAssets = [
   "@opencode/ui/audio/staplebops-06.mp3",
   "@opencode/ui/audio/nope-03.mp3",
   "@opencode/ui/audio/yup-01.mp3",
+  // Jarvis voice chime.
+  "@opencode/ui/audio/staplebops-05.mp3",
 ] as const
