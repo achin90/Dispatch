@@ -3,6 +3,14 @@
 - This repository does not use Changesets. Do not add `.changeset` files; follow the existing release workflow instead.
 - The default branch is `dev`. Base branches and worktrees on `origin/dev`, target PRs at `dev`, and diff against `origin/dev` unless told otherwise.
 
+## Dispatch fork
+
+- This tree is Dispatch, a fork of opencode. Upstream is the `upstream/dev` ref; the fork's working branch is `Dispatch-opencodev2`, so for fork work base branches on it, target PRs at it and diff against it, not `origin/dev`.
+- Fork server code lives in `packages/dispatch` (read `packages/dispatch/AGENTS.md` first); TUI fork code lives in `packages/tui/src/feature-plugins/dispatch` and `feature-plugins/jarvis`. Edits to upstream files stay small and carry a `// Dispatch:` comment.
+- Anthropic sessions run on the Claude Agent SDK runner in `packages/dispatch`, which intentionally deviates from the Session Core rule below that each step is one `llm.stream` call: the SDK owns the tool loop, and one drain turn is one `query()` that may span many API calls. Every other v2 rule still applies.
+- Builds ship as the `dispatch` binary on the `dispatch` channel, with its own background service and database, so `dev:live` discovers its server with `dispatch service status` and `dispatch service get password` (read `opencode service` below as `dispatch service`).
+- Before merging upstream, read `UPSTREAM-SYNC.md`.
+
 ## Live TUI Testing
 
 - Run `bun run dev:live` from a development worktree to test its TUI against the currently elected `opencode` background server and live sessions.
