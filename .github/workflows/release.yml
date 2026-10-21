@@ -1,0 +1,80 @@
+name: release
+# Dispatch: builds every dispatch-tui-<target> binary with packages/cli/script/build.ts and publishes them as a
+# GitHub release of this repository. The archives are what ./install downloads.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 1.3.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    if: github.repository != 'anomalyco/opencode'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        run: gh release create "v${{ inputs.version }}" --draft --title "v${{ inputs.version }}" --notes "" --target ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      version: ${{ inputs.version }}
+
+  build-cli:
+    needs: create-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Build all platforms
+        working-directory: packages/cli
+        run: bun run script/build.ts
+        env:
+          OPENCODE_VERSION: ${{ needs.create-release.outputs.version }}
+          OPENCODE_RELEASE: ${{ needs.create-release.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Archives hold the binary at their root, as ./install expects: tar.gz for Linux, zip elsewhere.
+      - name: Archive binaries
+        working-directory: packages/cli/dist
+        run: |
+          for target in dispatch-tui-*/; do
+            target="${target%/}"
+            if [[ "$target" == *linux* ]]; then
+              (cd "$target/bin" && tar -czf "../../$target.tar.gz" *)
+            else
+              (cd "$target/bin" && zip -qr "../../$target.zip" *)
+            fi
+          done
+          ls -la *.tar.gz *.zip
+
+      - name: Upload to release
+        working-directory: packages/cli/dist
+        run: gh release upload "v${{ needs.create-release.outputs.version }}" ./*.zip ./*.tar.gz --clobber --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dispatch-cli
+          path: |
+            packages/cli/dist/*.zip
+            packages/cli/dist/*.tar.gz
+
+  finalize-release:
+    needs: [create-release, build-cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish release
+        run: gh release edit "v${{ needs.create-release.outputs.version }}" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
