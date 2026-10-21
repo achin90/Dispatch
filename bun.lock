@@ -115,8 +115,7 @@
       "name": "@opencode/cli",
       "version": "2.1.2",
       "bin": {
-        "opencode": "./bin/opencode.cjs",
-        "opencode2": "./bin/opencode2.cjs",
+        "dispatch": "./bin/dispatch.cjs",
       },
       "dependencies": {
         "@agentclientprotocol/sdk": "1.6.0",
