@@ -23,7 +23,11 @@ describe("gitRepos.list", () => {
     repo("outside/epsilon")
     symlinkSync(path.join(root, "outside"), path.join(root, "group/link"))
     const all = await Effect.runPromise(DispatchGit.repos({ root }))
-    expect(all.repos).toEqual([path.join(root, "alpha"), path.join(root, "group/beta"), path.join(root, "outside/epsilon")])
+    expect(all.repos).toEqual([
+      path.join(root, "alpha"),
+      path.join(root, "group/beta"),
+      path.join(root, "outside/epsilon"),
+    ])
     const filtered = await Effect.runPromise(DispatchGit.repos({ root, query: "BET" }))
     expect(filtered.repos).toEqual([path.join(root, "group/beta")])
   })
