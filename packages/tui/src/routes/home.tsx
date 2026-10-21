@@ -1,1138 +1,176 @@
-import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2"
-
-/** Narrowed form of the SDK's DiffStat, whose counts also admit "NaN"/"Infinity". */
-interface DiffStat {
-  additions: number
-  deletions: number
-  files: number
-}
-
-/**
- * DTOs returned by Dispatch's /github/* server endpoints (see
- * packages/opencode/src/github). Declared locally because the TUI is a
- * standalone package and cannot import server internals.
- */
-namespace GitHub {
-  export type PullRequest = {
-    number: number
-    title: string
-    state: "OPEN" | "CLOSED" | "MERGED"
-    url: string
-    draft: boolean
-    base: string
-    checks: "pass" | "fail" | "pending" | "none"
-    review: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | ""
-  }
-  export type Status = { authenticated: boolean }
-  export type CreateError = { error: string }
-}
-import { useTheme, selectedForeground } from "../context/theme"
-import { useSync } from "../context/sync"
-import { useDirectory } from "../context/directory"
-import { useKV } from "../context/kv"
-import { useRoute } from "../context/route"
-import { useSDK } from "../context/sdk"
-import { useDialog } from "../ui/dialog"
-import { DialogPrompt } from "../ui/dialog-prompt"
-import { DialogConfirm } from "../ui/dialog-confirm"
-import { DialogDirectorySelect } from "../component/dialog-directory-select"
-import { DialogGitRepoSelect } from "../component/dialog-git-repo-select"
-import { Prompt } from "../component/prompt"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Global } from "@opencode-ai/core/global"
-import { Locale } from "../util/locale"
-import { Spinner } from "../component/spinner"
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
-import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
-import { useBindings, useCommandShortcut, useLeaderActive, leaderDisplay, LEADER_TOKEN } from "../keymap"
-import { useTuiConfig } from "../config"
-import { TuiKeybind } from "../config/keybind"
+import { Prompt, type PromptRef } from "../component/prompt"
+import { createEffect, createMemo, createSignal, onMount, Show, untrack } from "solid-js"
+import { Logo } from "../component/logo"
+import { useArgs } from "../context/args"
+import { useRouteData } from "../context/route"
+import { usePromptRef } from "../context/prompt"
+import { useLocal } from "../context/local"
+import { useEditorContext } from "../context/editor"
+import { useData } from "../context/data"
+import { useLocation } from "../context/location"
+import { FormPrompt } from "./session/form"
+import { Slot } from "../plugin/render"
+import { useTerminalDimensions } from "@opentui/solid"
+import { useTheme } from "../context/theme"
+import { useUpdateNotification } from "../context/update-notification"
 import { useExit } from "../context/exit"
-import { Toast, useToast } from "../ui/toast"
-import path from "path"
-import { LANGUAGE_EXTENSIONS } from "../util/filetype"
-import { useClipboard } from "../context/clipboard"
-import { PtyAttach } from "../util/pty"
+import { FadeInText } from "../component/fade-in-text"
 
-
-export interface AgentEntry {
-  id: string
-  name: string
-  sessionID: string
-  createdAt: number
-  directory?: string
-  worktree?: {
-    branch: string
-    directory: string
-    sourceRepo: string
-  }
-  summary?: {
-    text: string
-    ai: boolean
-  }
-}
-
-// Track which session the user last navigated into so we can restore cursor position
-let lastEnteredSessionID: string | undefined
-
-function filetype(filepath?: string) {
-  if (!filepath) return "none"
-  const ext = path.extname(filepath)
-  const lang = LANGUAGE_EXTENSIONS[ext]
-  if (["typescriptreact", "javascriptreact", "javascript"].includes(lang)) return "typescript"
-  return lang ?? "none"
-}
-
-function PermissionDetail(props: { request: PermissionRequest; selected: boolean }) {
-  const themeState = useTheme()
-  const theme = themeState.theme
-  const syntax = themeState.syntax
-  const fg = selectedForeground(theme)
-
-  const input = createMemo(() => {
-    const raw = props.request.metadata?.input
-    if (raw && typeof raw === "object") return raw as Record<string, unknown>
-    return {} as Record<string, unknown>
-  })
-
-  const diff = createMemo(() => {
-    const raw = props.request.metadata?.diff
-    return typeof raw === "string" ? raw : ""
-  })
-
-  const filepath = createMemo(() => {
-    const raw = props.request.metadata?.filepath
-    return typeof raw === "string" ? raw : ""
-  })
-
-  const color = () => (props.selected ? fg : theme.textMuted)
-
-  return (
-    <box paddingLeft={4} maxHeight={10}>
-      <Switch>
-        <Match when={props.request.permission === "bash"}>
-          <text fg={theme.text} wrapMode="word" overflow="hidden">
-            {"$ " + (typeof input().command === "string" ? input().command : (props.request.patterns[0] ?? ""))}
-          </text>
-        </Match>
-        <Match when={(props.request.permission === "edit" || props.request.permission === "write") && diff()}>
-          <scrollbox maxHeight={8} scrollbarOptions={{ visible: false }}>
-            <diff
-              diff={diff()}
-              view="unified"
-              filetype={filetype(filepath())}
-              syntaxStyle={syntax()}
-              showLineNumbers={true}
-              width="100%"
-              wrapMode="word"
-              fg={theme.text}
-              addedBg={theme.diffAddedBg}
-              removedBg={theme.diffRemovedBg}
-              contextBg={theme.diffContextBg}
-              addedSignColor={theme.diffHighlightAdded}
-              removedSignColor={theme.diffHighlightRemoved}
-              lineNumberFg={theme.diffLineNumber}
-              lineNumberBg={theme.diffContextBg}
-              addedLineNumberBg={theme.diffAddedLineNumberBg}
-              removedLineNumberBg={theme.diffRemovedLineNumberBg}
-            />
-          </scrollbox>
-        </Match>
-        <Match when={props.request.permission === "edit" || props.request.permission === "write"}>
-          <text fg={color()} overflow="hidden" wrapMode="none">
-            {(props.request.permission === "edit" ? "Edit " : "Write ") +
-              (filepath() || (props.request.patterns[0] ?? ""))}
-          </text>
-        </Match>
-        <Match when={true}>
-          <text fg={color()} overflow="hidden" wrapMode="none">
-            {props.request.permission + " " + (props.request.patterns[0] ?? "")}
-          </text>
-        </Match>
-      </Switch>
-    </box>
-  )
-}
-
-function PRCell(props: { pr: GitHub.PullRequest | null | undefined | "error" }) {
-  const { theme } = useTheme()
-
-  const label = () => {
-    const pr = props.pr
-    if (!pr || pr === "error") return ""
-    const state = pr.draft ? "Draft" : pr.state === "MERGED" ? "Merged" : pr.state === "CLOSED" ? "Closed" : "Open"
-    const ci =
-      pr.checks === "pass"
-        ? " \u2713 CI"
-        : pr.checks === "fail"
-          ? " \u2717 CI"
-          : pr.checks === "pending"
-            ? " \u29D7 CI"
-            : ""
-    const rev = (() => {
-      if (pr.state !== "OPEN" || pr.draft) return ""
-      if (pr.review === "APPROVED") return " Approved"
-      if (pr.review === "CHANGES_REQUESTED") return " Changes Requested"
-      if (pr.review === "REVIEW_REQUIRED") return " Review Required"
-      return ""
-    })()
-    return `PR: #${pr.number} ${state}${ci}${rev}`
-  }
-
-  const color = () => {
-    const pr = props.pr
-    if (!pr || pr === "error") return theme.text
-    if (pr.state === "MERGED") return theme.accent
-    if (pr.state === "CLOSED") return theme.error
-    if (pr.draft) return theme.text
-    if (pr.checks === "fail" || pr.review === "CHANGES_REQUESTED") return theme.error
-    if (pr.review === "APPROVED" && pr.checks === "pass") return theme.success
-    return theme.text
-  }
-
-  return (
-    <Switch fallback={<></>}>
-      <Match when={props.pr === "error"}>
-        <text fg={theme.textMuted}>{"  ?"}</text>
-      </Match>
-      <Match when={props.pr && props.pr !== "error"}>
-        <text fg={color()} overflow="hidden" wrapMode="none">
-          {"  " + label()}
-        </text>
-      </Match>
-    </Switch>
-  )
+let once = false
+const placeholder = {
+  normal: ["Fix a TODO in the codebase", "What is the tech stack of this project?", "Fix broken tests"],
+  shell: ["ls -la", "git status", "pwd"],
 }
 
 export function Home() {
-  const sync = useSync()
-  const kv = useKV()
-  const { theme } = useTheme()
-  const route = useRoute()
-  const sdk = useSDK()
-  const directory = useDirectory()
-  const dialog = useDialog()
-  const toast = useToast()
-  const tuiConfig = useTuiConfig()
-  const leaderActive = useLeaderActive()
-  const paletteShortcut = useCommandShortcut("command.palette.show")
-  const exit = useExit()
-  const renderer = useRenderer()
+  const route = useRouteData("home")
+  const promptRef = usePromptRef()
+  const [ref, setRef] = createSignal<PromptRef | undefined>()
+  const args = useArgs()
+  const local = useLocal()
+  const editor = useEditorContext()
+  const data = useData()
+  const location = useLocation()
   const dimensions = useTerminalDimensions()
-  const clipboardService = useClipboard()
-  const copyToClipboard = (text: string) => clipboardService.write?.(text) ?? Promise.reject(new Error("unsupported"))
-  const fg = selectedForeground(theme)
+  const [logoWidth, setLogoWidth] = createSignal(0)
+  // Global MCP elicitations can arrive without a session route, so keep them reachable from Home.
+  const currentLocation = () => route.location ?? data.location.default()
+  const forms = createMemo(() => data.session.form.list("global", currentLocation()) ?? [])
+  let sent = false
 
-  const [attaching, setAttaching] = createSignal(false)
-
-  const mcp = createMemo(() => Object.keys(sync.data.mcp).length > 0)
-  const mcpError = createMemo(() => {
-    return Object.values(sync.data.mcp).some((x) => x.status === "failed")
-  })
-  const connectedMcpCount = createMemo(() => {
-    return Object.values(sync.data.mcp).filter((x) => x.status === "connected").length
-  })
-
-  const [selectedIndex, setSelectedIndex] = createSignal(0)
-  const [dialogOpen, setDialogOpen] = createSignal(false)
-  const [promptOpen, setPromptOpen] = createSignal(false)
-
-  function resolveDir(agent: AgentEntry) {
-    const dir = agent.worktree
-      ? agent.worktree.directory
-      : !agent.directory || agent.directory === "."
-        ? sync.path.directory
-        : agent.directory.startsWith("/")
-          ? agent.directory
-          : sync.path.directory + "/" + agent.directory
-    return dir.replace(/\/+$/, "")
-  }
-
-  function shortDir(dir: string) {
-    return dir.replace(Global.Path.home, "~")
-  }
-
-  function hotkey(idx: number) {
-    const n = idx + 1
-    if (n <= 9) return String(n)
-    if (n === 10) return "0"
-    if (n <= 20) return "!@#$%^&*()"[n - 11]
-    return String(n)
-  }
-
-  type EnrichedAgent = AgentEntry & {
-    session: (typeof sync.data.session)[0] | undefined
-    status: (typeof sync.data.session_status)[string] | undefined
-  }
-
-  const grouped = createMemo(() => {
-    const entries: AgentEntry[] = kv.get("agents", [])
-    const map = new Map<string, { dir: string; label: string; agents: EnrichedAgent[] }>()
-    entries.forEach((entry) => {
-      const dir = resolveDir(entry)
-      if (!map.has(dir)) map.set(dir, { dir, label: shortDir(dir), agents: [] })
-      map.get(dir)!.agents.push({
-        ...entry,
-        session: sync.data.session.find((s) => s.id === entry.sessionID),
-        status: sync.data.session_status[entry.sessionID],
-      })
-    })
-    return [...map.values()]
-  })
-
-  const flat = createMemo(() => grouped().flatMap((g) => g.agents))
-
-  const children = createMemo(() => {
-    const map = new Map<string, string[]>()
-    sync.data.session.forEach((s) => {
-      if (!s.parentID) return
-      const list = map.get(s.parentID)
-      if (list) list.push(s.id)
-      else map.set(s.parentID, [s.id])
-    })
-    return map
-  })
-
-  function hasPending(sessionID: string): boolean {
-    if ((sync.data.permission[sessionID]?.length ?? 0) > 0) return true
-    if ((sync.data.question[sessionID]?.length ?? 0) > 0) return true
-    return (
-      children()
-        .get(sessionID)
-        ?.some((id) => hasPending(id)) ?? false
-    )
-  }
-
-  function hasPermission(sessionID: string): boolean {
-    if ((sync.data.permission[sessionID]?.length ?? 0) > 0) return true
-    return (
-      children()
-        .get(sessionID)
-        ?.some((id) => hasPermission(id)) ?? false
-    )
-  }
-
-  function approval(sessionID: string): PermissionRequest | undefined {
-    const perms = sync.data.permission[sessionID]
-    if (perms && perms.length > 0) return perms[0]
-    const kids = children().get(sessionID)
-    if (!kids) return undefined
-    for (const id of kids) {
-      const p = approval(id)
-      if (p) return p
-    }
-    return undefined
-  }
-
-  const [diffStats, setDiffStats] = createSignal<Record<string, DiffStat>>({})
-  // Worktrees whose background checkout (--no-checkout + forked boot)
-  // hasn't finished yet.  Keyed by branch so we can match the
-  // server-emitted worktree.ready event (which only carries branch).
-  const pending = new Map<string, string>() // branch → dir
-
-  function fetchDiffStats() {
-    const dirs = new Set(pending.values())
-    for (const group of grouped()) {
-      if (dirs.has(group.dir)) continue
-      sdk.client.worktree.diffstat({ directory: group.dir }).then((res) => {
-        const stat = res.data
-        if (!stat) return
-        setDiffStats((prev) => ({
-          ...prev,
-          [group.dir]: {
-            additions: Number(stat.additions),
-            deletions: Number(stat.deletions),
-            files: Number(stat.files),
-          },
-        }))
-      })
-    }
-  }
-
-  createEffect(on(grouped, () => fetchDiffStats()))
-
-  sdk.event.on("event", (evt) => {
-    if (evt.payload.type !== "worktree.ready") return
-    const branch = evt.payload.properties.branch
-    if (branch && pending.delete(branch)) fetchDiffStats()
-  })
-
-  // ---- GitHub PR integration ----
-
-  const base = () => `${sdk.url}/experimental`
-
-  async function ghFetch<T>(path: string, opts?: RequestInit): Promise<T | null | "error"> {
-    const url = `${base()}${path}${path.includes("?") ? "&" : "?"}directory=${encodeURIComponent(sync.path.directory)}`
-    console.log("ghFetch", { method: opts?.method ?? "GET", path })
-    const res = await sdk.fetch(url, opts).catch((err) => {
-      console.error("ghFetch: network error", { path, err: String(err) })
-      return null
-    })
-    if (!res) return "error"
-    if (!res.ok) {
-      const text = await res.text().catch(() => "")
-      console.error("ghFetch: non-ok response", { path, status: res.status, body: text })
-      return "error"
-    }
-    return res.json() as Promise<T>
-  }
-
-  const ghStatus = (): GitHub.Status | null => kv.get("gh_status", null)
-  const prData = (): Record<string, GitHub.PullRequest | null | "error"> => kv.get("pr_data", {})
-
-  const ghAvailable = () => ghStatus()?.authenticated
-
-  // Check GitHub auth status once on mount
-  ghFetch<GitHub.Status>("/github/status").then((s) => {
-    if (s) kv.set("gh_status", s)
-  })
-
-  function worktrees() {
-    return flat()
-      .filter((a): a is typeof a & { worktree: NonNullable<typeof a.worktree> } => !!a.worktree?.branch)
-      .reduce((map, a) => map.set(a.worktree.branch, a.worktree.directory), new Map<string, string>())
-  }
-
-  function fetchPRs() {
-    if (!ghAvailable()) return
-    Array.from(worktrees()).forEach(([branch, dir]) => {
-      ghFetch<GitHub.PullRequest | null>(
-        `/github/pr?branch=${encodeURIComponent(branch)}&cwd=${encodeURIComponent(dir)}`,
-      ).then((res) => {
-        kv.set("pr_data", { ...prData(), [branch]: res })
-      })
-    })
-  }
-
-  // Fetch PRs when agents change or gh becomes available
-  createEffect(
-    on(
-      () => [ghAvailable(), flat().length] as const,
-      () => fetchPRs(),
-    ),
-  )
-
-  // Poll every 60s while dashboard is visible
-  onMount(() => {
-    // Attachments live in the server's memory, so the dashboard reconciles on
-    // entry rather than trusting anything cached locally.
-    sdk.client.session
-      .remoteControlList()
-      // Leave state alone when the call fails: this client reports errors in
-      // the result rather than throwing, and overwriting would drop live state.
-      .then((res) => res.data && sync.set("remote_sessions", [...res.data]))
-      .catch(() => {})
-    const timer = setInterval(() => fetchPRs(), 300000)
-    onCleanup(() => clearInterval(timer))
-  })
-
-  function prFor(group: { agents: EnrichedAgent[] }): GitHub.PullRequest | null | undefined | "error" {
-    const branch = group.agents.find((a) => a.worktree?.branch)?.worktree?.branch
-    if (!branch) return undefined
-    return prData()[branch]
-  }
-
-  // Restore selection to the last-entered agent
-  if (lastEnteredSessionID) {
-    const idx = flat().findIndex((a) => a.sessionID === lastEnteredSessionID)
-    if (idx >= 0) setSelectedIndex(idx)
-  }
-
-  function move(direction: number) {
-    const len = flat().length
-    if (len === 0) return
-    setSelectedIndex((i) => {
-      const next = i + direction
-      if (next < 0) return len - 1
-      if (next >= len) return 0
-      return next
-    })
-  }
-
-  function selected() {
-    return flat()[selectedIndex()]
-  }
-
-  // Publish the cursor so plugins can act on "the agent I'm looking at" —
-  // voice commands have no other way to know which row is highlighted.
+  // Track only the route location and (when absent) the default location; location.set
+  // reads other signals internally and tracking them would re-assert the route location
+  // after the user overrides it with /cd.
   createEffect(() => {
-    sync.set("home_selected_session", selected()?.sessionID)
+    const target = currentLocation()
+    untrack(() => location.set(target))
   })
 
-  function insertAgent(entry: AgentEntry) {
-    const current: AgentEntry[] = kv.get("agents", [])
-    const dir = resolveDir(entry)
-    // Insert after the last agent in the same directory group
-    const last = current.reduce((acc, a, i) => (resolveDir(a) === dir ? i : acc), -1)
-    const idx = last === -1 ? current.length : last + 1
-    const next = [...current.slice(0, idx), entry, ...current.slice(idx)]
-    kv.set("agents", next)
-    setSelectedIndex(idx)
+  onMount(() => {
+    editor.clearSelection()
+  })
+
+  const bind = (r: PromptRef | undefined) => {
+    setRef(r)
+    promptRef.set(r)
+    if (once || !r || route.prompt || !args.prompt) return
+    r.set({ text: args.prompt, files: [], agents: [], pasted: [] })
+    once = true
   }
 
-  let scroll: ScrollBoxRenderable | undefined
+  createEffect(() => {
+    const composer = ref()
+    const prompt = route.prompt
+    if (!composer || prompt?.text === undefined) return
+    untrack(() => composer.set(prompt))
+  })
 
-  function scrollToSelected() {
-    if (!scroll) return
-    const children = scroll.getChildren()
-    // Find the child with matching id since headers are interleaved
-    const target = children.find((c) => c.id === String(selectedIndex()))
-    if (!target) return
-    const y = target.y - scroll.y
-    if (y >= scroll.height) {
-      scroll.scrollBy(y - scroll.height + 1)
-    }
-    if (y < 0) {
-      scroll.scrollBy(y)
-    }
-  }
-
-  function jump(evt: { name: string }) {
-    const sym = evt.name.length === 1 ? "!@#$%^&*()".indexOf(evt.name) : -1
-    const num = sym !== -1 ? sym + 11 : parseInt(evt.name)
-    if (sym === -1 && isNaN(num)) return
-    const idx = sym !== -1 ? num : num === 0 ? 10 : num
-    if (idx >= 1 && idx <= flat().length) {
-      setSelectedIndex(idx - 1)
-      scrollToSelected()
-    }
-  }
-
-  function down() {
-    move(1)
-    scrollToSelected()
-  }
-
-  function up() {
-    move(-1)
-    scrollToSelected()
-  }
-
-  function enter() {
-    const agent = selected()
-    if (!agent) return
-    lastEnteredSessionID = agent.sessionID
-    route.navigate({ type: "session", sessionID: agent.sessionID })
-  }
-
-  function copy() {
-    const agent = selected()
-    if (!agent) return
-    copyToClipboard(resolveDir(agent))
-      .then(() => toast.show({ message: "Copied path to clipboard", variant: "info" }))
-      .catch(() => toast.show({ message: "Failed to copy path", variant: "error" }))
-  }
-
-  async function add() {
-    setDialogOpen(true)
-    const dir = await DialogDirectorySelect.show(dialog, "Select Directory")
-    if (!dir) {
-      dialog.clear()
-      setDialogOpen(false)
-      return
-    }
-    const name = await DialogPrompt.show(dialog, "New Agent", { placeholder: "Agent name" })
-    dialog.clear()
-    setDialogOpen(false)
-    if (!name) return
-    const root = dir === "." ? sync.path.directory : sync.path.directory + "/" + dir
-    const result = await sdk.client.session.create({ directory: root, title: name })
-    if (!result.data) return
-    const wt = (await sdk.client.worktree.info({ directory: root })).data
-    insertAgent({
-      id: crypto.randomUUID(),
-      name,
-      sessionID: result.data.id,
-      createdAt: Date.now(),
-      directory: root,
-      worktree: wt ? { branch: wt.branch, directory: wt.directory, sourceRepo: wt.sourceRepo } : undefined,
-    })
-  }
-
-  async function wt() {
-    setDialogOpen(true)
-    const repoDir = await DialogGitRepoSelect.show(
-      dialog,
-      "Select Source Repository",
-      sync.path.directory,
-      "Choose the repository to create a new worktree from",
-    )
-    if (!repoDir) {
-      dialog.clear()
-      setDialogOpen(false)
-      return
-    }
-    const name = await DialogPrompt.show(dialog, "New Worktree Agent", { placeholder: "Agent name (used as branch)" })
-    dialog.clear()
-    setDialogOpen(false)
-    if (!name) return
-    const worktree = (await sdk.client.worktree.create({ directory: repoDir, worktreeCreateInput: { name } })).data
-    if (!worktree) return
-    // Pre-seed zero diff stats so the effect doesn't race the
-    // background worktree checkout (--no-checkout + forked boot).
-    const dir = worktree.directory.replace(/\/+$/, "")
-    pending.set(worktree.branch ?? name, dir)
-    setDiffStats((prev) => ({ ...prev, [dir]: { additions: 0, deletions: 0, files: 0 } }))
-    const session = (await sdk.client.session.create({ directory: worktree.directory, title: name })).data
-    if (!session) return
-    insertAgent({
-      id: crypto.randomUUID(),
-      name,
-      sessionID: session.id,
-      createdAt: Date.now(),
-      directory: worktree.directory,
-      worktree: { branch: worktree.branch ?? name, directory: worktree.directory, sourceRepo: repoDir },
-    })
-  }
-
-  async function remove() {
-    const agent = selected()
-    if (!agent) return
-    setDialogOpen(true)
-    const ok = await DialogConfirm.show(dialog, "Remove Agent", `Remove "${agent.name}" from the dashboard?`)
-    dialog.clear()
-    setDialogOpen(false)
-    if (!ok) return
-    kv.set(
-      "agents",
-      (kv.get("agents", []) as AgentEntry[]).filter((a) => a.id !== agent.id),
-    )
-    setSelectedIndex((i) => Math.min(i, flat().length - 1))
-  }
-
-  async function purge() {
-    const agent = selected()
-    if (!agent) return
-    const dir = resolveDir(agent)
-    const info = (await sdk.client.worktree.info({ directory: dir })).data
-    if (!info) return
-    setDialogOpen(true)
-    const ok = await DialogConfirm.show(
-      dialog,
-      "Delete Worktree",
-      `Delete worktree and all agents in ${shortDir(dir)}?`,
-    )
-    if (!ok) {
-      dialog.clear()
-      setDialogOpen(false)
-      return
-    }
-    dialog.replace(() => (
-      <box paddingBottom={1} paddingLeft={4} paddingRight={4}>
-        <Spinner>Deleting worktree…</Spinner>
-      </box>
-    ))
-    await sdk.client.worktree
-      .remove({ directory: dir, worktreeRemoveInput: { directory: dir } })
-      .then(() => {
-        kv.set(
-          "agents",
-          (kv.get("agents", []) as AgentEntry[]).filter((a) => resolveDir(a) !== dir),
-        )
-      })
-      .catch(() => toast.show({ message: "Failed to delete worktree", variant: "error" }))
-      .finally(() => {
-        dialog.clear()
-        setDialogOpen(false)
-      })
-    setSelectedIndex((i) => Math.min(i, flat().length - 1))
-  }
-
-  function diff() {
-    const agent = selected()
-    if (!agent) return
-    lastEnteredSessionID = agent.sessionID
-    route.navigate({ type: "diffview", directory: resolveDir(agent) })
-  }
-
-  function approve() {
-    const agent = selected()
-    if (!agent) return
-    const perm = approval(agent.sessionID)
-    if (!perm) return
-    sdk.client.permission.reply({ reply: "once", requestID: perm.id })
-  }
-
-  function deny() {
-    const agent = selected()
-    if (!agent) return
-    const perm = approval(agent.sessionID)
-    if (!perm) return
-    sdk.client.permission.reply({ reply: "reject", requestID: perm.id })
-  }
-
-  function leaderByte() {
-    const key = tuiConfig.keybinds.get(LEADER_TOKEN)?.[0]?.key ?? TuiKeybind.LeaderDefault
-    const stroke =
-      typeof key === "string"
-        ? { ctrl: key.includes("ctrl+"), name: key.split("+").pop() ?? "" }
-        : { ctrl: key.ctrl === true, name: key.name }
-    if (!stroke.ctrl || !stroke.name) return 0x18
-    return stroke.name.toLowerCase().charCodeAt(0) - 96
-  }
-
-  useBindings(() => ({
-    enabled: !dialogOpen() && dialog.stack.length === 0 && !promptOpen(),
-    commands: [
-      {
-        name: "app.exit",
-        title: "Exit",
-        category: "Dashboard",
-        run() {
-          exit()
-        },
-      },
-    ],
-  }))
-
-  function attach() {
-    if (attaching()) return
-    const agent = selected()
-    if (!agent) return
-    const dir = resolveDir(agent)
-    const byte = leaderByte()
-    setAttaching(true)
-    const fgInts = fg.toInts()
-    const bgInts = theme.primary.toInts()
-    PtyAttach.open(agent.id, dir, renderer, {
-      leader: byte,
-      // The PTY detaches on leader + bare Escape, not the dashboard command binding.
-      label: `${leaderDisplay(tuiConfig)} esc`,
-      dir: shortDir(dir),
-      fg: [fgInts[0], fgInts[1], fgInts[2]],
-      bg: [bgInts[0], bgInts[1], bgInts[2]],
-    })
-      .catch(() => {})
-      .finally(() => setAttaching(false))
-  }
-
-  function refresh() {
-    fetchPRs()
-    fetchDiffStats()
-    toast.show({ message: "Refreshing PR statuses...", variant: "info" })
-  }
-
-  async function propose() {
-    const agent = selected()
-    console.log("propose: triggered", { agent: agent?.id, worktree: agent?.worktree?.branch })
-    if (!agent?.worktree) {
-      console.warn("propose: no worktree on selected agent")
-      return
-    }
-    const existing = prData()[agent.worktree.branch]
-    if (existing && existing !== "error" && existing.state === "OPEN") {
-      console.log("propose: open PR already exists", { number: existing.number, branch: agent.worktree.branch })
-      toast.show({ message: `PR #${existing.number} already exists`, variant: "info" })
-      return
-    }
-    console.log("propose: opening title dialog", { branch: agent.worktree.branch })
-    setDialogOpen(true)
-    const title = await DialogPrompt.show(dialog, "Create Pull Request", { placeholder: "PR title" })
-    if (!title) {
-      console.log("propose: title dialog cancelled")
-      dialog.clear()
-      setDialogOpen(false)
-      return
-    }
-    console.log("propose: title entered", { title })
-    const body = await DialogPrompt.show(dialog, "PR Description (optional)", { placeholder: "PR description" })
-    console.log("propose: body entered", { body: body ?? "" })
-    dialog.clear()
-    setDialogOpen(false)
-    toast.show({ message: "Creating PR...", variant: "info" })
-    const payload = { head: agent.worktree.branch, title, body: body ?? "", cwd: agent.worktree.directory }
-    console.log("propose: posting /github/pr", payload)
-    const result = await ghFetch<GitHub.PullRequest | GitHub.CreateError>("/github/pr", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-    console.log("propose: /github/pr response", { result: JSON.stringify(result) })
-    if (!result || result === "error") {
-      toast.show({ message: "Failed to create PR", variant: "error" })
-      return
-    }
-    if ("error" in result) {
-      toast.show({ message: result.error, variant: "error" })
-      return
-    }
-    kv.set("pr_data", { ...prData(), [agent.worktree.branch]: result })
-    toast.show({ message: `Created PR #${result.number}`, variant: "info" })
-  }
-
-  function link() {
-    const agent = selected()
-    if (!agent?.worktree) return
-    const pr = prData()[agent.worktree.branch]
-    if (!pr || pr === "error") {
-      toast.show({ message: "No PR for this branch", variant: "info" })
-      return
-    }
-    copyToClipboard(pr.url)
-      .then(() => toast.show({ message: `Copied ${pr.url}`, variant: "info" }))
-      .catch(() => toast.show({ message: pr.url, variant: "info" }))
-  }
-
-  function openPrompt() {
-    const agent = selected()
-    if (!agent) return
-    setPromptOpen(true)
-  }
-
-  async function merge() {
-    const agent = selected()
-    if (!agent?.worktree) return
-    const pr = prData()[agent.worktree.branch]
-    if (!pr || pr === "error") {
-      toast.show({ message: "No PR for this branch", variant: "info" })
-      return
-    }
-    if (pr.state !== "OPEN") {
-      toast.show({ message: `PR is ${pr.state.toLowerCase()}`, variant: "info" })
-      return
-    }
-    if (pr.checks === "fail") {
-      toast.show({ message: "PR not ready: CI failing", variant: "error" })
-      return
-    }
-    if (pr.review === "CHANGES_REQUESTED") {
-      toast.show({ message: "PR not ready: changes requested", variant: "error" })
-      return
-    }
-    setDialogOpen(true)
-    const ok = await DialogConfirm.show(dialog, "Merge PR", `Merge PR #${pr.number} "${pr.title}"?`)
-    dialog.clear()
-    setDialogOpen(false)
-    if (!ok) return
-    toast.show({ message: "Merging PR...", variant: "info" })
-    const merged = await ghFetch<boolean>("/github/pr/merge", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ number: pr.number, cwd: agent.worktree.directory }),
-    })
-    if (!merged) {
-      toast.show({ message: "Failed to merge PR", variant: "error" })
-      return
-    }
-    toast.show({ message: `Merged PR #${pr.number}`, variant: "info" })
-    fetchPRs()
-  }
-
-  useKeyboard((evt) => {
-    const wasOpen = promptOpen()
-    if (wasOpen) {
-      if (evt.name === "escape") {
-        setPromptOpen(false)
-        evt.preventDefault()
-        evt.stopPropagation()
-      }
-      // Let the Prompt component handle all keys (including ctrl-c clear)
-      return
-    }
-    if (dialogOpen() || dialog.stack.length > 0) return
-    if (leaderActive()) return
-    if (flat().length === 0 && evt.name !== "a" && evt.name !== "w") return
-
-    jump(evt)
-    if (evt.name === "j" || evt.name === "down") down()
-    if (evt.name === "k" || evt.name === "up") up()
-    if (evt.name === "return") enter()
-    if (evt.name === "c") copy()
-    if (evt.name === "a") add()
-    if (evt.name === "w") wt()
-    if (evt.name === "d" && !evt.shift) remove()
-    if (evt.name === "x") purge()
-    if (evt.name === "d" && evt.shift) diff()
-    if (evt.name === "y") approve()
-    if (evt.name === "n") deny()
-    if (evt.name === "t") attach()
-    if (evt.name === "i") {
-      if (!selected()) return
-      evt.preventDefault()
-      evt.stopPropagation()
-      openPrompt()
-      return
-    }
-    if (evt.name === "r") refresh()
-    if (evt.name === "p" && evt.shift && ghAvailable()) {
-      evt.preventDefault()
-      evt.stopPropagation()
-      propose()
-      return
-    }
-    if (evt.name === "o") link()
-    if (evt.name === "m" && evt.shift && ghAvailable()) {
-      evt.preventDefault()
-      evt.stopPropagation()
-      merge()
-      return
-    }
+  // Wait for everything submit needs before auto-submitting --prompt; it runs once.
+  createEffect(() => {
+    const r = ref()
+    if (sent) return
+    if (!r) return
+    if (!local.model.ready || !local.model.catalogReady) return
+    if (!local.agent.current() || !local.model.current()) return
+    if (!args.prompt) return
+    if (r.current.text !== args.prompt) return
+    sent = true
+    r.submit()
   })
 
   return (
     <>
-      <box flexGrow={1} flexDirection="column" paddingLeft={2} paddingRight={2} paddingTop={1}>
-        {/* Header */}
-        <box flexDirection="row" flexShrink={0}>
-          <box width={4} flexShrink={0}>
-            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
-              #
-            </text>
-          </box>
-          <box width="30%" flexShrink={0}>
-            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
-              Name
-            </text>
-          </box>
-          <box width={18} flexShrink={0}>
-            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
-              Status
-            </text>
-          </box>
-          <box flexGrow={1} flexShrink={1} minWidth={0}>
-            <text fg={theme.textMuted} attributes={TextAttributes.BOLD}>
-              Activity
-            </text>
-          </box>
-        </box>
-
-        {/* Agent rows */}
-        <Show
-          when={flat().length > 0}
-          fallback={
-            <box flexGrow={1} alignItems="center" justifyContent="center">
-              <text fg={theme.textMuted}>No agents yet. Press 'a' to create or 'w' for worktree.</text>
-            </box>
-          }
-        >
-          <scrollbox flexGrow={1} scrollbarOptions={{ visible: false }} ref={(r: ScrollBoxRenderable) => (scroll = r)}>
-            <For each={grouped()}>
-              {(group) => (
-                <>
-                  <box paddingTop={1} paddingBottom={0} flexDirection="row">
-                    <text fg={theme.accent} attributes={TextAttributes.BOLD} overflow="hidden" wrapMode="none">
-                      {group.label}
-                    </text>
-                    <Show when={diffStats()[group.dir]}>
-                      {(stats) => (
-                        <text>
-                          {"  "}
-                          <span style={{ fg: theme.success }}>+{stats().additions}</span>{" "}
-                          <span style={{ fg: theme.error }}>-{stats().deletions}</span>{" "}
-                          <span style={{ fg: theme.textMuted }}>
-                            {stats().files} {Locale.pluralize(stats().files, "file", "files")}
-                          </span>
-                        </text>
-                      )}
-                    </Show>
-                    <PRCell pr={prFor(group)} />
-                  </box>
-                  <For each={group.agents}>
-                    {(agent) => {
-                      const idx = createMemo(() => flat().indexOf(agent))
-                      const isSelected = createMemo(() => idx() === selectedIndex())
-                      return (
-                        <box id={String(idx())} flexDirection="column">
-                          <box flexDirection="row" backgroundColor={isSelected() ? theme.primary : undefined}>
-                            <box width={4} flexShrink={0}>
-                              <text fg={isSelected() ? fg : theme.textMuted}>{hotkey(idx())}</text>
-                            </box>
-                            <box width="30%" flexShrink={0}>
-                              <text
-                                fg={isSelected() ? fg : theme.text}
-                                attributes={isSelected() ? TextAttributes.BOLD : undefined}
-                                overflow="hidden"
-                                wrapMode="none"
-                              >
-                                <Show when={sync.data.remote_sessions.includes(agent.sessionID)}>
-                                  <span style={{ fg: isSelected() ? fg : theme.success }}>◉ </span>
-                                </Show>
-                                {agent.name}
-                              </text>
-                            </box>
-                            <box width={18} flexShrink={0}>
-                              <Switch>
-                                <Match when={hasPermission(agent.sessionID)}>
-                                  <text fg={isSelected() ? fg : theme.warning}>Approve (y/n)</text>
-                                </Match>
-                                <Match when={hasPending(agent.sessionID)}>
-                                  <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
-                                </Match>
-                                <Match when={agent.status?.type === "busy"}>
-                                  <Spinner color={isSelected() ? fg : theme.success}>Working</Spinner>
-                                </Match>
-                                <Match when={agent.status?.type === "retry"}>
-                                  <text fg={isSelected() ? fg : theme.error}>Retrying</text>
-                                </Match>
-                                <Match when={true}>
-                                  <text fg={isSelected() ? fg : theme.warning}>Waiting for user</text>
-                                </Match>
-                              </Switch>
-                            </box>
-                            <box flexGrow={1} flexShrink={1} minWidth={0}>
-                              <Show
-                                when={
-                                  agent.status?.type === "busy" &&
-                                  (agent.status as { type: "busy"; activity?: string }).activity
-                                }
-                                fallback={<text fg={isSelected() ? fg : theme.textMuted}>-</text>}
-                              >
-                                {(activity) => (
-                                  <text fg={isSelected() ? fg : theme.textMuted} overflow="hidden" wrapMode="none">
-                                    {activity()}
-                                  </text>
-                                )}
-                              </Show>
-                            </box>
-                          </box>
-                          <Show
-                            when={approval(agent.sessionID)}
-                            fallback={
-                              <Show
-                                when={
-                                  kv.get("agent_summaries_visible", true) && sync.data.agent_summary[agent.sessionID]
-                                }
-                              >
-                                {(s) => (
-                                  <box paddingLeft={4} maxHeight={4}>
-                                    <text fg={theme.textMuted} wrapMode="word" overflow="hidden">
-                                      {(s().ai ? "Summary: " : "") + s().text}
-                                    </text>
-                                  </box>
-                                )}
-                              </Show>
-                            }
-                          >
-                            {(perm) => <PermissionDetail request={perm()} selected={isSelected()} />}
-                          </Show>
-                        </box>
-                      )
-                    }}
-                  </For>
-                </>
-              )}
-            </For>
-          </scrollbox>
-        </Show>
-      </box>
-      <Show when={promptOpen() && selected()}>
+      <box
+        flexGrow={1}
+        alignItems="center"
+        paddingLeft={dimensions().width < 44 ? 1 : 2}
+        paddingRight={dimensions().width < 44 ? 1 : 2}
+      >
+        <box flexGrow={1} minHeight={0} />
+        <box height={3} minHeight={0} flexShrink={1} />
         <box
-          position="absolute"
-          top={0}
-          left={0}
-          width={dimensions().width}
-          height={dimensions().height}
-          justifyContent="center"
-          alignItems="center"
+          flexShrink={0}
+          onSizeChange={function () {
+            setLogoWidth(this.width)
+          }}
         >
-          <box width={Math.min(dimensions().width - 8, 120)}>
-            <Prompt
-              sessionID={selected()!.sessionID}
-              directory={resolveDir(selected()!)}
-              visible={true}
-              compact={true}
-              onSubmit={() => queueMicrotask(() => setPromptOpen(false))}
-              hint={
-                <text>
-                  <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>esc</span>
-                  <span style={{ fg: theme.textMuted }}> dismiss</span>
-                </text>
-              }
-            />
-          </box>
+          <Logo />
         </box>
-      </Show>
-      <box paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column" flexShrink={0} gap={0}>
-        <box flexDirection="row" gap={3} flexShrink={0}>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>a</span>
-            <span style={{ fg: theme.textMuted }}> new agent</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>w</span>
-            <span style={{ fg: theme.textMuted }}> new worktree</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>d</span>
-            <span style={{ fg: theme.textMuted }}> remove</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>x</span>
-            <span style={{ fg: theme.textMuted }}> delete worktree</span>
-          </text>
-          <Show when={ghAvailable()}>
-            <text>
-              <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>P</span>
-              <span style={{ fg: theme.textMuted }}> create PR</span>
-            </text>
-            <text>
-              <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>o</span>
-              <span style={{ fg: theme.textMuted }}> copy url</span>
-            </text>
-            <text>
-              <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>M</span>
-              <span style={{ fg: theme.textMuted }}> merge</span>
-            </text>
-          </Show>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>r</span>
-            <span style={{ fg: theme.textMuted }}> refresh PR statuses</span>
-          </text>
+        <box height={1} flexShrink={0} />
+        <UpdateNotification width={logoWidth()} />
+        <box width="100%" maxWidth={75} zIndex={1000} paddingTop={1} flexShrink={0} position="relative">
+          <Prompt ref={bind} placeholders={placeholder} disabled={forms().length > 0} />
         </box>
-        <box flexDirection="row" gap={3} flexShrink={0}>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>↑↓</span>
-            <span style={{ fg: theme.textMuted }}>/</span>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>j/k</span>
-            <span style={{ fg: theme.textMuted }}> navigate</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>enter</span>
-            <span style={{ fg: theme.textMuted }}> open</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>i</span>
-            <span style={{ fg: theme.textMuted }}> message</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>D</span>
-            <span style={{ fg: theme.textMuted }}> diff</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>t</span>
-            <span style={{ fg: theme.textMuted }}> terminal</span>
-          </text>
-          <text>
-            <span style={{ fg: theme.text, attributes: TextAttributes.BOLD }}>{paletteShortcut()}</span>
-            <span style={{ fg: theme.textMuted }}> commands</span>
-          </text>
-        </box>
-        <box flexDirection="row" paddingTop={1} gap={2}>
-          <text fg={theme.textMuted}>{directory()}</text>
-          <box gap={1} flexDirection="row" flexShrink={0}>
-            <Show when={mcp()}>
-              <text fg={theme.text}>
-                <Switch>
-                  <Match when={mcpError()}>
-                    <span style={{ fg: theme.error }}>⊙ </span>
-                  </Match>
-                  <Match when={true}>
-                    <span style={{ fg: connectedMcpCount() > 0 ? theme.success : theme.textMuted }}>⊙ </span>
-                  </Match>
-                </Switch>
-                {connectedMcpCount()} MCP
-              </text>
-              <text fg={theme.textMuted}>/status</text>
-            </Show>
-          </box>
-          <box flexGrow={1} />
-          <box flexShrink={0}>
-            <text fg={theme.textMuted}>{InstallationVersion}</text>
-          </box>
-        </box>
+        <box flexGrow={1} minHeight={0} />
       </box>
-      <Toast />
+      <box width="100%" flexShrink={0}>
+        <Slot path="home.footer" />
+      </box>
+      <Show when={forms()[0]?.id} keyed>
+        {(_) => {
+          const form = forms()[0]
+          return form ? (
+            <box position="absolute" zIndex={2000} left={0} right={0} bottom={1} paddingLeft={2} paddingRight={2}>
+              <box width="100%">
+                <FormPrompt form={form} />
+              </box>
+            </box>
+          ) : null
+        }}
+      </Show>
     </>
+  )
+}
+
+function UpdateNotification(props: { width: number }) {
+  const update = useUpdateNotification()
+  const exit = useExit()
+  const theme = useTheme()
+  const [hovered, setHovered] = createSignal(false)
+  const backdrop = () => (hovered() ? theme.background.action.primary.hovered : theme.background.base)
+  createEffect(() => {
+    update.notification()
+    setHovered(false)
+  })
+
+  return (
+    <Show when={update.notification()} keyed>
+      {(state) => {
+        const remote = state.source === "server" && state.remote
+        return (
+          <Show when={!remote || state.type === "available"}>
+            <box
+              flexShrink={0}
+              flexDirection="row"
+              justifyContent="center"
+              width={props.width}
+              maxWidth="100%"
+              gap={1}
+              backgroundColor={hovered() ? theme.background.action.primary.hovered : undefined}
+              onMouseOver={() => setHovered(true)}
+              onMouseOut={() => setHovered(false)}
+              onMouseUp={() => {
+                if (remote) return update.dismiss()
+                if (state.type === "installed") return exit()
+                update.open?.("notification")
+              }}
+            >
+              <FadeInText fg={theme.text.muted} backdrop={backdrop()}>
+                <Show when={!remote}>
+                  <span style={{ fg: theme.text.action.primary.selected }}>
+                    {state.type === "installed" ? "/exit" : "/update"}
+                  </span>
+                </Show>
+                {remote
+                  ? "remote server update available"
+                  : state.type === "installed"
+                    ? ` restart to use v${state.version}`
+                    : ` to install v${state.version}`}
+              </FadeInText>
+            </box>
+          </Show>
+        )
+      }}
+    </Show>
   )
 }
