@@ -29,6 +29,9 @@ target
 .cache
 .direnv/
 
+# Dispatch: Claude CLI embed module, only ever generated for compiled builds
+packages/dispatch/src/sdk/bin.gen.ts
+
 # Local dev files
 opencode-dev
 UPCOMING_CHANGELOG.md

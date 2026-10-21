@@ -115,6 +115,8 @@ export interface Interface {
   readonly removal: (
     method: Method,
   ) => { readonly command: ReadonlyArray<string>; readonly run: Effect.Effect<void, Error> } | undefined
+  /** Dispatch: set when this build never self-updates; holds the message to show instead. */
+  readonly disabled?: string
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/cli/Updater") {}
@@ -623,6 +625,25 @@ const make = Effect.gen(function* () {
 })
 
 export const layer = Layer.effect(Service, make)
+
+// Dispatch: a fork must never check for or install opencode releases. The CLI provides this layer instead of
+// `layer`; with `disabled` set the TUI gets no update source, so the notification and /update disappear too.
+const disabledMessage =
+  "Dispatch does not update itself. Rerun the Dispatch install script (or ./install-from-source) to update."
+const disabledError = () => Effect.fail(new Error(disabledMessage))
+export const disabledLayer = Layer.succeed(
+  Service,
+  Service.of({
+    run: () => Effect.succeed(undefined),
+    check: () => Effect.succeed({ type: "unavailable" as const, message: disabledMessage }),
+    apply: disabledError,
+    method: () => Effect.succeed(undefined),
+    latest: disabledError,
+    upgrade: disabledError,
+    removal: () => undefined,
+    disabled: disabledMessage,
+  }),
+)
 
 export * as Updater from "./updater"
 export { action, type Action, type Policy } from "./updater-action"

@@ -115,7 +115,8 @@ Effect.gen(function* () {
   ),
   Effect.annotateLogs({ role: "cli" }),
   Effect.provide(Config.layer),
-  Effect.provide(Updater.layer),
+  // Dispatch: the managed updater would install opencode releases over the fork.
+  Effect.provide(Updater.disabledLayer),
   Effect.provide(
     LayerNode.compile(LayerNode.group([Global.node, AppProcess.node, Npm.node, EffectFlock.node]), {
       replacements: [

@@ -38,13 +38,16 @@ const IS_PREVIEW = CHANNEL !== "latest"
 const VERSION = await (async () => {
   if (env.OPENCODE_VERSION) return env.OPENCODE_VERSION
   if (IS_PREVIEW) return `0.0.0-${CHANNEL}-${previewBuildNumber()}`
-  const version = await fetch("https://registry.npmjs.org/@opencode%2fcli/latest")
+  // Dispatch: releases live on GitHub (achin90/Dispatch), not npm, so bump from the latest release tag.
+  const token = process.env["GH_TOKEN"] ?? process.env["GITHUB_TOKEN"]
+  const version = await fetch("https://api.github.com/repos/achin90/Dispatch/releases/latest", {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
     .then((res) => {
       if (!res.ok) throw new Error(res.statusText)
       return res.json()
     })
-    .then((data: any) => data.version)
-  if (semver.lt(version, "2.0.0")) return "2.0.0"
+    .then((data: any) => String(data.tag_name).replace(/^v/, ""))
   const [major, minor, patch] = version.split(".").map((x: string) => Number(x) || 0)
   const t = env.OPENCODE_BUMP?.toLowerCase()
   if (t === "major") return `${major + 1}.0.0`
