@@ -27,6 +27,10 @@ describe("gitRepos.list", () => {
     const filtered = await Effect.runPromise(DispatchGit.repos({ root, query: "BET" }))
     expect(filtered.repos).toEqual([path.join(root, "group/beta")])
   })
+
+  test("a root that does not exist has no repositories", async () => {
+    expect(await Effect.runPromise(DispatchGit.repos({ root: path.join(temp(), "missing") }))).toEqual({ repos: [] })
+  })
 })
 
 describe("worktree.info / diffstat", () => {

@@ -131,6 +131,21 @@ describe("canUseTool bridge", () => {
     expect(result).toEqual({ behavior: "allow", updatedInput: { pattern: "TODO" } })
   })
 
+  test("a call whose signal is already aborted is denied without asking", async () => {
+    const result = await fixture.run(
+      Effect.gen(function* () {
+        const { call } = yield* bridge([{ action: "shell", resource: "*", effect: "ask" }])
+        const abort = new AbortController()
+        abort.abort()
+        const outcome = yield* answer(call("Bash", { command: "ls" }, abort.signal).answer)
+        const permission = yield* Permission.Service
+        return { outcome, pending: yield* permission.list() }
+      }),
+    )
+    expect(result.outcome).toEqual({ behavior: "deny", message: "Request aborted" })
+    expect(result.pending).toEqual([])
+  })
+
   test("an abort while asking denies and removes the pending request", async () => {
     const result = await fixture.run(
       Effect.gen(function* () {

@@ -21,6 +21,11 @@ describe("normalizeTool", () => {
     expect(SdkAdapter.normalizeTool("mcp__devin__ask_wiki_question")).toBe("devin_ask_wiki_question")
     expect(SdkAdapter.normalizeTool("mcp__my.server__tool")).toBe("my_server_tool")
   })
+
+  test("unknown tools fall back to their lowercased name", () => {
+    expect(SdkAdapter.normalizeTool("CustomTool")).toBe("customtool")
+    expect(SdkAdapter.normalizeTool("read")).toBe("read")
+  })
 })
 
 describe("normalizeInput", () => {
@@ -71,6 +76,9 @@ describe("normalizeInput", () => {
   test("unknown tools keep their input with camelCase keys", () => {
     expect(SdkAdapter.normalizeInput("NewTool", { some_key: 1, other: 2 })).toEqual({ someKey: 1, other: 2 })
     expect(SdkAdapter.snakeToCamel("replace_all")).toBe("replaceAll")
+    expect(SdkAdapter.snakeToCamel("very_long_name")).toBe("veryLongName")
+    expect(SdkAdapter.snakeToCamel("filePath")).toBe("filePath")
+    expect(SdkAdapter.normalizeInput("NewTool", {})).toEqual({})
   })
 })
 
@@ -121,6 +129,25 @@ describe("errors and finish reasons", () => {
     expect(SdkAdapter.errorMessage(Object.assign(new Error("boom"), { status: 503 }))).toBe("Claude server error (503)")
     expect(SdkAdapter.errorMessage(new Error("plain"))).toBe("plain")
     expect(SdkAdapter.errorMessage("text")).toBe("text")
+  })
+
+  test("status may arrive as statusCode or a string; 4xx keeps the error's own message", () => {
+    expect(SdkAdapter.errorMessage(Object.assign(new Error("boom"), { statusCode: 500 }))).toBe(
+      "Claude internal server error",
+    )
+    expect(SdkAdapter.errorMessage(Object.assign(new Error("boom"), { status: "500" }))).toBe(
+      "Claude internal server error",
+    )
+    expect(SdkAdapter.errorMessage(Object.assign(new Error("not found"), { status: 404 }))).toBe("not found")
+  })
+
+  test("anything without a usable message is an unknown error", () => {
+    expect(SdkAdapter.errorMessage(new Error(""))).toBe("Unknown error")
+    expect(SdkAdapter.errorMessage(null)).toBe("Unknown error")
+    expect(SdkAdapter.errorMessage(undefined)).toBe("Unknown error")
+    expect(SdkAdapter.errorMessage(42)).toBe("Unknown error")
+    // A plain object is not an Error, even with a message field.
+    expect(SdkAdapter.errorMessage({ message: "ignored" })).toBe("Unknown error")
   })
 
   test("stop reasons map to v2 finishes", () => {
