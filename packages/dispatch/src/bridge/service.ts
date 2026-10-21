@@ -329,6 +329,7 @@ export const make = Effect.fn("DispatchBridge.make")(function* (dependencies: De
   const turn = (sessionID: SessionSchema.ID): Turn => {
     // Held by identity so a detach and re-attach mid-turn reports "running" on the new handle.
     let running: BridgeMirror.MirrorHandle | undefined
+    let frames = 0
     return {
       prompted: (messages) =>
         Effect.sync(() =>
@@ -346,6 +347,7 @@ export const make = Effect.fn("DispatchBridge.make")(function* (dependencies: De
             mirror.state("running")
           }
           mirror.write(message)
+          frames++
         }),
       settle: (completed) =>
         Effect.gen(function* () {
@@ -356,6 +358,11 @@ export const make = Effect.fn("DispatchBridge.make")(function* (dependencies: De
             : []
           mirror.result(latest?.id)
           mirror.state("idle")
+          // Logged once the upload drains, off the turn's path: a slow transport must not delay it.
+          yield* Effect.promise(() => mirror.flush()).pipe(
+            Effect.andThen(Effect.logInfo("mirrored turn uploaded", { sessionID, frames, completed, mark: latest?.id })),
+            Effect.forkDetach,
+          )
         }).pipe(Effect.catchCause((cause) => Effect.logWarning("failed to end the mirrored turn", { cause }))),
     }
   }
