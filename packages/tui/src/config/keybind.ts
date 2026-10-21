@@ -109,6 +109,8 @@ export const Definitions = {
   "session.move": keybind("none", "Manage workspaces"),
   "session.new": keybind("<leader>n", "Create a new session"),
   "session.list": keybind("<leader>l", "List all sessions"),
+  // Dispatch: back to the agent dashboard.
+  "session.dashboard": keybind("<leader>d", "Open the agent dashboard"),
   "open.menu": keybind("ctrl+o", "Open recent sessions and projects"),
   "session.tab.next": keybind("ctrl+tab,alt+down", "Switch to next open session tab"),
   "session.tab.previous": keybind("ctrl+shift+tab,alt+up", "Switch to previous open session tab"),

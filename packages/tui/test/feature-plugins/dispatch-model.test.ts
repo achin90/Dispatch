@@ -9,7 +9,7 @@ const permission = (sessionID: string, id = `per_${sessionID}`): PermissionReque
   resources: ["pwd"],
 })
 
-const form = (sessionID: string): FormInfo => ({ id: `frm_${sessionID}`, sessionID, title: "Questions", fields: [] })
+const form = (sessionID: string): FormInfo => ({ id: `frm_${sessionID}`, sessionID, title: "Questions", fields: [{ key: "q0", type: "boolean" }] })
 
 function status(input: {
   family?: string[]

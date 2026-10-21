@@ -37,6 +37,25 @@ export const SUMMARIES_KEY = "summaries"
 export type SummariesState = { visible: boolean; bySession: Record<string, AgentSummary> }
 export const emptySummaries = (): SummariesState => ({ visible: true, bySession: {} })
 
+// Client-local dashboard state shared by the route, the background watcher and the plugin state API.
+export const STATE_KEY = "state"
+export const STATE_MEMORY_KEY = `plugin.${PLUGIN_ID}.${STATE_KEY}`
+export type DashboardState = {
+  /** Session under the dashboard cursor. */
+  selected?: string
+  /** Session the user last opened from the dashboard; the cursor returns to it. */
+  lastEntered?: string
+  /** Diffstat per agent directory. */
+  diffstats: Record<string, DispatchRpc.DiffStat>
+  /** Pull request per worktree branch; "error" when the lookup failed. */
+  prs: Record<string, DispatchRpc.PullRequest | null | "error">
+  /** Whether `gh` is authenticated on the server; undefined until known or when unsupported. */
+  github?: boolean
+  /** Sessions mirrored to claude.ai. */
+  remote: string[]
+}
+export const emptyState = (): DashboardState => ({ diffstats: {}, prs: {}, remote: [] })
+
 /**
  * Session.metadata key stamped on an agent's session at creation, so other clients can tell it is a
  * Dispatch agent. Children and forks inherit metadata, so the entry names the session it belongs to.

@@ -16,6 +16,7 @@ import { newSessionLocation } from "../config/new-session-location"
 import { createSessionRetention } from "./session-retention"
 import { createProgramStatus, type PendingSession } from "./program-status"
 import { anchorKey, type AnchorTarget } from "../routes/session/anchors"
+import { DispatchModel } from "../feature-plugins/dispatch/model"
 import {
   closeSessionTab,
   cycleSessionTab,
@@ -68,6 +69,8 @@ export const { use: useSessionTabs, provider: SessionTabsProvider } = createSimp
     const storage = useStorage()
     const enabled = () => config.tabs.enabled
     const [focused, setFocused] = createSignal<boolean>()
+    // Dispatch: dashboard agents keep their transcripts loaded so their activity stays visible.
+    const [dispatchAgents] = storage.store(DispatchModel.AGENTS_STORAGE_KEY, { initial: DispatchModel.emptyAgents() })
     // Keyed reconcile keeps tab object identity across reorders, so strip rows move instead of
     // mutating in place, which per-row animations and drag state depend on.
     const [store, updateStore] = storage.store<PersistedState>("tabs", {
@@ -141,7 +144,10 @@ export const { use: useSessionTabs, provider: SessionTabsProvider } = createSimp
       session: data.session,
       current: () =>
         route.data.type === "session" && route.data.sessionID !== "dummy" ? route.data.sessionID : undefined,
-      keep: () => (enabled() ? state().tabs.map((tab) => tab.sessionID) : []),
+      keep: () => [
+        ...(enabled() ? state().tabs.map((tab) => tab.sessionID) : []),
+        ...dispatchAgents.agents.map((agent) => agent.sessionID),
+      ],
       limit: 3,
     })
     const newTab = createMemo((open = false) => {
