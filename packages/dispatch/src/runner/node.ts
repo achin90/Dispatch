@@ -30,7 +30,7 @@ import { SessionSchema } from "@opencode/core/session/schema"
 import { SessionMessageTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
 import { SessionTitle } from "@opencode/core/session/title"
-import type { Tool } from "@opencode/core/tool"
+import { Tool } from "@opencode/core/tool"
 import { toSessionError } from "@opencode/core/session/to-session-error"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import type { LayerNode } from "@opencode/util/effect/layer-node"
@@ -80,7 +80,7 @@ const layer = Layer.effect(
       effect: Effect.Effect<A, E, SdkPermission.Requirements | Mcp.Service | Session.Service>,
       signal?: AbortSignal,
     ) => Effect.runPromiseWith(services)(effect, signal ? { signal } : undefined)
-    const mcp = SdkMcp.make(yield* Mcp.Service)
+    const mcp = SdkMcp.make(yield* Mcp.Service, yield* Tool.Service)
     const titles = yield* FiberMap.make<SessionSchema.ID, void, never>()
 
     const drain = Effect.fn("DispatchRunner.drain")(function* (input: Parameters<SessionRunner.Interface["drain"]>[0]) {
@@ -213,7 +213,10 @@ const layer = Layer.effect(
         canUseTool: SdkPermission.canUseTool(permissions),
         preToolUse: SdkPermission.subagentHook(permissions),
         postCompact: capture(compaction),
-        mcpServers: yield* mcp.servers((effect) => run(effect)),
+        mcpServers: {
+          ...(yield* mcp.servers((effect) => run(effect))),
+          ...(yield* mcp.plugins((effect) => run(effect), { sessionID: session.id, agent: loaded.agent.id })),
+        },
         pathToClaudeCodeExecutable: yield* Effect.promise(() => SdkBin.resolveClaudeBin()),
       })
       yield* Effect.logInfo("starting claude agent sdk query", {
@@ -451,6 +454,7 @@ export const node = makeLocationNode({
     SessionContext.node,
     SessionStore.node,
     SessionTitle.node,
+    Tool.node,
   ],
 })
 

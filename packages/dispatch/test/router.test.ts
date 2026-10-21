@@ -287,6 +287,26 @@ describe("SDK frames → v2 messages", () => {
     expect(assistants(out.child)[0].content).toEqual([{ type: "text", text: "Found 3 tests." }])
   })
 
+  test("background shell tasks do not open child Sessions", async () => {
+    const out = await route([
+      ...sdk.toolTurn(
+        "msg_1",
+        { id: "toolu_bg", name: "Bash", input: { command: "sleep 9", run_in_background: true } },
+        usage,
+      ),
+      sdk.system("task_started", {
+        task_id: "b1",
+        tool_use_id: "toolu_bg",
+        description: "sleep",
+        task_type: "local_bash",
+      }),
+      sdk.toolResult("toolu_bg", "Command running in background with ID: b1"),
+      ...sdk.textTurn("msg_2", "started", usage),
+      sdk.result(),
+    ])
+    expect(out.children).toEqual([])
+  })
+
   test("a compaction boundary records a completed Compaction with the hook's summary", async () => {
     const out = await route(
       [

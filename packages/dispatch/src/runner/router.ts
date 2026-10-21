@@ -140,10 +140,12 @@ export function make(input: Input) {
         switch (message.subtype) {
           case "init":
             return yield* input.onInit(message.session_id)
-          case "task_started":
-            if (message.tool_use_id && calls.has(message.tool_use_id))
-              yield* child(message.tool_use_id, message.subagent_type ?? message.task_type)
+          case "task_started": {
+            // Background shells report tasks too; only Agent/Task calls get a child Session.
+            const call = message.tool_use_id ? calls.get(message.tool_use_id) : undefined
+            if (call && SdkAdapter.isSubagentTool(call.sdkName)) yield* child(call.id, message.subagent_type)
             return
+          }
           case "task_progress": {
             if (!message.tool_use_id) return
             const sessionID = children.get(message.tool_use_id)?.sessionID
