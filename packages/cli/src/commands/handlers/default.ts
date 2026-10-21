@@ -115,6 +115,8 @@ export default Runtime.handler(Commands, (input) =>
         newSessionID: sessionExists ? undefined : session,
         prompt: Option.getOrUndefined(input.prompt),
         auto: input.auto || input.yolo || input.dangerouslySkipPermissions,
+        // Dispatch: hide the agent dashboard.
+        noDashboard: input.noDashboard,
       },
       config: {
         path: config.path,

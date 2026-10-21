@@ -10,6 +10,8 @@ export interface Args {
   newSessionID?: string
   fork?: boolean
   auto?: boolean
+  // Dispatch: skip the agent dashboard (`--no-dashboard`).
+  noDashboard?: boolean
 }
 
 export const { use: useArgs, provider: ArgsProvider } = createSimpleContext({

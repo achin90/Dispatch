@@ -6,6 +6,8 @@ import SidebarFooter from "../feature-plugins/sidebar/footer"
 import SidebarMcp from "../feature-plugins/sidebar/mcp"
 import SidebarTodo from "../feature-plugins/sidebar/todo"
 import DiffViewer from "../feature-plugins/system/diff-viewer"
+// Dispatch: agent dashboard, pickers, advisor and remote-session commands.
+import Dispatch from "../feature-plugins/dispatch"
 import Notifications from "../feature-plugins/system/notifications"
 import Plugins from "../feature-plugins/system/plugins"
 import Storybook from "../feature-plugins/system/storybook"
@@ -30,4 +32,5 @@ export const builtins = [
   // normal launches and register it only for OPENCODE_STORY runs.
   ...(process.env.OPENCODE_STORY ? [Storybook] : []),
   DiffViewer,
+  Dispatch,
 ]
