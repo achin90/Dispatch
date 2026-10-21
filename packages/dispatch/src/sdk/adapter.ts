@@ -85,6 +85,8 @@ export function normalizeInput(name: string, raw: Record<string, unknown>): Reco
         description: string(raw.description),
         prompt: string(raw.prompt),
         agent: string(raw.subagent_type)?.toLowerCase(),
+        // The PreToolUse hook always forces `run_in_background: false`; show what actually runs.
+        background: false,
       })
     case "AskUserQuestion":
       return { questions: questions(raw) }

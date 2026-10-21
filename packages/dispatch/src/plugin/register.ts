@@ -7,9 +7,17 @@ import type { LayerNode } from "@opencode/util/effect/layer-node"
 import type { Plugin } from "@opencode/plugin/effect/plugin"
 import { Effect, Layer } from "effect"
 import { DispatchModelsPlugin } from "./models.js"
+import { DispatchAgentsPlugin } from "./agents.js"
+import { DispatchCommandsPlugin } from "./commands.js"
+import { DispatchWorktreePlugin } from "./worktree.js"
 
 /** Dispatch's server plugins, contributed to every Location through the host plugin store. */
-export const plugins: readonly Plugin[] = [DispatchModelsPlugin.Plugin]
+export const plugins: readonly Plugin[] = [
+  DispatchModelsPlugin.Plugin,
+  DispatchAgentsPlugin.Plugin,
+  DispatchCommandsPlugin.Plugin,
+  DispatchWorktreePlugin.Plugin,
+]
 
 /**
  * The host plugin store, seeded with the Dispatch plugins. Seeding happens before any

@@ -32,6 +32,30 @@ describe("turn input", () => {
     )
   })
 
+  test("finished foreground !cmd shell runs reach the CLI", () => {
+    const shell = (command: string, status: string, metadata?: Record<string, unknown>) =>
+      ({
+        id: SessionMessage.ID.create(),
+        type: "shell",
+        shellID: "sh_1",
+        command,
+        status,
+        output: { output: `${command} output`, cursor: 0, size: 0, truncated: false },
+        metadata,
+        time,
+      }) as unknown as SessionMessage.Info
+    const messages = [
+      assistant(),
+      shell("pwd", "exited"),
+      shell("sleep 9", "running"),
+      shell("make", "exited", { background: true }),
+      user("what did that print?"),
+    ]
+    expect(SdkQuery.prompt(SdkQuery.pending(messages))).toBe(
+      "The following shell command was executed by the user:\n\nCommand:\npwd\n\nOutput:\npwd output\n\nwhat did that print?",
+    )
+  })
+
   test("plain text prompts join the pending messages", () => {
     expect(SdkQuery.prompt([user("one"), user("two")])).toBe("one\n\ntwo")
   })

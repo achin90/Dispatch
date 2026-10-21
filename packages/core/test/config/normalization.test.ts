@@ -721,3 +721,11 @@ describe("ConfigNormalize", () => {
     expect(result.encoded.share).toBeUndefined()
   })
 })
+
+// Dispatch: the Claude Agent SDK advisor model must survive normalization for the runner to read it.
+describe("dispatch advisor", () => {
+  test("keeps the advisor key", () => {
+    expect(decoded({ advisor: "opus" }).advisor).toBe("opus")
+    expect(decoded({ advisor: "off" }).advisor).toBe("off")
+  })
+})

@@ -216,6 +216,8 @@ export function normalize(input: unknown): Result {
     websearch: Info.fields.websearch,
     worktree: Info.fields.worktree,
     warming: Info.fields.warming,
+    // Dispatch: without this the normalizer drops `advisor` and the runner never sees it.
+    advisor: Info.fields.advisor,
   }
   Object.entries(nativeAtomic).forEach(([key, schema]) => {
     if (!own(input, key)) return

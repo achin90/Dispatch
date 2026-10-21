@@ -387,13 +387,20 @@ export const layer = (options?: Options) =>
             (yield* Effect.filter(candidates, fs.isFile)).at(-1) ?? path.join(directory, "opencode.jsonc")
           const text = (yield* fs.readFileStringSafe(filepath)) ?? "{}\n"
           const updated = yield* Effect.try({
+            // Dispatch: apply each key the patch names (shell, advisor), leaving the others untouched.
             try: () =>
-              applyEdits(
-                text,
-                modify(text, ["shell"], patch.shell ?? undefined, {
-                  formattingOptions: { tabSize: 2, insertSpaces: true },
-                }),
-              ),
+              (["shell", "advisor"] as const)
+                .filter((key) => key in patch)
+                .reduce(
+                  (current, key) =>
+                    applyEdits(
+                      current,
+                      modify(current, [key], patch[key] ?? undefined, {
+                        formattingOptions: { tabSize: 2, insertSpaces: true },
+                      }),
+                    ),
+                  text,
+                ),
             catch: (cause) => new FSUtil.FileSystemError({ method: "config.update", cause }),
           })
           yield* fs.writeWithDirs(filepath, updated.endsWith("\n") ? updated : `${updated}\n`)

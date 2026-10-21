@@ -36,6 +36,8 @@ import { makeLocationNode } from "@opencode/util/effect/app-node"
 import type { LayerNode } from "@opencode/util/effect/layer-node"
 import { and, desc, eq, sql } from "drizzle-orm"
 import { Cause, Effect, Exit, FiberMap, Layer, Stream } from "effect"
+import { DispatchBridge } from "../bridge/service.js"
+import { DispatchBridgeRpc } from "../bridge/rpc.js"
 import { SdkAdapter } from "../sdk/adapter.js"
 import { SdkBin } from "../sdk/bin.js"
 import { SdkModels } from "../sdk/models.js"
@@ -82,6 +84,8 @@ const layer = Layer.effect(
     ) => Effect.runPromiseWith(services)(effect, signal ? { signal } : undefined)
     const mcp = SdkMcp.make(yield* Mcp.Service, yield* Tool.Service)
     const titles = yield* FiberMap.make<SessionSchema.ID, void, never>()
+    // Dispatch bridge: claude.ai mirroring (process-wide; see bridge/service.ts).
+    const bridge = yield* DispatchBridge.Service
 
     const drain = Effect.fn("DispatchRunner.drain")(function* (input: Parameters<SessionRunner.Interface["drain"]>[0]) {
       const session = yield* store.get(input.sessionID)
@@ -188,7 +192,11 @@ const layer = Layer.effect(
         onDecline: () => {
           declined.value = true
         },
+        // Dispatch bridge: permission prompts and questions fan out to a claude.ai mirror.
+        remote: bridge,
       }
+      // Dispatch bridge: tees this query to the Session's claude.ai mirror while one is attached.
+      const mirror = bridge.turn(session.id)
       const router = SdkRouter.make({
         bus,
         sessionID: session.id,
@@ -239,12 +247,15 @@ const layer = Layer.effect(
         systemPromptChars: typeof options.systemPrompt === "string" ? options.systemPrompt.length : undefined,
       })
       const stream = yield* Effect.sync(() => query({ prompt: SdkQuery.input(prompt), options }))
+      yield* mirror.prompted(SdkQuery.pending(loaded.messages)) // Dispatch bridge
       const consumed = yield* Stream.fromAsyncIterable(stream as AsyncIterable<SDKMessage>, (error) => error).pipe(
-        Stream.runForEach(router.handle),
+        Stream.runForEach((message) => mirror.frame(message).pipe(Effect.andThen(router.handle(message)))), // Dispatch bridge: tee
         // Interrupting the drain aborts the CLI and settles every open message as interrupted.
         Effect.onInterrupt(() =>
           Effect.sync(() => abortController.abort()).pipe(Effect.andThen(router.abort(INTERRUPTED, true))),
         ),
+        // Dispatch bridge: ends the remote turn on every path (result, error, interrupt).
+        Effect.ensuring(Effect.suspend(() => mirror.settle(router.result()?.is_error === false))),
         Effect.exit,
       )
       if (Exit.isFailure(consumed) && Cause.hasInterruptsOnly(consumed.cause)) return yield* Effect.interrupt
@@ -473,6 +484,9 @@ export const node = makeLocationNode({
     SessionStore.node,
     SessionTitle.node,
     Tool.node,
+    // Dispatch bridge: the mirror service, and its RPC registered in every Location.
+    DispatchBridge.node,
+    DispatchBridgeRpc.node,
   ],
 })
 
