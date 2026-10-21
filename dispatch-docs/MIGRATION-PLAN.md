@@ -1,6 +1,6 @@
 # Dispatch → opencode v2 migration plan
 
-Status: Phase 0 done. Phases 1–4 executed by implementation agents, in order. Every agent reads this file plus `01-v2-new-features.md`, `02-v2-architecture-map.md`, `03-dispatch-v1-inventory.md` before touching code.
+Status: Phases 0–3 done; Phase 4 verification is in progress (see "Phase 4 record"). Phases 1–4 were executed by implementation agents, in order. Every agent reads this file plus `01-v2-new-features.md`, `02-v2-architecture-map.md`, `03-dispatch-v1-inventory.md` before touching code.
 
 ## Ground truth
 
@@ -40,6 +40,7 @@ Status: Phase 0 done. Phases 1–4 executed by implementation agents, in order. 
 | `# Worktree Agent Context` block in `session/system.ts` | — | already marked not-must-preserve |
 | `--standalone` (skip dashboard) | **collides** with upstream `--standalone` (private server) | rename to `--no-dashboard` |
 | `/merge` command's `${path}` replace, `dialog-prompt.tsx` `mounted`, kv `agents` unused | vestigial | drop |
+| MCP enable of config-disabled servers from the MCP dialog | superseded: upstream `Mcp.connect()` bypasses the `disabled` flag; 2A's reconnect loop keeps the override; the SDK proxy excludes `disabled` servers (commit 6d718c110b) | verified live in Phase 4 |
 | 5 "lost or broken" items in inventory (editor repaint order, string/object permission merge, small-model fallbacks, compaction `info &&` guard, undo guard) | — | drop |
 
 ## Triage: decide with a check (agent records the answer in its report)
@@ -115,3 +116,26 @@ Done when: `bun run dev run --standalone --auto -m anthropic/opus-5-5 "list file
 - `bun install`: ok (4281 packages).
 - `bun run dev --version`: `opencode vlocal`.
 - Baseline typecheck: see commit message of the docs commit / `/tmp/typecheck-baseline.log` at the time.
+
+## Phase 4 record
+
+Verified so far on `Dispatch-opencodev2`:
+
+- `bun typecheck` in every touched package and `bun run check` at the root: clean.
+- `packages/dispatch`: 123 tests pass (`bun test`).
+- SDK session round trip on `anthropic/haiku`: a `write` permission was approved through the API (`POST /api/session/:id/permission/:id/reply {"decision":"once"}`), the file was written, each assistant message carried its own call's tokens, and the Session gained `dispatch.sdk` resume metadata.
+- `dispatch` RPCs over `POST /api/rpc/dispatch/<method>` (`{"input":…}`, header `x-opencode-directory`): `gitRepos.list`, `worktree.info`, `worktree.diffstat`, `mcp.health`, `github.status`, `session.lastResponse`. `dispatch-bridge` RPC `session.remoteControlList`.
+- Agents `build`, `yolo` and `assistant` are present and `plan` is gone. `/deepReview` and `/merge` are listed.
+- Advisor set and clear through `PATCH /api/experimental/config` (`{"advisor":"…"}`, then `{"advisor":null}`) writes and then removes the key in `~/.config/opencode/opencode.json`.
+- Enabling a config-disabled MCP server with `POST /api/experimental/mcp/:server/connect` connects it; `disconnect` sets it disabled again.
+
+Pending manual TUI pass (needs the user at a terminal, `bun run dev:live`):
+
+- dashboard: create a worktree agent;
+- approve a permission from the dashboard;
+- dashboard keys `t` (terminal), `D` (diff), `i` (inline prompt);
+- `/advisor`;
+- `/remote`;
+- Jarvis live voice.
+
+Phase 3 docs: `UPSTREAM-SYNC.md` and `CLAUDE-SDK-MIGRATION.md` were rewritten for v2, and the root `AGENTS.md` gained a "Dispatch fork" section. `PHASE-0-PLAN.md` was already gone.
