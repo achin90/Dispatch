@@ -80,7 +80,8 @@ Dispatch replaces OpenCode's single-session TUI with a **multi-agent dashboard**
 - Uses your existing Claude Code login (API key or subscription auth)
 - SDK owns the tool loop and execution (Read, Write, Edit, Bash, Glob, Grep)
 - App owns TUI rendering, permission UI, message persistence, and auth
-- Bridge architecture documented in [`packages/opencode/AGENTS.md`](./packages/opencode/AGENTS.md)
+- Bridge architecture documented in [`packages/dispatch/AGENTS.md`](./packages/dispatch/AGENTS.md)
+- Release binaries embed the native `claude` CLI, so no separate Claude Code install is needed
 
 ---
 
@@ -109,7 +110,7 @@ dispatch ~/Documents/workspace
 
 ### Option 2: Build from source
 
-Requires [Bun](https://bun.sh) v1.3.11 or later. Clones, builds, and installs to `~/.dispatch/bin/dispatch`:
+Requires [Bun](https://bun.sh) v1.4.2 or later (the version pinned in `package.json`). Builds with `packages/cli/script/build.ts --single` and installs to `~/.dispatch/bin/dispatch`:
 
 ```bash
 git clone https://github.com/achin90/Dispatch.git
@@ -133,32 +134,51 @@ cd Dispatch
 bun install
 bun run dev
 bun run dev ~/Documents/workspace
+bun run dev --standalone   # private server instead of the shared background service
 ```
+
+The CLI lives in `packages/cli` (`bun run dev` runs `packages/cli/src/index.ts`); the Claude Agent SDK integration lives in `packages/dispatch`. In dev mode the SDK finds its own `claude` binary from `node_modules`.
 
 ---
 
 ## Usage
 
+#### Background server
+
+Like opencode v2, `dispatch` is a client: it connects to one per-user background server and starts it if needed. Dispatch's server is separate from a stock `opencode` install on the same machine. It has its own registration file (`~/.local/state/opencode/service-dispatch.json`), its own port and its own database, so the two never replace each other. Manage it with `dispatch service start|status|stop|restart`.
+
+`--standalone` runs a private server that lives only as long as that TUI or `run` command.
+
 #### Database note
 
-The built binary and `bun run dev` use separate SQLite databases by default (`opencode.db` vs `opencode-local.db`). To share the same database as dev mode:
+Release builds store sessions in `~/.local/share/opencode/opencode-dispatch.db`; `bun run dev` uses `opencode-local.db` in the same directory. Config stays in `~/.config/opencode`. To point a release build at the dev database:
 
 ```bash
 OPENCODE_DB=opencode-local.db dispatch
 ```
 
+#### Updates
+
+Dispatch never updates itself (`dispatch upgrade` and the TUI's update notice are disabled). Rerun the curl installer, or `git pull && ./install-from-source`, to update.
+
 ### Common Options
 
 These flags work with both `bun run dev` and the built binary:
 
-| Flag               | Description                                 |
-| ------------------ | ------------------------------------------- |
-| `[project]`        | Path to project directory (positional arg)  |
-| `--model`, `-m`    | Model to use in the format `provider/model` |
-| `--continue`, `-c` | Continue the last session                   |
-| `--session`, `-s`  | Session ID to continue                      |
-| `--help`, `-h`     | Show help                                   |
-| `--version`, `-v`  | Show version                                |
+| Flag               | Description                                               |
+| ------------------ | --------------------------------------------------------- |
+| `[directory]`      | Path to project directory (positional arg)                |
+| `--continue`, `-c` | Continue the last session                                 |
+| `--session`, `-s`  | Session ID to continue (created if it does not exist)     |
+| `--prompt`         | Prompt to start with                                      |
+| `--auto`           | Auto-approve permissions that are not explicitly denied   |
+| `--standalone`     | Use a private server instead of the background service    |
+| `--server <url>`   | Connect to another running server                         |
+| `--no-dashboard`   | Skip the agent dashboard and open a session directly      |
+| `--help`, `-h`     | Show help                                                 |
+| `--version`, `-v`  | Show version                                              |
+
+`--standalone` used to mean "skip the dashboard" in Dispatch v1. In v2 that flag is `--no-dashboard`.
 
 ### Subcommands
 
@@ -166,11 +186,16 @@ Dispatch also supports subcommands for headless/non-interactive use:
 
 ```bash
 # run a single message non-interactively
-bun run dev -- run "explain this codebase"
+bun run dev run "explain this codebase"
 
-# run in a specific directory non-interactively
-bun run dev -- run --dir ~/Documents/workspace "explain this codebase"
+# pick a model and approve tool permissions automatically
+bun run dev run --auto -m anthropic/opus-5-5 "explain this codebase"
+
+# run against a private server
+bun run dev run --standalone "explain this codebase"
 ```
+
+`dispatch run` works in the current directory; `cd` into the project first. See `dispatch --help` for the rest (`session`, `mcp`, `auth`, `service`, `pair`, `serve`, …).
 
 ---
 
@@ -200,7 +225,7 @@ For full documentation see the **[OpenCode configuration docs](https://opencode.
 - **`tools`** -- Configure which tools the LLM can access (write, bash, edit, etc.)
 - **`agent`** -- Define custom specialized agents
 - **`mcp`** -- Model Context Protocol server configuration
-- **`autoupdate`** -- Auto-update handling (`true`/`false`/`"notify"`)
+- **`autoupdate`** -- Ignored by Dispatch, which never updates itself
 - **`permission`** -- Tool approval requirements (`"ask"` for confirmation)
 - **`instructions`** -- Path to custom instruction/rules files
 
