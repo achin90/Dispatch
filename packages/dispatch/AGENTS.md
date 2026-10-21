@@ -74,6 +74,16 @@ skips `@opencode/dispatch/*` packages (marked `// Dispatch:`) so it never tries 
 (default export: the Bun-embedded path of the platform `claude` binary) and extracts it from `$bunfs`.
 In dev the module is absent and the SDK resolves its own binary.
 
+## claude.ai mirroring bridge
+
+`src/bridge/service.ts` (`DispatchBridge`, a global node) attaches Sessions to claude.ai/code through
+the SDK's alpha `@anthropic-ai/claude-agent-sdk/bridge`. The mapping `{ codeSessionID, mark }` lives
+in `Session.metadata["dispatch.bridge"]`; live handles and pending remote prompts are module maps in
+`src/bridge/mirror.ts`. `src/bridge/rpc.ts` registers RPC id `dispatch-bridge` (not `dispatch`: one
+id resolves to its last registration only) in every Location; the runner node lists both nodes in its
+deps so they are built. Runner hook points are marked `// Dispatch bridge:` in `runner/node.ts` and
+`runner/permission.ts`. Inbound phone prompts switch the Session to the `yolo` agent when it exists.
+
 ## Tests
 
 `bun test` from this directory. `test/preload.ts` points HOME/XDG at a temp dir. Writer and router
