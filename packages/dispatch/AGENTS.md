@@ -8,12 +8,74 @@ registration points, each marked `// Dispatch:`.
 - `src/overrides.ts` is the list of layer replacements `packages/server/src/process.ts` passes to
   `createRoutes(...)`. Every server entry (`serve`, `serve --stdio` behind `--standalone`, the
   managed service) goes through `ServerProcess.start`, so these apply to every Location.
-- `src/runner/node.ts` replaces `SessionRunnerLLM.node`. It depends on a fresh copy of the stock node
+- `src/location.ts` replaces `SessionRunnerLLM.node` with a node that re-exposes the Dispatch runner
+  (`src/runner/node.ts`) and carries Dispatch's other location services as deps (today the `dispatch`
+  RPC, `src/rpc/node.ts`). A replacement can only swap an existing node, so this is how extra
+  location-scoped code gets compiled into every Location.
+- `src/runner/node.ts` depends on a fresh copy of the stock node
   (`SessionRunnerLLM.node.mapLayer((layer) => layer)`): the replacement map keys on node identity, so
   depending on the original would resolve back to the replacement.
 - `src/plugin/register.ts` replaces the host `SdkPlugins` store with one seeded with Dispatch's
   server plugins (`define()` from `@opencode/plugin/effect/plugin`). Add new Dispatch plugins to its
   `plugins` list. They activate after the internal `pre` plugins and before `post` (config) plugins.
+  These plugins get only the plugin `Context` (`ctx.*`), never core services: anything that needs
+  `Mcp.Service`, `SessionStore` and so on belongs in a location node like `src/rpc/node.ts`.
+
+## Server plugins
+
+- `plugin/agents.ts`: `build` (asks on `shell`/`edit`), `yolo` and `assistant` (`assistant.txt`
+  prompt), all primary; removes `plan`. The switcher order build → yolo → assistant → config agents
+  falls out of the agent map's insertion order, since these run after `opencode.agent`/`opencode.plan`.
+- `plugin/commands.ts`: `/deepReview` and `/merge`; `$ARGUMENTS` is replaced, else arguments append.
+- `plugin/worktree.ts`: the `dispatch` worktree strategy, selected as default by registering last.
+  A worktree is `<parent of source repo>/<repo>-<slug>` on a new branch `<slug>` (`git worktree add
+  -b`), with `-2`, `-3`… when the directory or branch is taken. Core picks the slug (requested name
+  or random) and passes it as the basename of `directory`; `branch` is only the start ref. `remove`
+  also deletes the branch (v1 behaviour) and reports `forceRequired` for dirty trees. Worktrees made
+  by the stock `git` strategy keep being removed by it (core dispatches on the stored strategy id).
+
+## The `dispatch` RPC
+
+Defined in `src/rpc/definition.ts` (Standard Schema, imports only `effect` and `@opencode/schema`, so
+the TUI may import it). Methods mirror the v1 `/experimental/*` dashboard routes:
+`gitRepos.list`, `github.status|pr|createPr|mergePr`, `worktree.info|diff|diffstat`,
+`session.lastResponse`, `mcp.health`. `directory`/`cwd` inputs default to the request's Location.
+
+Calling it from the TUI (promise client, `client.api`):
+
+```ts
+import { DispatchRpc } from "@opencode/dispatch/rpc/definition"
+const dispatch = client.api.rpc(DispatchRpc.Definition)
+const stat = await dispatch["worktree.diffstat"](undefined, { location: { directory } })
+// untyped: client.api.rpc.call({ rpcID: "dispatch", method: "worktree.diffstat", input: {}, location: { directory } })
+```
+
+Over HTTP: `POST /api/rpc/dispatch/<method>` with body `{ "input": … }` and the Location as
+`?location[directory]=<dir>` or header `x-opencode-directory: <dir>`; the response is `{ output }`.
+Targeting a worktree agent's directory boots (or reuses) that Location.
+
+`session.lastResponse` reads the Session through the global store, so any Location can answer it.
+Short replies (≤3 lines, ≤300 chars) are returned raw; longer ones are summarized with a one-turn
+Haiku `query()` (`claude-haiku-4-5-20251001`, 15s) for Anthropic sessions, or the Session's small
+(title) model at its own Location otherwise; on failure the first three lines come back.
+
+## MCP, advisor and activity
+
+- MCP reconnect and health live in core (`core/src/mcp/index.ts`, `client.ts`, marked `// Dispatch:`)
+  because the connection table is private to `Mcp.Service`: an unexpected close retries after
+  `[5s, 10s, 30s, 60s, 60s…]` until it connects, the entry is replaced, it needs auth or the user
+  disconnects it; transport errors close the client once connected so `onclose` fires; `health()`
+  pings each connected server (5s) and restarts unresponsive ones. Connect/disconnect state is the
+  entry status, so a user `connect` overrides config `disabled` and `disconnect` stops retries.
+  Start/stop already publish `mcp.tools.changed`.
+- `advisor` is set with `config.update({ advisor })` (`PATCH /api/experimental/config`, `null`
+  clears). The update rewrites the global config and reloads Config in every Location through its
+  file watch; it does not reload Locations, and the runner reads `advisor` on every turn.
+- Busy activity ("Shell pwd", "Thinking…") is derived on the client, no extra event: remember
+  `session.tool.input.started` `{ id, name }`, show name + the main input field on
+  `session.tool.called` `{ id, input }`, clear on `session.tool.success`/`failed`; show "Thinking…"
+  between `session.reasoning.started` and `ended`. For a session already running when the dashboard
+  opens, use its last assistant message's `running`/`streaming` tool part.
 
 ## Claude Agent SDK runner
 
