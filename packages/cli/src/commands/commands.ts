@@ -35,8 +35,8 @@ const PermissionParams = {
   ),
 }
 
-// Dispatch: dev runs report the fork's name too.
-const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME : "dispatch", {
+// Dispatch: compiled builds define OPENCODE_CLI_NAME as "dispatch"; dev runs keep upstream's name for its tests.
+const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME : "opencode", {
   description: "Dispatch command line interface",
   params: {
     ...ServerParams,
