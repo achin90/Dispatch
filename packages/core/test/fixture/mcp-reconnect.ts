@@ -11,5 +11,8 @@ server.setRequestHandler("tools/list", () =>
   Promise.resolve({ tools: [{ name: "echo", inputSchema: { type: "object", properties: {} } }] }),
 )
 server.setRequestHandler("tools/call", () => Promise.resolve({ content: [{ type: "text", text: "ok" }] }))
+// Simulates a server that is still running but no longer answers, so the health check restarts it.
+if (process.env.MCP_RECONNECT_UNRESPONSIVE)
+  server.setRequestHandler("ping", () => Promise.reject(new Error("unresponsive")))
 
 await server.connect(new StdioServerTransport())

@@ -64,6 +64,21 @@ export const toolTurn = (
   messageDelta("tool_use", { output_tokens: usage.output_tokens }, parent),
 ]
 
+/** A streamed turn that calls several tools in parallel, as one API call. */
+export const toolsTurn = (
+  id: string,
+  tools: { id: string; name: string; input: Record<string, unknown> }[],
+  usage: Usage,
+) => [
+  messageStart(id, { ...usage, output_tokens: 1 }),
+  ...tools.flatMap((tool, index) => [
+    blockStart(index, { type: "tool_use", id: tool.id, name: tool.name, input: {} }),
+    jsonDelta(index, JSON.stringify(tool.input)),
+    blockStop(index),
+  ]),
+  messageDelta("tool_use", { output_tokens: usage.output_tokens }),
+]
+
 /** A complete (non-streamed) assistant frame. */
 export const assistant = (id: string, content: unknown[], usage: Usage, parent: string | null = null) =>
   ({

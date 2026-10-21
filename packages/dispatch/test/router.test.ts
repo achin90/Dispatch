@@ -22,7 +22,8 @@ import { SdkRouter } from "../src/runner/router"
 import * as sdk from "./sdk"
 
 const sessionID = SessionSchema.ID.make("ses_router_test")
-const childID = SessionSchema.ID.make("ses_router_child")
+/** The first child Session `route` creates; later ones count up. */
+const childID = SessionSchema.ID.make("ses_router_child_1")
 const agent = Agent.ID.make("build")
 const model = Model.Ref.make({ providerID: Provider.ID.anthropic, id: Model.ID.make("opus-5-5") })
 
@@ -63,6 +64,8 @@ const route = (
     readonly summary?: string
     readonly metadata?: Map<string, Tool.Metadata>
     readonly declined?: boolean
+    /** Interrupts the router after the frames, as the runner does when the drain is interrupted. */
+    readonly interrupt?: boolean
   } = {},
 ) =>
   Effect.runPromise(
@@ -72,6 +75,7 @@ const route = (
       const store = yield* SessionStore.Service
       const database = yield* Database.Service
       const children: string[] = []
+      const childIDs: SessionSchema.ID[] = []
       const inits: string[] = []
       const router = SdkRouter.make({
         bus,
@@ -81,19 +85,23 @@ const route = (
         cost: [],
         directory: SdkPermission.directory(),
         metadata: options.metadata ?? new Map(),
-        createChild: (input) =>
-          insertSession(childID, sessionID).pipe(
+        createChild: (input) => {
+          const id = SessionSchema.ID.make(`ses_router_child_${childIDs.length + 1}`)
+          childIDs.push(id)
+          return insertSession(id, sessionID).pipe(
             Effect.provideService(Database.Service, database),
             Effect.map(() => {
               children.push(input.title)
-              return { sessionID: childID, agent }
+              return { sessionID: id, agent }
             }),
-          ),
+          )
+        },
         onInit: (uuid) => Effect.sync(() => void inits.push(uuid)),
         compactSummary: () => options.summary,
         declined: () => options.declined === true,
       })
       for (const frame of frames) yield* router.handle(frame)
+      if (options.interrupt) yield* router.abort({ type: "aborted", message: "Step interrupted" }, true)
       const read = (id: SessionSchema.ID) =>
         store.context(id).pipe(Effect.map((messages) => messages.filter((message) => message.type !== "user")))
       return {
@@ -101,7 +109,9 @@ const route = (
         children,
         inits,
         main: yield* read(sessionID),
+        childIDs,
         child: children.length > 0 ? yield* read(childID) : [],
+        childMessages: yield* Effect.forEach(childIDs, read),
       }
     }).pipe(Effect.scoped, Effect.provide(layer)),
   )
@@ -208,6 +218,7 @@ describe("SDK frames → v2 messages", () => {
 
   test("metadata from the permission bridge (edit diffs) lands on the completed tool", async () => {
     const files = [{ file: "a.ts", patch: "@@ -1 +1 @@\n-a\n+b\n", status: "modified", additions: 1, deletions: 1 }]
+    const metadata = new Map<string, Tool.Metadata>([["toolu_d", { files }]])
     const out = await route(
       [
         ...sdk.toolTurn("msg_1", { id: "toolu_d", name: "Edit", input: { file_path: "/p/a.ts" } }, usage),
@@ -215,10 +226,12 @@ describe("SDK frames → v2 messages", () => {
         ...sdk.textTurn("msg_2", "ok", usage),
         sdk.result(),
       ],
-      { metadata: new Map([["toolu_d", { files }]]) },
+      { metadata },
     )
     const tool = assistants(out.main)[0].content.find((part) => part.type === "tool")
     expect(tool).toMatchObject({ name: "edit", state: { status: "completed", metadata: { files } } })
+    // Each stash is taken once by the result that consumes it.
+    expect(metadata.size).toBe(0)
   })
 
   test("advisor calls render as a tool part completed by their result block", async () => {
@@ -290,6 +303,124 @@ describe("SDK frames → v2 messages", () => {
       },
     })
     expect(assistants(out.child)[0].content).toEqual([{ type: "text", text: "Found 3 tests." }])
+  })
+
+  test("each subagent call gets its own child Session", async () => {
+    const agentCall = (id: string, description: string) => ({
+      id,
+      name: "Agent",
+      input: { description, prompt: description, subagent_type: "general-purpose" },
+    })
+    const out = await route([
+      ...sdk.toolsTurn("msg_1", [agentCall("toolu_a", "first"), agentCall("toolu_b", "second")], usage),
+      ...sdk.textTurn("msg_a", "from a", usage, "toolu_a"),
+      ...sdk.textTurn("msg_b", "from b", usage, "toolu_b"),
+      sdk.toolResult("toolu_a", "from a"),
+      sdk.toolResult("toolu_b", "from b"),
+      sdk.result(),
+    ])
+    expect(out.children).toEqual(["first (@general-purpose subagent)", "second (@general-purpose subagent)"])
+    expect(out.childMessages.map((messages) => assistants(messages)[0].content)).toEqual([
+      [{ type: "text", text: "from a" }],
+      [{ type: "text", text: "from b" }],
+    ])
+    const links = assistants(out.main)[0].content.flatMap((part) => (part.type === "tool" ? [part.state] : []))
+    expect(links).toMatchObject([
+      { status: "completed", metadata: { sessionID: out.childIDs[0] } },
+      { status: "completed", metadata: { sessionID: out.childIDs[1] } },
+    ])
+  })
+
+  test("a failed subagent task fails its call with the summary; a completed one waits for the tool result", async () => {
+    const out = await route([
+      ...sdk.toolsTurn(
+        "msg_1",
+        [
+          { id: "toolu_f", name: "Task", input: { description: "breaks", prompt: "p", subagent_type: "Explore" } },
+          { id: "toolu_ok", name: "Task", input: { description: "works", prompt: "p", subagent_type: "Explore" } },
+        ],
+        usage,
+      ),
+      sdk.system("task_started", { task_id: "t1", tool_use_id: "toolu_f", description: "breaks" }),
+      sdk.system("task_started", { task_id: "t2", tool_use_id: "toolu_ok", description: "works" }),
+      sdk.system("task_notification", {
+        task_id: "t1",
+        tool_use_id: "toolu_f",
+        status: "failed",
+        output_file: "",
+        summary: "Subagent crashed",
+      }),
+      sdk.system("task_notification", {
+        task_id: "t2",
+        tool_use_id: "toolu_ok",
+        status: "completed",
+        output_file: "",
+        summary: "done",
+      }),
+      sdk.toolResult("toolu_ok", "all good"),
+      sdk.result(),
+    ])
+    const [failed, completed] = assistants(out.main)[0].content.flatMap((part) =>
+      part.type === "tool" ? [part.state] : [],
+    )
+    expect(failed).toMatchObject({
+      status: "error",
+      error: { type: "tool.execution", message: "Subagent crashed" },
+      metadata: { sessionID: out.childIDs[0] },
+    })
+    expect(completed).toMatchObject({
+      status: "completed",
+      content: [{ type: "text", text: "all good" }],
+      metadata: { sessionID: out.childIDs[1] },
+    })
+  })
+
+  test("interrupting also aborts the open turn of a running subagent", async () => {
+    const out = await route(
+      [
+        ...sdk.toolTurn(
+          "msg_1",
+          { id: "toolu_p", name: "Agent", input: { description: "slow", prompt: "p", subagent_type: "Explore" } },
+          usage,
+        ),
+        ...sdk.toolTurn("msg_c", { id: "toolu_c", name: "Bash", input: { command: "sleep 9" } }, usage, "toolu_p"),
+      ],
+      { interrupt: true },
+    )
+    const [message] = assistants(out.child)
+    expect(message.error).toMatchObject({ type: "aborted" })
+    expect(message.content[0]).toMatchObject({
+      name: "shell",
+      state: { status: "error", error: { type: "aborted" } },
+    })
+  })
+
+  test("an error result after output fails the message with the SDK's errors", async () => {
+    const out = await route([
+      ...sdk.textTurn("msg_1", "working on it", usage),
+      sdk.result({
+        subtype: "error_max_turns",
+        is_error: true,
+        errors: ["Reached maximum number of turns (3)", "stopped"],
+      }),
+    ])
+    const [message] = assistants(out.main)
+    expect(message.content).toEqual([{ type: "text", text: "working on it" }])
+    expect(message.error).toEqual({
+      type: "provider.unknown",
+      message: "Reached maximum number of turns (3); stopped",
+    })
+  })
+
+  test("frames the runner does not render are ignored", async () => {
+    const out = await route([
+      sdk.system("status", { status: "compacting" }),
+      sdk.system("hook_response", { hook_name: "PreToolUse" }),
+      { ...sdk.system("x"), type: "rate_limit_event" } as unknown as SDKMessage,
+      ...sdk.textTurn("msg_1", "hi", usage),
+      sdk.result(),
+    ])
+    expect(assistants(out.main).map((message) => message.content)).toEqual([[{ type: "text", text: "hi" }]])
   })
 
   test("background shell tasks do not open child Sessions", async () => {

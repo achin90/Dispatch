@@ -1,5 +1,9 @@
 export * as SdkEnv from "./env.js"
 
+import { Integration } from "@opencode/core/integration"
+import { Effect } from "effect"
+import { SdkModels } from "./models.js"
+
 // Variables that make a spawned Claude Code CLI believe it is nested inside another Claude Code
 // session (or another agent harness), which changes binary resolution and behaviour.
 const NESTED = /^(CLAUDECODE|CLAUDE_CODE_.*|CLAUDE_AGENT_SDK_VERSION|CLAUDE_PID|CLAUDE_EFFORT|AI_AGENT)$/
@@ -17,3 +21,15 @@ export function build(input: { readonly apiKey?: string; readonly base?: Record<
     ...(input.apiKey ? { ANTHROPIC_API_KEY: input.apiKey } : {}),
   }
 }
+
+/**
+ * The API key for the CLI: `ANTHROPIC_API_KEY` first, then a stored Anthropic key credential.
+ * Undefined (including for OAuth credentials) lets the CLI use the Claude Code login (subscription).
+ */
+export const apiKey = Effect.fn("SdkEnv.apiKey")(function* (integrations: Integration.Interface) {
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
+  const connection = yield* integrations.connection.active(Integration.ID.make(SdkModels.providerID))
+  if (!connection) return undefined
+  const credential = yield* integrations.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
+  return credential?.type === "key" ? credential.key : undefined
+})
