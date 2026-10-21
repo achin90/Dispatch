@@ -45,7 +45,8 @@ echo -e "${MUTED}Building dispatch for ${NC}$os-$arch${MUTED}...${NC}\n"
 
 cd "$REPO_DIR"
 bun install
-bun run ./packages/cli/script/build.ts --single
+# The dispatch channel gives source builds the same background service and database as release installs.
+OPENCODE_CHANNEL=dispatch bun run ./packages/cli/script/build.ts --single
 
 # Locate the binary
 bin_name="dispatch"

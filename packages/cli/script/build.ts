@@ -20,8 +20,9 @@ const dir = path.resolve(import.meta.dirname, "..")
 const binary = "dispatch"
 const packageName = "dispatch-tui"
 // Dispatch: a channel of its own keeps the background service registration, port and database apart from a stock
-// opencode install on the same machine. Preview builds get their own channel so they never share a release's service.
-const channel = Script.channel === "latest" ? "dispatch" : `dispatch-${Script.channel}`
+// opencode install on the same machine. Preview builds get their own channel so they never share a release's service;
+// install-from-source sets OPENCODE_CHANNEL=dispatch so source installs share the release's service and database.
+const channel = ["latest", "dispatch"].includes(Script.channel) ? "dispatch" : `dispatch-${Script.channel}`
 const outdir = path.resolve(
   dir,
   process.argv.find((arg) => arg.startsWith("--outdir="))?.slice("--outdir=".length) ?? "dist",
