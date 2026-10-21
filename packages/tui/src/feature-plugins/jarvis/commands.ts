@@ -451,9 +451,10 @@ export function createCommandDispatcher(host: CommandHost) {
       return host.speak(`${match} mode.`)
     }
     if (cmd.command === "which-agent") {
+      // The composer's pick first: "yolo mode" changes it, and the next prompt commits it to the session.
       const focus = host.focus()
       const current =
-        (focus.type === "session" ? host.sessionAgent(focus.sessionID) : undefined) ?? host.agent.current()
+        host.agent.current() ?? (focus.type === "session" ? host.sessionAgent(focus.sessionID) : undefined)
       return host.speak(current ? `You're in ${current} mode.` : "No agent is selected.")
     }
     if (cmd.command === "read-last") {
