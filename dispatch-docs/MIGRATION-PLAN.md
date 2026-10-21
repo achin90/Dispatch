@@ -128,6 +128,10 @@ Verified so far on `Dispatch-opencodev2`:
 - Agents `build`, `yolo` and `assistant` are present and `plan` is gone. `/deepReview` and `/merge` are listed.
 - Advisor set and clear through `PATCH /api/experimental/config` (`{"advisor":"…"}`, then `{"advisor":null}`) writes and then removes the key in `~/.config/opencode/opencode.json`.
 - Enabling a config-disabled MCP server with `POST /api/experimental/mcp/:server/connect` connects it; `disconnect` sets it disabled again.
+- Non-Anthropic routing: a session on `opencode/minimax-m3.1-flash-free` ran through the stock runner (no "starting claude agent sdk query" log line; it failed only on the free-tier gate).
+- Dispatch worktree strategy: `POST /api/worktree {"projectID","name":"smoke-wt"}` created `/Users/andy/Documents/Dispatch-smoke-wt` on branch `smoke-wt`; a second create with the same name gave `Dispatch-smoke-wt-2` / `smoke-wt-2`; `DELETE /api/worktree` with `force` removed both directories and branches.
+- Advisor live: with `advisor: "opus"` a `haiku` session asked to consult the advisor produced a completed `advisor` tool part. (With `advisor: "haiku"` on a haiku session the CLI silently skips it, as v1 documented: the advisor must be the more capable model.)
+- Model picker shows the SDK model description from `settings.sdkDescription` (`component/dialog-model.tsx`).
 
 Pending manual TUI pass (needs the user at a terminal, `bun run dev:live`):
 

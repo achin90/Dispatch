@@ -102,7 +102,11 @@ function DialogConnectedModels(props: {
             value: { providerID: model.providerID, modelID: model.id },
             title: model.name,
             releaseDate: model.time.released,
-            description: provider?.name ?? model.providerID,
+            // Dispatch: SDK models carry their one-line description in settings.
+            description:
+              typeof model.settings?.sdkDescription === "string"
+                ? model.settings.sdkDescription
+                : (provider?.name ?? model.providerID),
             category,
             footer: trailing(model, isFavorite(item)),
             detail: newDesigns() ? () => <ModelDetail model={model} /> : undefined,
