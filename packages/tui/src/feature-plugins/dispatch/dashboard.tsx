@@ -1,7 +1,6 @@
 import path from "path"
 import type { Plugin } from "@opencode/plugin/tui"
 import type { PermissionRequest } from "@opencode/client"
-import { SessionID } from "@opencode/schema/session-id"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch, untrack } from "solid-js"
@@ -22,6 +21,7 @@ import { Prompt } from "../../component/prompt"
 import { filetype } from "../../util/filetype"
 import { errorMessage } from "../../util/error"
 import { permissionPresentation } from "../../util/permission"
+import { createDirectoryAgent, createWorktreeAgent } from "./create"
 import { DialogDirectorySelect } from "./dialog-directory-select"
 import { DialogGitRepoSelect } from "./dialog-git-repo-select"
 import { DispatchModel } from "./model"
@@ -117,40 +117,7 @@ export function Dashboard(props: { context: Plugin.Context }) {
     setTimeout(() => attempt(40), 0)
   }
 
-  async function createAgent(input: {
-    name: string
-    directory: string
-    worktree?: DispatchModel.AgentEntry["worktree"]
-  }) {
-    const createdAt = Date.now()
-    const id = SessionID.create()
-    const agent = local.agent.current()?.id
-    const model = local.model.selection()
-    // The agent stamp goes in at creation only: later metadata writes would race the runner's own.
-    const info = await client.api.session.create({
-      id,
-      title: input.name,
-      location: { directory: input.directory },
-      ...(agent ? { agent } : {}),
-      ...(model ? { model: { providerID: model.providerID, id: model.modelID, variant: model.variant } } : {}),
-      metadata: DispatchModel.agentMetadata({ name: input.name, createdAt, worktree: input.worktree }, id),
-    })
-    data.session.remember(info)
-    const entry: DispatchModel.AgentEntry = {
-      id: crypto.randomUUID(),
-      name: input.name,
-      sessionID: info.id,
-      createdAt,
-      directory: input.directory,
-      ...(input.worktree ? { worktree: input.worktree } : {}),
-    }
-    const inserted = DispatchModel.insertAgent(store.agents.agents, entry, root())
-    await save((draft) => {
-      draft.agents = DispatchModel.insertAgent(draft.agents, entry, root()).agents
-    })
-    setIndex(inserted.index)
-    return entry
-  }
+  const host = () => ({ client, data, local, store, root: root() })
 
   async function add() {
     const directory = await DialogDirectorySelect.show(dialog, "Select Directory", root())
@@ -158,14 +125,9 @@ export function Dashboard(props: { context: Plugin.Context }) {
     const name = await context.ui.dialog.prompt({ title: "New Agent", placeholder: "Agent name" })
     if (!name?.trim()) return
     const target = directory === "." ? root() : path.join(root(), directory)
-    const worktree = await DispatchRpc.optional(client.api, "worktree.info", { directory: target }, target)
-    await createAgent({
-      name: name.trim(),
-      directory: target,
-      worktree: worktree
-        ? { branch: worktree.branch, directory: worktree.directory, sourceRepo: worktree.sourceRepo }
-        : undefined,
-    }).catch(toast.error)
+    await createDirectoryAgent(host(), { name: name.trim(), directory: target })
+      .then((created) => setIndex(created.index))
+      .catch(toast.error)
   }
 
   async function addWorktree() {
@@ -178,27 +140,8 @@ export function Dashboard(props: { context: Plugin.Context }) {
     if (!name?.trim()) return
     setBusy(true)
     toast.show({ message: "Creating worktree…", variant: "info" })
-    await (async () => {
-      const project = await client.api.location.get({ location: { directory: repository } })
-      const created = await client.api.worktree.create({ projectID: project.project.id, name: name.trim() })
-      const directory = created.directory.replace(/\/+$/, "")
-      store.setState((draft) => {
-        draft.diffstats[directory] = { additions: 0, deletions: 0, files: 0 }
-      })
-      const info = await DispatchRpc.optional(client.api, "worktree.info", { directory }, directory)
-      const branch =
-        info?.branch ??
-        (await client.api.vcs
-          .get({ location: { directory } })
-          .then((result) => result.data.branch.current)
-          .catch(() => undefined)) ??
-        name.trim()
-      await createAgent({
-        name: name.trim(),
-        directory,
-        worktree: { branch, directory, sourceRepo: info?.sourceRepo ?? repository },
-      })
-    })()
+    await createWorktreeAgent(host(), { name: name.trim(), repository })
+      .then((created) => setIndex(created.index))
       .catch((error: unknown) => toast.show({ title: "Creating worktree failed", message: errorMessage(error), variant: "error" }))
       .finally(() => setBusy(false))
   }
