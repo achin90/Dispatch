@@ -10,7 +10,8 @@ export const DynamicProviderPlugin = define({
     yield* ctx.aisdk.hook(
       "sdk",
       Effect.fn(function* (evt) {
-        if (evt.sdk) return
+        // Dispatch: the Dispatch plugin answers its own in-process package; never npm-install it.
+        if (evt.sdk || evt.package.startsWith("@opencode/dispatch/")) return
 
         evt.sdk = ((yield* loadSDKFactory(npm, evt.package)) as (options: any) => any)(evt.options)
       }),
