@@ -53,7 +53,8 @@ const layer = Layer.effectDiscard(
     const lastResponse = Effect.fn("DispatchRpc.lastResponse")(function* (sessionID: SessionSchema.ID) {
       const session = yield* store.get(sessionID)
       if (!session) return { text: "", summary: false }
-      const messages = yield* store.messages({ sessionID }).pipe(Effect.orElseSucceed(() => []))
+      // The store defaults to newest first; lastText expects chronological order.
+      const messages = yield* store.messages({ sessionID, order: "asc" }).pipe(Effect.orElseSucceed(() => []))
       const found = DispatchLastResponse.lastText(messages)
       const model = found.last?.type === "assistant" ? found.last.model : undefined
       return yield* DispatchLastResponse.respond(found.text, (input) =>

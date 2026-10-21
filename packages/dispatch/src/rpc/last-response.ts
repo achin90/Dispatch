@@ -24,7 +24,7 @@ export function prompt(text: string) {
   return PREFIX + text.substring(0, 4000) + SUFFIX
 }
 
-/** The text of the last assistant message, the way the dashboard shows an agent's reply. */
+/** The text of the last assistant message (messages in chronological order), the way the dashboard shows an agent's reply. */
 export function lastText(messages: ReadonlyArray<SessionMessage.Info>) {
   const last = messages.findLast((message) => message.type === "assistant")
   if (last?.type !== "assistant") return { text: "", last }
