@@ -79,6 +79,9 @@ export interface Options {
 export function canUseTool(options: Options): CanUseTool {
   return async (toolName, input, call) => {
     if (call.signal.aborted) return { behavior: "deny", message: "Request aborted" }
+    // v2's subagent tool asks for `subagent` on the chosen agent itself, linked to its tool part;
+    // asking here too would prompt twice, since a "once" approval is not saved.
+    if (toolName === SdkAdapter.PLUGIN_SUBAGENT) return { behavior: "allow", updatedInput: input }
     const source = await options.directory.lookup(call.toolUseID)
     // Subagent calls belong to a child session's tool part; ask on the parent without a source link.
     const invocation = {

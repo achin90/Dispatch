@@ -27,6 +27,12 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
 
 export const isSubagentTool = (name: string) => name === "Agent" || name === "Task"
 
+/** In-process MCP server exposing opencode plugin tools, v2's `subagent` among them (runner/mcp.ts). */
+export const PLUGIN_SERVER = "opencode-plugins"
+
+/** v2's `subagent` tool as the CLI names it; it asks permission itself, linked to its tool part. */
+export const PLUGIN_SUBAGENT = `mcp__${PLUGIN_SERVER}__subagent`
+
 /** `mcp__<server>__<tool>` → `{ server, tool }`. */
 export function parseMcpTool(name: string) {
   const match = /^mcp__(.+?)__(.+)$/.exec(name)
@@ -38,6 +44,8 @@ export function normalizeTool(name: string): string {
   const mapped = TOOL_NAMES[name]
   if (mapped) return mapped
   const mcp = parseMcpTool(name)
+  // Plugin tools are opencode's own, so their parts keep the tool's v2 name (`subagent`, not `opencode-plugins_subagent`).
+  if (mcp?.server === PLUGIN_SERVER) return mcp.tool
   if (mcp) return McpTool.name(mcp.server, mcp.tool)
   return name.toLowerCase()
 }

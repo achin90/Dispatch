@@ -1,24 +1,42 @@
 export * as SdkMcp from "./mcp.js"
 
 import { createSdkMcpServer, type McpServerConfig } from "@anthropic-ai/claude-agent-sdk"
-import type { Agent } from "@opencode/core/agent"
+import { Agent } from "@opencode/core/agent"
 import { Mcp } from "@opencode/core/mcp/index"
+import { Permission } from "@opencode/core/permission"
 import { SessionMessage } from "@opencode/core/session/message"
 import type { SessionSchema } from "@opencode/core/session/schema"
 import { Tool } from "@opencode/core/tool"
 import { McpTool } from "@opencode/core/tool/mcp"
+import { SubagentTool } from "@opencode/core/tool/plugin/subagent"
 import { definition, effectiveName, execute } from "@opencode/core/tool/runtime"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { Effect, Schedule } from "effect"
+import { Cause, Effect, Exit, Schedule } from "effect"
+import { SdkAdapter } from "../sdk/adapter.js"
 
 type Definition = { name: string; description?: string; inputSchema: Record<string, unknown> }
 
-export type Run = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
+export type Run = <A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal) => Promise<A>
 
-/** In-process MCP server exposing tools registered by non-builtin opencode plugins. */
-export const PLUGIN_SERVER = "opencode-plugins"
+export const PLUGIN_SERVER = SdkAdapter.PLUGIN_SERVER
 
-// v2 tools the CLI already has its own version of, plus host-owned namespaces.
+/** Links a plugin tool call to the tool part the router published for it. */
+export interface Calls {
+  /** The assistant message that published the call, once the router has seen it. */
+  readonly lookup: (toolUseID: string) => Promise<{ readonly messageID: string } | undefined>
+  /** Live metadata for the running part, e.g. the subagent's child session. */
+  readonly progress: (toolUseID: string, metadata: Tool.Metadata) => Effect.Effect<void>
+  /** Metadata for the part's result, which MCP's text-only content would otherwise drop. */
+  readonly metadata: Map<string, Tool.Metadata>
+  /** Aborted when the drain is interrupted, so a running call (and a foreground child) stops too. */
+  readonly signal: AbortSignal
+  /** Called when the user declines without feedback, which ends the turn as interrupted. */
+  readonly onDecline?: () => void
+}
+
+// v2 tools the CLI already has its own version of, plus host-owned namespaces. `subagent` is not
+// one: the CLI's Agent/Task tools are disabled so subagents run as v2 child sessions with core jobs,
+// which can be backgrounded (Ctrl+B) and outlive the parent's one-shot query.
 const BUILTIN_TOOLS = new Set([
   "shell",
   "read",
@@ -32,7 +50,6 @@ const BUILTIN_TOOLS = new Set([
   "todowrite",
   "question",
   "skill",
-  "subagent",
 ])
 const HOST_NAMESPACES = ["opencode", "browser"]
 
@@ -47,7 +64,7 @@ const HOST_NAMESPACES = ["opencode", "browser"]
  * - a call checks the server status first and fails with a clear message when it is down.
  * Raw request handlers keep the servers' original JSON schemas.
  */
-export function make(mcp: Mcp.Interface, registry: Tool.Interface) {
+export function make(mcp: Mcp.Interface, registry: Tool.Interface, agents: Agent.Interface) {
   const cache = new Map<string, Definition[]>()
 
   const servers = Effect.fn("SdkMcp.servers")(function* (run: Run) {
@@ -85,6 +102,7 @@ export function make(mcp: Mcp.Interface, registry: Tool.Interface) {
   const plugins = Effect.fn("SdkMcp.plugins")(function* (
     run: Run,
     context: { readonly sessionID: SessionSchema.ID; readonly agent: Agent.ID },
+    calls: Calls,
   ) {
     const mcpNamespaces = new Set((yield* mcp.servers()).map((server) => McpTool.namespace(server.name)))
     const tools = (yield* registry.list()).filter((tool) => {
@@ -95,6 +113,7 @@ export function make(mcp: Mcp.Interface, registry: Tool.Interface) {
     })
     if (tools.length === 0) return {} as Record<string, McpServerConfig>
     const byName = new Map(tools.map((tool) => [effectiveName(tool), tool]))
+    const subagents = yield* availableSubagents(agents, context.agent)
     const config = createSdkMcpServer({
       name: PLUGIN_SERVER,
       tools: [{ name: "__init__", description: "", inputSchema: {}, handler: async () => ({ content: [] }) }],
@@ -104,44 +123,86 @@ export function make(mcp: Mcp.Interface, registry: Tool.Interface) {
         const described = definition(tool)
         return {
           name: described.name,
-          description: described.description,
+          description:
+            described.name === SubagentTool.name && subagents ? `${described.description}\n\n${subagents}` : described.description,
           inputSchema: described.inputSchema as Record<string, unknown> & { type: "object" },
         }
       }),
     }))
-    config.instance.server.setRequestHandler(CallToolRequestSchema, (request) => {
+    config.instance.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const tool = byName.get(request.params.name)
       if (!tool)
-        return Promise.resolve({
+        return {
           content: [{ type: "text" as const, text: `Plugin tool "${request.params.name}" not found` }],
           isError: true,
-        })
-      return run(
+        }
+      // The CLI stamps every MCP call with the tool_use id of the part the router published for it.
+      const meta = request.params._meta?.["claudecode/toolUseId"]
+      const toolUseID = typeof meta === "string" ? meta : undefined
+      const source = toolUseID ? await calls.lookup(toolUseID) : undefined
+      const exit = await run(
         execute(tool, request.params.arguments ?? {}, {
           sessionID: context.sessionID,
           agent: context.agent,
-          // MCP calls carry no tool_use_id; the call is not linked to a specific tool part.
-          messageID: SessionMessage.ID.create(),
-          id: Tool.CallID.make(`plugin_${crypto.randomUUID()}`),
-          progress: () => Effect.void,
-        }).pipe(
-          Effect.map((result) => ({
-            content: result.content.map((part) =>
-              part.type === "text"
-                ? { type: "text" as const, text: part.text }
-                : { type: "text" as const, text: part.name ?? part.uri },
-            ),
-          })),
-          Effect.catch((error) =>
-            Effect.succeed({ content: [{ type: "text" as const, text: error.message }], isError: true }),
+          messageID: SessionMessage.ID.make(source?.messageID ?? SessionMessage.ID.create()),
+          id: Tool.CallID.make(toolUseID ?? `plugin_${crypto.randomUUID()}`),
+          progress: (metadata) => (toolUseID ? calls.progress(toolUseID, metadata) : Effect.void),
+        }).pipe(Effect.exit),
+        AbortSignal.any([calls.signal, extra.signal]),
+      ).catch((error: unknown) => Exit.die(error))
+      if (Exit.isSuccess(exit)) {
+        if (toolUseID && exit.value.metadata) calls.metadata.set(toolUseID, exit.value.metadata)
+        return {
+          content: exit.value.content.map((part) =>
+            part.type === "text"
+              ? { type: "text" as const, text: part.text }
+              : { type: "text" as const, text: part.name ?? part.uri },
           ),
-        ),
-      )
+        }
+      }
+      return { content: [{ type: "text" as const, text: failure(exit.cause, calls.onDecline) }], isError: true }
     })
     return { [PLUGIN_SERVER]: config } satisfies Record<string, McpServerConfig>
   })
 
   return { servers, plugins }
+}
+
+/**
+ * The "Available subagents" list v2's subagent tool adds to its description through the session
+ * `context` hook, which the SDK runner never fires. Same filter: non-primary, visible, not denied.
+ */
+const availableSubagents = Effect.fnUntraced(function* (agents: Agent.Interface, agentID: Agent.ID) {
+  const selected = yield* agents.resolve(agentID)
+  if (!selected) return undefined
+  const available = (yield* agents.list())
+    .filter(
+      (agent) =>
+        agent.mode !== "primary" &&
+        !agent.hidden &&
+        Permission.evaluate(SubagentTool.name, agent.id, selected.permissions).effect !== "deny",
+    )
+    .toSorted((a, b) => a.id.localeCompare(b.id))
+  if (available.length === 0) return undefined
+  return [
+    "Available subagents:",
+    ...available.map(
+      (agent) =>
+        `- ${agent.id}: ${agent.description ?? "This subagent should only be called when explicitly requested."}`,
+    ),
+  ].join("\n")
+})
+
+/** The text the model sees for a failed plugin call. A plain decline ends the turn, as in `canUseTool`. */
+function failure(cause: Cause.Cause<Tool.Error>, onDecline: (() => void) | undefined) {
+  const defect = cause.reasons.find(Cause.isDieReason)?.defect
+  if (defect instanceof Permission.DeclinedError) {
+    onDecline?.()
+    return "The user declined this tool call"
+  }
+  if (Cause.hasInterruptsOnly(cause)) return "The tool call was interrupted"
+  const error = cause.reasons.find(Cause.isFailReason)?.error ?? defect
+  return error instanceof Error ? error.message : "The tool call failed"
 }
 
 function proxy(mcp: Mcp.Interface, server: string, tools: Definition[], run: Run): McpServerConfig {

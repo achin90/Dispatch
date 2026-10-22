@@ -198,6 +198,8 @@ export function make(input: Input) {
   return {
     handle,
     abort,
+    /** Live metadata for a running call on whichever writer published it (plugin tools report progress). */
+    progress: (toolUseID: string, metadata: Tool.Metadata) => (ownerOf(toolUseID) ?? main).progress(toolUseID, metadata),
     /** Whether any model output reached the Session yet (a stale resume fails before any). */
     outputStarted: () => output,
     result: () => result,

@@ -103,6 +103,8 @@ describe("query options", () => {
     expect(options.resume).toBe("uuid")
     expect(options.effort).toBe("xhigh")
     expect(options.includePartialMessages).toBe(true)
+    // Subagents run through v2's subagent tool, not the CLI's own.
+    expect(options.disallowedTools).toEqual(["Agent", "Task"])
     expect((options.settings as { autoCompactWindow: number }).autoCompactWindow).toBe(1_000_000)
     expect(
       (SdkQuery.options({ ...base, contextWindow: 50_000 }).settings as { autoCompactWindow: number })

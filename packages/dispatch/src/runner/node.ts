@@ -83,7 +83,7 @@ const layer = Layer.effect(
       effect: Effect.Effect<A, E, SdkPermission.Requirements | Mcp.Service | Session.Service>,
       signal?: AbortSignal,
     ) => Effect.runPromiseWith(services)(effect, signal ? { signal } : undefined)
-    const mcp = SdkMcp.make(yield* Mcp.Service, yield* Tool.Service)
+    const mcp = SdkMcp.make(yield* Mcp.Service, yield* Tool.Service, yield* Agent.Service)
     const titles = yield* FiberMap.make<SessionSchema.ID, void, never>()
     // Dispatch bridge: claude.ai mirroring (process-wide; see bridge/service.ts).
     const bridge = yield* DispatchBridge.Service
@@ -235,7 +235,17 @@ const layer = Layer.effect(
         postCompact: capture(compaction),
         mcpServers: {
           ...(yield* mcp.servers((effect) => run(effect))),
-          ...(yield* mcp.plugins((effect) => run(effect), { sessionID: session.id, agent: loaded.agent.id })),
+          ...(yield* mcp.plugins(
+            (effect, signal) => run(effect, signal),
+            { sessionID: session.id, agent: loaded.agent.id },
+            {
+              lookup: (toolUseID) => directory.lookup(toolUseID),
+              progress: router.progress,
+              metadata,
+              signal: abortController.signal,
+              onDecline: permissions.onDecline,
+            },
+          )),
         },
         pathToClaudeCodeExecutable: yield* Effect.promise(() => SdkBin.resolveClaudeBin()),
       })

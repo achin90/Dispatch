@@ -5,6 +5,7 @@ import { Permission } from "@opencode/core/permission"
 import { SessionMessage } from "@opencode/core/session/message"
 import { Effect, Exit } from "effect"
 import { SdkPermission } from "../src/runner/permission"
+import { SdkAdapter } from "../src/sdk/adapter"
 import { agent, location, pending, sessionID, setup } from "./fixture"
 
 const fixture = location()
@@ -129,6 +130,19 @@ describe("canUseTool bridge", () => {
       }),
     )
     expect(result).toEqual({ behavior: "allow", updatedInput: { pattern: "TODO" } })
+  })
+
+  test("v2's subagent tool is allowed here because it asks for itself", async () => {
+    const result = await fixture.run(
+      Effect.gen(function* () {
+        // Rules that would ask for anything: the bridge must not prompt for the subagent call.
+        const { call } = yield* bridge([{ action: "*", resource: "*", effect: "ask" }])
+        const decided = yield* answer(call(SdkAdapter.PLUGIN_SUBAGENT, { agent: "general" }).answer)
+        expect(yield* (yield* Permission.Service).list()).toEqual([])
+        return decided
+      }),
+    )
+    expect(result).toEqual({ behavior: "allow", updatedInput: { agent: "general" } })
   })
 
   test("a call whose signal is already aborted is denied without asking", async () => {

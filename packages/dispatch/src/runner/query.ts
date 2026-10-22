@@ -99,6 +99,9 @@ export function options(input: OptionsInput): Options {
     ...(input.effort && EFFORTS.has(input.effort) ? { effort: input.effort as Options["effort"] } : {}),
     ...(input.maxTurns ? { maxTurns: input.maxTurns } : {}),
     mcpServers: input.mcpServers,
+    // Subagents run through v2's `subagent` tool (plugin MCP server) as child sessions with core
+    // jobs, so they can be backgrounded and outlive this one-shot query; the CLI's own are off.
+    disallowedTools: ["Agent", "Task"],
     // MCP servers come only from opencode. Otherwise the CLI also loads .mcp.json, ~/.claude.json and
     // claude.ai connectors, whose unauthenticated servers inject reminders the model reports to the user.
     strictMcpConfig: true,

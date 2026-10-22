@@ -98,8 +98,25 @@ invariants that still hold:
 - Every tool is provider-executed. Results come from the SDK's `tool_result` blocks and are
   published on the message that published the call. Tool part names and inputs use the v2 vocabulary
   (`shell`, `read`, `write`, `edit`, `subagent`, `question`, `<server>_<tool>` for MCP).
-- Agent/Task subagents write into child Sessions (`metadata.sessionID` on the parent's `subagent`
-  part). PreToolUse forces them to run synchronously and applies the parent's rules to their calls.
+- Subagents run through v2's `subagent` tool, exposed on the in-process `opencode-plugins` MCP
+  server (`runner/mcp.ts`); the CLI's own `Agent`/`Task` tools are disabled (`disallowedTools`).
+  Each subagent is a v2 child Session with a core job, so Ctrl+B (`Session.background`) and
+  `background: true` work as on the stock runner: the call returns, the parent's query ends, and the
+  child's completion synthetic wakes the parent. A one-shot query cannot keep the CLI's own
+  backgrounded subagents or shells alive, which is why they are not used.
+  - The CLI stamps each MCP call with `_meta["claudecode/toolUseId"]`; the bridge uses it as the
+    tool call id, looks up the assistant message that published it (so the tool's own permission
+    prompt links to its part), forwards `progress` (the child's `sessionID` while it runs) and
+    stashes the result metadata the text-only MCP result would drop. The part is named `subagent`.
+  - `canUseTool` allows `mcp__opencode-plugins__subagent` without asking: the tool asserts
+    `subagent` on the chosen agent itself. A plain decline there ends the turn, as in `canUseTool`.
+  - The "Available subagents" list the tool adds through the session `context` hook is appended
+    in the bridge's ListTools, since the SDK runner never fires that hook.
+  - Interrupting the drain aborts a running plugin call, which interrupts a foreground child.
+  - Ctrl+B also admits core's "moved to the background" synthetic, which the SDK runner answers
+    with one short extra query after the current one ends.
+- Sessions recorded before this kept their CLI `Agent`/`Task` parts, which the router still maps
+  to child Sessions; PreToolUse still forces those synchronous and applies the parent's rules.
 - PreToolUse also forces `Bash` `run_in_background` to false, on the main thread and in subagents: a
   one-shot `query()` kills background shells a few seconds after its result, so they never finish.
 - Interrupting the drain aborts the CLI and settles open messages as aborted.
