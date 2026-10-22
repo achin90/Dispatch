@@ -1901,7 +1901,9 @@ function BackgroundToolHint(props: { messages: SessionMessageInfo[] }) {
     const part = current?.content.find((part): part is SessionMessageAssistantTool => {
       if (part.type !== "tool" || part.state.status !== "running") return false
       const name = canonicalToolName(part.name)
-      return name === "shell" || name === "subagent"
+      // Dispatch: Anthropic sessions run shell commands inside the Claude Agent SDK, which Ctrl+B cannot background.
+      if (name === "shell") return current?.model.providerID !== "anthropic"
+      return name === "subagent"
     })
     if (!current || !part) return
     return { key: `${current.id}:${part.id}`, started: part.time.ran ?? part.time.created }
