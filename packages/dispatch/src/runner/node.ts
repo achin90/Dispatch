@@ -36,7 +36,7 @@ import { toSessionError } from "@opencode/core/session/to-session-error"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import type { LayerNode } from "@opencode/util/effect/layer-node"
 import { and, desc, eq, sql } from "drizzle-orm"
-import { Cause, Effect, Exit, FiberMap, Layer, Stream } from "effect"
+import { Cause, Effect, Exit, Fiber, FiberMap, Layer, Stream } from "effect"
 import { DispatchBridge } from "../bridge/service.js"
 import { DispatchBridgeRpc } from "../bridge/rpc.js"
 import { SdkAdapter } from "../sdk/adapter.js"
@@ -52,8 +52,6 @@ import { SdkRouter } from "./router.js"
 // A fresh identity for the stock runner: the replacement map keys on node identity, so depending
 // on SessionRunnerLLM.node itself would resolve back to this node.
 const stock = SessionRunnerLLM.node.mapLayer((layer) => layer)
-
-// Instructions the Claude Code CLI already provides (date, environment) or that describe v2-only tools.
 
 /**
  * Replaces the Location's SessionRunner: Sessions on an Anthropic model run through the Claude
@@ -259,11 +257,20 @@ const layer = Layer.effect(
       })
       const stream = yield* Effect.sync(() => query({ prompt: SdkQuery.input(prompt), options }))
       yield* mirror.prompted(SdkQuery.pending(loaded.messages)) // Dispatch bridge
-      const consumed = yield* Stream.fromAsyncIterable(stream as AsyncIterable<SDKMessage>, (error) => error).pipe(
+      const consuming = yield* Stream.fromAsyncIterable(stream as AsyncIterable<SDKMessage>, (error) => error).pipe(
         Stream.runForEach((message) => mirror.frame(message).pipe(Effect.andThen(router.handle(message)))), // Dispatch bridge: tee
-        // Interrupting the drain aborts the CLI and settles every open message as interrupted.
+        // Detached so an interrupted drain does not wait for this fiber's cleanup, below.
+        Effect.forkDetach({ startImmediately: true }),
+      )
+      const consumed = yield* Fiber.join(consuming).pipe(
+        // Interrupting the drain aborts the CLI and settles every open message as interrupted, without
+        // waiting for the stream to close: its iterator's return() waits about two seconds for the
+        // aborted CLI process to exit. Once interrupted, the stream handles no further frames.
         Effect.onInterrupt(() =>
-          Effect.sync(() => abortController.abort()).pipe(Effect.andThen(router.abort(INTERRUPTED, true))),
+          Effect.sync(() => abortController.abort()).pipe(
+            Effect.andThen(Fiber.interrupt(consuming).pipe(Effect.forkDetach({ startImmediately: true }))),
+            Effect.andThen(router.abort(INTERRUPTED, true)),
+          ),
         ),
         // Dispatch bridge: ends the remote turn on every path (result, error, interrupt).
         Effect.ensuring(Effect.suspend(() => mirror.settle(router.result()?.is_error === false))),
