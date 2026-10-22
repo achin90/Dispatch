@@ -1,4 +1,10 @@
 import { describe, expect, test } from "bun:test"
+import { Model } from "@opencode/core/model"
+import { Plugin } from "@opencode/core/plugin"
+import { Provider } from "@opencode/core/provider"
+import { Effect } from "effect"
+import { PluginTestLayer } from "../../core/test/plugin/fixture"
+import { DispatchModelsPlugin } from "../src/plugin/models"
 import { SdkModels } from "../src/sdk/models"
 
 // Dispatch regression guard for the static Claude Agent SDK models.
@@ -53,5 +59,42 @@ describe("SDK models", () => {
   test("only the anthropic provider routes to the SDK runner", () => {
     expect(SdkModels.isSdkModel({ providerID: "anthropic" })).toBe(true)
     expect(SdkModels.isSdkModel({ providerID: "opencode-go" })).toBe(false)
+  })
+})
+
+// The plugin runs through core's real plugin host, after a source plugin that stands in for models.dev.
+describe("models plugin", () => {
+  test("catalog models an alias covers are deprecated; other catalog models stay listed", async () => {
+    const providerID = Provider.ID.make("anthropic")
+    const source: Plugin.Generation = {
+      id: "catalog",
+      revision: "1",
+      effect: (ctx) =>
+        ctx.provider
+          .transform((editor) =>
+            editor.add({
+              info: { ...Provider.Info.empty(providerID), activation: "enabled" },
+              models: ["claude-opus-5-5", "claude-opus-4-5"].map((id) =>
+                Model.Info.default(providerID, Model.ID.make(id)),
+              ),
+            }),
+          )
+          .pipe(Effect.asVoid),
+    }
+    const models = await Effect.runPromise(
+      Effect.gen(function* () {
+        const plugins = yield* Plugin.Service
+        const models = yield* Model.Service
+        yield* plugins.activate([
+          source,
+          { id: "dispatch.models", revision: "1", effect: DispatchModelsPlugin.Plugin.effect },
+        ])
+        return yield* models.all()
+      }).pipe(Effect.scoped, Effect.provide(PluginTestLayer)),
+    )
+    const status = (id: string) => models.find((model) => model.id === id)
+    expect(status("opus-5-5")).toMatchObject({ status: "active", package: SdkModels.PACKAGE })
+    expect(status("claude-opus-5-5")).toMatchObject({ status: "deprecated", package: SdkModels.PACKAGE })
+    expect(status("claude-opus-4-5")?.status).not.toBe("deprecated")
   })
 })

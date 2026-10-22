@@ -129,6 +129,8 @@ model at the AI SDK package `aisdk:@opencode/dispatch/claude-agent-sdk`. The plu
 package with `src/sdk/language-model.ts`, a one-turn tool-free `query()`, so title generation,
 `generate` and summary compaction work on a subscription. `core/src/plugin/provider/dynamic.ts`
 skips `@opencode/dispatch/*` packages (marked `// Dispatch:`) so it never tries to npm-install them.
+Catalog models an alias already covers (its `catalog` field) are marked `deprecated`, so the picker
+lists only the alias (with its `[1m]` opt-in) while saved references still resolve.
 
 ### Embedded CLI binary
 

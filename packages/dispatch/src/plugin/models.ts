@@ -21,9 +21,16 @@ export const Plugin = define({
         SdkModels.info(alias, definition, definition.catalog ? (catalog.get(definition.catalog)?.cost ?? []) : []),
       )
       const aliases = new Set(statics.map((model) => model.id as string))
+      // A catalog model an alias already covers would show twice in the picker, and without the
+      // alias's `[1m]` opt-in. Deprecate it so only the alias is listed but saved references resolve.
+      const covered = new Set(Object.values(SdkModels.definitions).flatMap((definition) => definition.catalog ?? []))
       const others = Array.from(catalog.values())
         .filter((model) => !aliases.has(model.id))
-        .map((model) => ({ ...model, package: SdkModels.PACKAGE }))
+        .map((model) => ({
+          ...model,
+          package: SdkModels.PACKAGE,
+          ...(covered.has(model.id) ? { status: "deprecated" as const } : {}),
+        }))
       if (!existing)
         return editor.add({
           info: { id: SdkModels.providerID, name: "Anthropic", activation: "enabled", package: SdkModels.PACKAGE },
