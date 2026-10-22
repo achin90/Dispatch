@@ -58,3 +58,10 @@ const layer = Layer.effect(
 )
 
 export const node = makeLocationNode({ service: Service, layer, deps: [Global.node, Location.node] })
+
+/**
+ * Dispatch: instruction blocks left out of requests that run on the Claude Agent SDK. The CLI adds its own
+ * environment and date, code mode does not apply to its tools, and Anthropic bills a subscription request
+ * carrying the environment block as a third-party app ("Third-party apps now draw from extra usage").
+ */
+export const sdkSkipped: ReadonlySet<string> = new Set(["core/date", "core/environment", "core/codemode"])

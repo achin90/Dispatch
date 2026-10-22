@@ -1,6 +1,7 @@
 export * as SdkLanguageModel from "./language-model.js"
 
 import { query, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk"
+import { APICallError } from "@ai-sdk/provider"
 import type {
   LanguageModelV3,
   LanguageModelV3CallOptions,
@@ -61,7 +62,7 @@ export function make(modelID: string, apiKey?: string): LanguageModelV3 {
             if (message.type === "result") result = message
           }
         } catch (error) {
-          controller.enqueue({ type: "error", error })
+          controller.enqueue({ type: "error", error: apiError(error) })
         }
         if (!started && result?.subtype === "success" && result.result) {
           controller.enqueue({ type: "text-start", id })
@@ -72,7 +73,9 @@ export function make(modelID: string, apiKey?: string): LanguageModelV3 {
         if (result?.is_error)
           controller.enqueue({
             type: "error",
-            error: new Error("errors" in result ? result.errors.join("; ") : "The Claude Agent SDK reported an error"),
+            error: apiError(
+              new Error("errors" in result ? result.errors.join("; ") : "The Claude Agent SDK reported an error"),
+            ),
           })
         controller.enqueue({ type: "finish", finishReason: finish(result), usage: usage(result) })
         controller.close()
@@ -133,6 +136,26 @@ export function render(prompt: LanguageModelV3Prompt) {
       ? turns[0].text
       : turns.map((turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.text}`).join("\n\n"),
   }
+}
+
+/**
+ * The CLI reports API failures as plain text ("API Error: 400 …"). Carrying the status lets core classify them:
+ * a 400 such as the third-party-app billing rejection fails at once instead of being retried for ~100s, while
+ * 429 and 5xx keep retrying. Errors without a status pass through unchanged.
+ */
+export function apiError(error: unknown) {
+  if (!(error instanceof Error)) return error
+  const status = /API Error: (\d{3})\b/.exec(error.message)?.[1]
+  if (!status) return error
+  const statusCode = Number(status)
+  return new APICallError({
+    message: error.message,
+    url: "claude-agent-sdk",
+    requestBodyValues: {},
+    statusCode,
+    isRetryable: statusCode === 429 || statusCode >= 500,
+    cause: error,
+  })
 }
 
 function textDelta(message: SDKMessage) {

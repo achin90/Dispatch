@@ -64,6 +64,9 @@ let instruction: string | Instructions.Unavailable = "Initial context"
 const sessionID = SessionSchema.ID.make("ses_generate_test")
 
 const model = LanguageModel.make({ id: "generate-model", provider: "test", route: OpenAIChat.route })
+let resolvedModel = model
+// Extra built-in instructions for a single test; reset by that test.
+let extraBuiltins: Instructions.List = Instructions.empty
 const client = Layer.mock(LLMClient.Service)({
   stream: () => Stream.die(new Error("unused")),
   generate: (request, requestOptions) =>
@@ -89,7 +92,7 @@ const client = Layer.mock(LLMClient.Service)({
 const models = Layer.mock(SessionRunnerModel.Service)({
   resolve: () =>
     Effect.succeed(
-      SessionRunnerModel.resolved(model, {
+      SessionRunnerModel.resolved(resolvedModel, {
         capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
         cost: [],
         limit: { context: 200_000, output: 32_000 },
@@ -98,16 +101,19 @@ const models = Layer.mock(SessionRunnerModel.Service)({
 })
 const builtins = Layer.mock(InstructionBuiltIns.Service, {
   load: () =>
-    Effect.succeed(
-      Instructions.make({
-        key: Instructions.Key.make("test/context"),
-        codec: Schema.toCodecJson(Schema.String),
-        read: Effect.sync(() => instruction),
-        render: {
-          initial: String,
-          changed: (_previous, current) => current,
-        },
-      }),
+    Effect.sync(() =>
+      Instructions.combine([
+        Instructions.make({
+          key: Instructions.Key.make("test/context"),
+          codec: Schema.toCodecJson(Schema.String),
+          read: Effect.sync(() => instruction),
+          render: {
+            initial: String,
+            changed: (_previous, current) => current,
+          },
+        }),
+        extraBuiltins,
+      ]),
     ),
 })
 const discovery = Layer.mock(InstructionDiscovery.Service, {
@@ -449,5 +455,45 @@ it.effect(
       expect(requests).toEqual([])
       expect(yield* durableState(db, sessionID)).toEqual(before)
     }),
+  { timeout: 15_000 },
+)
+
+// Dispatch: Anthropic models run on the Claude Agent SDK, which bills a request carrying the environment block as a
+// third-party app. Generation for them must leave it out, while other providers keep it.
+it.effect(
+  "leaves the environment block out for Anthropic models",
+  () =>
+    Effect.gen(function* () {
+      instruction = "Initial context"
+      extraBuiltins = Instructions.make({
+        key: Instructions.Key.make("core/environment"),
+        codec: Schema.toCodecJson(Schema.String),
+        read: Effect.succeed("<env>Working directory: /project</env>"),
+        render: { initial: String, changed: (_previous, current) => current },
+      })
+      const { db, bus, instructions, session, instances } = yield* setup
+      yield* InstructionState.prepare(db, bus, instructions, sessionID)
+      const sent = (provider: string) =>
+        Effect.gen(function* () {
+          requests.length = 0
+          resolvedModel = LanguageModel.make({ id: "generate-model", provider, route: OpenAIChat.route })
+          yield* SessionGenerate.generate({ session, prompt: "Side question" }).pipe(
+            Effect.provideService(Instance.Service, instances),
+          )
+          return JSON.stringify([requests[0]?.system, requests[0]?.messages])
+        })
+
+      expect(yield* sent("test")).toContain("<env>")
+      const anthropic = yield* sent("anthropic")
+      expect(anthropic).not.toContain("<env>")
+      expect(anthropic).toContain("Initial context")
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          extraBuiltins = Instructions.empty
+          resolvedModel = model
+        }),
+      ),
+    ),
   { timeout: 15_000 },
 )

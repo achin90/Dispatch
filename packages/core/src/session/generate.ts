@@ -5,6 +5,7 @@ import { LLMClient, Message, type AIError } from "@opencode/ai"
 import { Effect } from "effect"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
+import { InstructionBuiltIns } from "../instructions/builtins.js"
 import { Plugin } from "../plugin/service.js"
 import type { Instructions } from "../instructions/index.js"
 import { SessionContext } from "./context.js"
@@ -36,7 +37,12 @@ export const generate = Effect.fn("SessionGenerate.generate")(function* (input: 
     const context = yield* SessionContext.Service
     const selection = yield* context.select(input.session.id)
     const model = yield* context.resolveModel(selection.session)
-    const history = yield* SessionHistory.preview(database.db, selection.session.id, selection.instructions, model.ref)
+    // Dispatch: Anthropic models run on the Claude Agent SDK, which must not receive these blocks.
+    const instructions =
+      model.ref.providerID === "anthropic"
+        ? selection.instructions.filter((source) => !InstructionBuiltIns.sdkSkipped.has(source.key))
+        : selection.instructions
+    const history = yield* SessionHistory.preview(database.db, selection.session.id, instructions, model.ref)
     const transcript = SessionModelRequest.baseTranscript({
       agent: selection.agent.info,
       model,

@@ -7,6 +7,7 @@ import { Config } from "@opencode/core/config"
 import { Database } from "@opencode/core/database/database"
 import { FileAccess } from "@opencode/core/file-access"
 import { Form } from "@opencode/core/form"
+import { InstructionBuiltIns } from "@opencode/core/instructions/builtins"
 import { Instructions } from "@opencode/core/instructions/index"
 import { Integration } from "@opencode/core/integration"
 import { Location } from "@opencode/core/location"
@@ -53,7 +54,6 @@ import { SdkRouter } from "./router.js"
 const stock = SessionRunnerLLM.node.mapLayer((layer) => layer)
 
 // Instructions the Claude Code CLI already provides (date, environment) or that describe v2-only tools.
-const SKIPPED_INSTRUCTIONS = new Set(["core/date", "core/environment", "core/codemode"])
 
 /**
  * Replaces the Location's SessionRunner: Sessions on an Anthropic model run through the Claude
@@ -297,7 +297,7 @@ const layer = Layer.effect(
 
     /** Agent system prompt plus instructions. The CLI supplies its own environment block. */
     const systemPrompt = Effect.fn("DispatchRunner.systemPrompt")(function* (selected: SessionContext.Selection) {
-      const sources = selected.instructions.filter((source) => !SKIPPED_INSTRUCTIONS.has(source.key))
+      const sources = selected.instructions.filter((source) => !InstructionBuiltIns.sdkSkipped.has(source.key))
       const values = Object.fromEntries(
         (yield* Instructions.read(sources)).flatMap((entry) =>
           entry.value === Instructions.unavailable || entry.value === Instructions.removed

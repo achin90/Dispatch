@@ -132,6 +132,12 @@ skips `@opencode/dispatch/*` packages (marked `// Dispatch:`) so it never tries 
 Catalog models an alias already covers (its `catalog` field) are marked `deprecated`, so the picker
 lists only the alias (with its `[1m]` opt-in) while saved references still resolve.
 
+`InstructionBuiltIns.sdkSkipped` (`core/date`, `core/environment`, `core/codemode`) is left out of
+every SDK request: the runner's system prompt and `core/src/session/generate.ts` (`/btw`) for
+Anthropic models. Anthropic rejects a subscription request carrying opencode's `<env>` block with
+"400 Third-party apps now draw from extra usage". `sdk/language-model.ts` turns the CLI's
+`API Error: <status>` text into an `APICallError`, so a 400 fails at once instead of being retried.
+
 ### Embedded CLI binary
 
 `src/sdk/bin.ts` `resolveClaudeBin()` loads `src/sdk/bin.gen.ts` when a release build injects it
