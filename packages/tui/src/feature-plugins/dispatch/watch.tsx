@@ -1,9 +1,12 @@
 import type { Plugin } from "@opencode/plugin/tui"
 import { createEffect, on, onCleanup, onMount } from "solid-js"
+import { existsSync, readFileSync } from "node:fs"
+import path from "node:path"
 import { useArgs } from "../../context/args"
 import { useClient } from "../../context/client"
 import { useData } from "../../context/data"
 import { useRoute } from "../../context/route"
+import { useTuiPaths } from "../../context/runtime"
 import { useDialog } from "../../ui/dialog"
 import { useToast } from "../../ui/toast"
 import { errorMessage } from "../../util/error"
@@ -53,8 +56,8 @@ export async function refreshPullRequests(context: Plugin.Context, store: Dispat
   )
   await Promise.all(
     Array.from(branches, async ([branch, cwd]) => {
-      const pr = await DispatchRpc.call(context.client, "github.pr", { branch, cwd }, cwd).catch(
-        (error: unknown) => (error instanceof DispatchRpc.UnavailableError ? undefined : ("error" as const)),
+      const pr = await DispatchRpc.call(context.client, "github.pr", { branch, cwd }, cwd).catch((error: unknown) =>
+        error instanceof DispatchRpc.UnavailableError ? undefined : ("error" as const),
       )
       if (pr === undefined) return
       store.setState((draft) => {
@@ -84,9 +87,32 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
   const route = useRoute()
   const dialog = useDialog()
   const toast = useToast()
+  const paths = useTuiPaths()
   const store = dispatchState(context)
   const dashboard = () => !args.noDashboard
   const isAgent = (sessionID: string) => store.agents.agents.some((agent) => agent.sessionID === sessionID)
+
+  // A v1 install kept the list in `<state>/kv.json`; bring it over once while the v2 store is empty.
+  onMount(() => {
+    if (store.agents.agents.length > 0) return
+    const file = path.join(paths.state, "kv.json")
+    if (!existsSync(file)) return
+    const legacy = DispatchModel.importLegacy(JSON.parse(readFileSync(file, "utf8")))
+    if (legacy.agents.length === 0) return
+    void store
+      .updateAgents((draft) => {
+        if (draft.agents.length === 0) draft.agents.push(...legacy.agents)
+      })
+      .then(() =>
+        store.updateSummaries((draft) => {
+          for (const [sessionID, summary] of Object.entries(legacy.summaries)) draft.bySession[sessionID] ??= summary
+        }),
+      )
+      .then(() => {
+        if (dashboard() && route.data.type === "home") context.ui.router.navigate({ type: "plugin", name: props.route })
+      })
+      .catch(toast.error)
+  })
 
   // Once there is an agent, the dashboard is the home screen unless startup asked for a session or a
   // prompt. With none, launch keeps the stock composer; `<leader>d` or /dashboard opens it.
@@ -155,7 +181,8 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
     if (!isAgent(sessionID)) return
     summarize(sessionID)
     const agent = store.agents.agents.find((item) => item.sessionID === sessionID)
-    if (agent) void refreshDiffStats(context, store, DispatchModel.agentDirectory(agent, data.location.default().directory))
+    if (agent)
+      void refreshDiffStats(context, store, DispatchModel.agentDirectory(agent, data.location.default().directory))
   }
   const disposers = [
     context.data.on("server.connected", () => {

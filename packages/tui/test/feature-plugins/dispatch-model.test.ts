@@ -9,7 +9,12 @@ const permission = (sessionID: string, id = `per_${sessionID}`): PermissionReque
   resources: ["pwd"],
 })
 
-const form = (sessionID: string): FormInfo => ({ id: `frm_${sessionID}`, sessionID, title: "Questions", fields: [{ key: "q0", type: "boolean" }] })
+const form = (sessionID: string): FormInfo => ({
+  id: `frm_${sessionID}`,
+  sessionID,
+  title: "Questions",
+  fields: [{ key: "q0", type: "boolean" }],
+})
 
 function status(input: {
   family?: string[]
@@ -127,7 +132,9 @@ describe("agentStatus", () => {
 describe("currentActivity", () => {
   test("is empty once the assistant message completes", () => {
     expect(
-      DispatchModel.currentActivity([assistant([{ type: "text", text: "done" }], { time: { created: 1, completed: 2 } })]),
+      DispatchModel.currentActivity([
+        assistant([{ type: "text", text: "done" }], { time: { created: 1, completed: 2 } }),
+      ]),
     ).toBeUndefined()
   })
 
@@ -187,9 +194,15 @@ describe("dashboardAction", () => {
     [{ name: "9" }, { type: "jump", index: 8 }],
     [{ name: "0" }, { type: "jump", index: 9 }],
     [{ name: "!" }, { type: "jump", index: 10 }],
-    [{ name: "1", shift: true }, { type: "jump", index: 10 }],
+    [
+      { name: "1", shift: true },
+      { type: "jump", index: 10 },
+    ],
     [{ name: ")" }, { type: "jump", index: 19 }],
-    [{ name: "0", shift: true }, { type: "jump", index: 19 }],
+    [
+      { name: "0", shift: true },
+      { type: "jump", index: 19 },
+    ],
     [{ name: "d", ctrl: true }, undefined],
     [{ name: "x", meta: true }, undefined],
     [{ name: "escape" }, undefined],
@@ -201,7 +214,9 @@ describe("dashboardAction", () => {
   test("hotkeys label the rows the jump keys select", () => {
     const labels = Array.from({ length: 20 }, (_, index) => DispatchModel.hotkey(index))
     expect(labels.join("")).toBe("1234567890!@#$%^&*()")
-    labels.forEach((label, index) => expect(DispatchModel.dashboardAction({ name: label })).toEqual({ type: "jump", index }))
+    labels.forEach((label, index) =>
+      expect(DispatchModel.dashboardAction({ name: label })).toEqual({ type: "jump", index }),
+    )
   })
 })
 
@@ -266,5 +281,47 @@ describe("pull requests", () => {
     expect(DispatchModel.mergeBlocker({ ...pr, state: "CLOSED" })).toBe("PR is closed")
     expect(DispatchModel.mergeBlocker({ ...pr, checks: "fail" })).toBe("PR not ready: CI failing")
     expect(DispatchModel.mergeBlocker({ ...pr, review: "CHANGES_REQUESTED" })).toBe("PR not ready: changes requested")
+  })
+})
+
+describe("importLegacy", () => {
+  test("converts v1 kv.json agents and splits their summaries", () => {
+    const result = DispatchModel.importLegacy({
+      theme: "x",
+      agents: [
+        {
+          id: "a",
+          name: "one",
+          sessionID: "ses_1",
+          createdAt: 1,
+          directory: "/d",
+          summary: { text: "done", ai: true },
+        },
+        {
+          id: "b",
+          name: "two",
+          sessionID: "ses_2",
+          createdAt: 2,
+          worktree: { branch: "b", directory: "/w", sourceRepo: "/r" },
+        },
+        { name: "broken" },
+      ],
+    })
+    expect(result.agents).toEqual([
+      { id: "a", name: "one", sessionID: "ses_1", createdAt: 1, directory: "/d" },
+      {
+        id: "b",
+        name: "two",
+        sessionID: "ses_2",
+        createdAt: 2,
+        worktree: { branch: "b", directory: "/w", sourceRepo: "/r" },
+      },
+    ])
+    expect(result.summaries).toEqual({ ses_1: { text: "done", ai: true } })
+  })
+
+  test("tolerates a missing or foreign file", () => {
+    expect(DispatchModel.importLegacy(undefined)).toEqual({ agents: [], summaries: {} })
+    expect(DispatchModel.importLegacy({ agents: "nope" })).toEqual({ agents: [], summaries: {} })
   })
 })

@@ -37,6 +37,31 @@ export const SUMMARIES_KEY = "summaries"
 export type SummariesState = { visible: boolean; bySession: Record<string, AgentSummary> }
 export const emptySummaries = (): SummariesState => ({ visible: true, bySession: {} })
 
+/**
+ * The v1 dashboard kept its list under `agents` in `<state>/kv.json`, each entry carrying its own
+ * `summary`. Imported once, when the v2 store is still empty, so an upgrade keeps the agents.
+ */
+export function importLegacy(kv: unknown): { agents: AgentEntry[]; summaries: Record<string, AgentSummary> } {
+  const list =
+    typeof kv === "object" && kv !== null && Array.isArray((kv as { agents?: unknown }).agents)
+      ? ((kv as { agents: unknown[] }).agents as Array<AgentEntry & { summary?: AgentSummary }>)
+      : []
+  const agents = list
+    .filter((entry) => typeof entry?.sessionID === "string" && typeof entry.name === "string")
+    .map((entry) => ({
+      id: entry.id ?? crypto.randomUUID(),
+      name: entry.name,
+      sessionID: entry.sessionID,
+      createdAt: entry.createdAt ?? Date.now(),
+      ...(entry.directory ? { directory: entry.directory } : {}),
+      ...(entry.worktree ? { worktree: entry.worktree } : {}),
+    }))
+  const summaries = Object.fromEntries(
+    list.flatMap((entry) => (entry.summary?.text ? [[entry.sessionID, entry.summary] as const] : [])),
+  )
+  return { agents, summaries }
+}
+
 // Client-local dashboard state shared by the route, the background watcher and the plugin state API.
 export const STATE_KEY = "state"
 export const STATE_MEMORY_KEY = `plugin.${PLUGIN_ID}.${STATE_KEY}`
