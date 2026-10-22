@@ -129,6 +129,11 @@ The runner layer captures its context once (`Effect.context()`) and every callba
 in the runner node's `deps`, or the captured context will not contain it.
 `test/boundary.test.ts` guards this.
 
+Permission checks use the Session's agent at call time (`SdkPermission.currentAgent`), not the one the
+query started with: one query spans the turn, so switching build → yolo mid-turn applies from the next
+tool call, as it does on the stock runner (which reloads the Session every step). A prompt already
+open when the agent switches is not re-evaluated.
+
 `Permission.Service.assert` turns a plain decline into a defect (`DeclinedError`); the bridge runs it
 under `Effect.exit` and answers the SDK with `interrupt: true`, matching v2's "a decline ends the
 step". `CorrectedError` (decline with feedback) is returned to the model as feedback.

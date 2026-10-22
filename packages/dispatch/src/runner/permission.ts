@@ -86,7 +86,7 @@ export function canUseTool(options: Options): CanUseTool {
     // Subagent calls belong to a child session's tool part; ask on the parent without a source link.
     const invocation = {
       sessionID: options.sessionID,
-      agent: options.agent,
+      agent: await options.run(currentAgent(options.sessionID, options.agent)).catch(() => options.agent),
       messageID: source && !call.agentID ? source.messageID : undefined,
       id: call.toolUseID,
       permissionID: Permission.ID.create(),
@@ -397,6 +397,18 @@ export function subagentHook(options: Pick<Options, "sessionID" | "agent" | "run
     }
   }
 }
+
+/**
+ * The Session's agent right now. One query spans the whole turn, so the agent the turn started with goes stale
+ * when the user switches agents mid-turn (build → yolo); permissions follow the switch from the next tool call.
+ */
+export const currentAgent = Effect.fn("SdkPermission.currentAgent")(function* (
+  sessionID: SessionSchema.ID,
+  fallback: Agent.ID,
+) {
+  const store = yield* SessionStore.Service
+  return (yield* store.get(sessionID))?.agent ?? fallback
+})
 
 /** Agent rules, then Session rules, then saved approvals, in the order Permission evaluates them. */
 const sessionRules = Effect.fn("SdkPermission.sessionRules")(function* (

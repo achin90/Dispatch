@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk"
+import { Agent } from "@opencode/core/agent"
+import { Database } from "@opencode/core/database/database"
 import { Form } from "@opencode/core/form"
 import { Permission } from "@opencode/core/permission"
 import { SessionMessage } from "@opencode/core/session/message"
+import { SessionTable } from "@opencode/core/session/sql"
+import { eq } from "drizzle-orm"
 import { Effect, Exit } from "effect"
 import { SdkPermission } from "../src/runner/permission"
 import { SdkAdapter } from "../src/sdk/adapter"
@@ -130,6 +134,36 @@ describe("canUseTool bridge", () => {
       }),
     )
     expect(result).toEqual({ behavior: "allow", updatedInput: { pattern: "TODO" } })
+  })
+
+  test("an agent switch mid-turn applies to the next tool call", async () => {
+    const result = await fixture.run(
+      Effect.gen(function* () {
+        // The turn started on `agent`, whose rules ask for everything.
+        const { call } = yield* bridge([{ action: "*", resource: "*", effect: "ask" }])
+        const agents = yield* Agent.Service
+        const yolo = Agent.ID.make("switched")
+        yield* agents.transform((editor) =>
+          editor.update(yolo, (info) => {
+            info.permissions = [{ action: "*", resource: "*", effect: "allow" }]
+          }),
+        )
+        const { db } = yield* Database.Service
+        yield* db.update(SessionTable).set({ agent: yolo }).where(eq(SessionTable.id, sessionID)).run().pipe(Effect.orDie)
+        const decided = yield* answer(call("Bash", { command: "ls" }).answer)
+        expect(yield* (yield* Permission.Service).list()).toEqual([])
+        return decided
+      }).pipe(
+        // The fixture Session is shared across tests; put its agent back.
+        Effect.ensuring(
+          Effect.gen(function* () {
+            const { db } = yield* Database.Service
+            yield* db.update(SessionTable).set({ agent }).where(eq(SessionTable.id, sessionID)).run().pipe(Effect.orDie)
+          }),
+        ),
+      ),
+    )
+    expect(result).toEqual({ behavior: "allow", updatedInput: { command: "ls" } })
   })
 
   test("v2's subagent tool is allowed here because it asks for itself", async () => {

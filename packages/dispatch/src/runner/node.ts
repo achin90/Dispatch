@@ -242,6 +242,8 @@ const layer = Layer.effect(
               metadata,
               signal: abortController.signal,
               onDecline: permissions.onDecline,
+              agent: () =>
+                run(SdkPermission.currentAgent(session.id, loaded.agent.id)).catch(() => loaded.agent.id),
             },
           )),
         },

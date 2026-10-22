@@ -68,6 +68,7 @@ const bridge = (controller = new AbortController()) =>
           onDecline: () => {
             declines.count++
           },
+          agent: async () => agent,
         },
       )
       const server = servers[SdkAdapter.PLUGIN_SERVER]

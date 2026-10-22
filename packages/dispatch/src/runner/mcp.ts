@@ -32,6 +32,8 @@ export interface Calls {
   readonly signal: AbortSignal
   /** Called when the user declines without feedback, which ends the turn as interrupted. */
   readonly onDecline?: () => void
+  /** The Session's agent at call time, so an agent switch mid-turn applies to the tool's own permission checks. */
+  readonly agent: () => Promise<Agent.ID>
 }
 
 // v2 tools the CLI already has its own version of, plus host-owned namespaces. `subagent` is not
@@ -143,7 +145,7 @@ export function make(mcp: Mcp.Interface, registry: Tool.Interface, agents: Agent
       const exit = await run(
         execute(tool, request.params.arguments ?? {}, {
           sessionID: context.sessionID,
-          agent: context.agent,
+          agent: await calls.agent(),
           messageID: SessionMessage.ID.make(source?.messageID ?? SessionMessage.ID.create()),
           id: Tool.CallID.make(toolUseID ?? `plugin_${crypto.randomUUID()}`),
           progress: (metadata) => (toolUseID ? calls.progress(toolUseID, metadata) : Effect.void),
