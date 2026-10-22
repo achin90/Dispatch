@@ -42,12 +42,11 @@ describe("agents", () => {
       }),
     )
 
-  test("the switcher lists build, yolo, assistant and no plan", async () => {
+  test("the switcher lists build and yolo, with no plan or assistant", async () => {
     const list = await agents()
     expect(list.filter((agent) => agent.mode !== "subagent" && !agent.hidden).map((agent) => agent.id)).toEqual([
       Agent.ID.make("build"),
       DispatchAgentsPlugin.yolo,
-      DispatchAgentsPlugin.assistant,
     ])
     expect(list.some((agent) => agent.id === DispatchAgentsPlugin.plan)).toBe(false)
     // Subagents and the hidden helpers stay.
@@ -56,7 +55,7 @@ describe("agents", () => {
     )
   })
 
-  test("build asks before shell and edits; yolo and assistant allow everything", async () => {
+  test("build asks before shell and edits; yolo (and the hidden assistant) allow everything", async () => {
     const list = await agents()
     const rules = (id: string) => list.find((agent) => agent.id === id)?.permissions ?? []
     const effect = (id: string, action: string) => Permission.evaluate(action, "*", rules(id)).effect
@@ -69,8 +68,10 @@ describe("agents", () => {
       expect(effect(id, "edit")).toBe("allow")
       expect(effect(id, "question")).toBe("allow")
     }
+    // The retired assistant stays as a hidden copy of yolo so Sessions saved with it still load.
     const assistant = list.find((agent) => agent.id === DispatchAgentsPlugin.assistant)
-    expect(assistant?.system).toContain("You are in Assistant mode.")
+    expect(assistant).toMatchObject({ hidden: true, mode: "primary" })
+    expect(assistant?.system).toBeUndefined()
     expect(list.find((agent) => agent.id === DispatchAgentsPlugin.yolo)?.description).toBe(
       "Auto runs write, edit, and bash commands.",
     )

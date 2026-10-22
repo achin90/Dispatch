@@ -98,12 +98,12 @@ const COMMAND_PATTERNS: Array<{
     // migration" stays dictation rather than becoming a mode switch.
     // "yellow"/"solo" are here because the recognizer has no "yolo" in its
     // vocabulary and reliably substitutes a real word for it.
-    pattern: /^(?:switch(?:ed)?\s+(?:to|a)\s+|use\s+)?(build|yolo|yellow|solo|assistant)(?:\s+mode)?$/i,
+    pattern: /^(?:switch(?:ed)?\s+(?:to|a)\s+|use\s+)?(build|yolo|yellow|solo)(?:\s+mode)?$/i,
     command: "set-agent",
     extract: (m) => ({ agent: m[1].toLowerCase() }),
     help: {
       phrase: "Jarvis, yolo mode",
-      description: 'Switch the agent to build, yolo, or assistant. Also "switch to build".',
+      description: 'Switch the agent to build or yolo. Also "switch to build".',
       category: "Session",
     },
   },
@@ -212,7 +212,6 @@ const FUZZY_PHRASES: Array<{ phrase: string; command: string; args?: Record<stri
   { phrase: "switch to build mode", command: "set-agent", args: { agent: "build" } },
   { phrase: "switch to yolo mode", command: "set-agent", args: { agent: "yolo" } },
   { phrase: "switch to yellow mode", command: "set-agent", args: { agent: "yolo" } },
-  { phrase: "switch to assistant mode", command: "set-agent", args: { agent: "assistant" } },
 ]
 
 /** A command body (the text after the wake word) to a command, by regex first and then by edit distance. */
@@ -441,7 +440,7 @@ export function createCommandDispatcher(host: CommandHost) {
     if (cmd.command === "summarize-last") return summarize(cmd.args.target)
     if (cmd.command === "set-agent") {
       const spoken = cmd.args.agent === "yellow" || cmd.args.agent === "solo" ? "yolo" : cmd.args.agent
-      // Agents are configurable, so build/yolo/assistant are not guaranteed to
+      // Agents are configurable, so build/yolo are not guaranteed to
       // exist. Check before setting: the miss is otherwise only a visual toast,
       // which is invisible when you're not looking.
       const available = host.agent.list()

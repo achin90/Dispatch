@@ -23,9 +23,10 @@ registration points, each marked `// Dispatch:`.
 
 ## Server plugins
 
-- `plugin/agents.ts`: `build` (asks on `shell`/`edit`), `yolo` and `assistant` (`assistant.txt`
-  prompt), all primary; removes `plan`. The switcher order build → yolo → assistant → config agents
-  falls out of the agent map's insertion order, since these run after `opencode.agent`/`opencode.plan`.
+- `plugin/agents.ts`: `build` (asks on `shell`/`edit`) and `yolo`, both primary; removes `plan`. The
+  switcher order build → yolo → config agents falls out of the agent map's insertion order, since these
+  run after `opencode.agent`/`opencode.plan`. The retired `assistant` agent stays as a hidden copy of
+  yolo: core fails a Session whose saved agent no longer exists, so removing it would break old Sessions.
 - `plugin/commands.ts`: `/deepReview` and `/merge`; `$ARGUMENTS` is replaced, else arguments append.
 - `plugin/worktree.ts`: the `dispatch` worktree strategy, selected as default by registering last.
   A worktree is `<parent of source repo>/<repo>-<slug>` on a new branch `<slug>` (`git worktree add
