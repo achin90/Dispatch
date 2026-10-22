@@ -209,6 +209,21 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => data.session.status(props.sessionID ?? ""))
+  // Dispatch: switching agents normally applies with the next prompt. While the session is running, apply it now
+  // so the turn's next tool call uses the new agent's permissions (build → yolo mid-turn). Debounced so cycling
+  // past agents records one switch.
+  createEffect(
+    on(
+      () => [props.sessionID, status(), local.agent.current()?.id] as const,
+      ([sessionID, current, agent]) => {
+        if (!sessionID || !agent || current !== "running" || data.session.get(sessionID)?.agent === agent) return
+        const timer = setTimeout(() => {
+          void client.api.session.switchAgent({ sessionID, agent }).catch(toast.error)
+        }, 400)
+        onCleanup(() => clearTimeout(timer))
+      },
+    ),
+  )
   const history = usePromptHistory()
   const stash = usePromptStash()
   const keymap = Keymap.use()
