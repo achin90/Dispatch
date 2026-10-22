@@ -344,10 +344,12 @@ export function subagentDecision(rules: Permission.Ruleset, action: string, reso
 }
 
 /**
- * PreToolUse hook. It forces Agent/Task subagents to run synchronously (a backgrounded subagent
- * outlives the query that spawned it and is killed with it, which the model then misreports as
- * a permission problem), and applies the parent's rules to subagent tool calls, which never reach
- * `canUseTool` unless the hook answers "ask". Main-thread calls pass through to `canUseTool`.
+ * PreToolUse hook. It forces Agent/Task subagents and Bash commands to run synchronously, and applies
+ * the parent's rules to subagent tool calls, which never reach `canUseTool` unless the hook answers
+ * "ask". Main-thread calls pass through to `canUseTool`.
+ *
+ * Each drain turn is a one-shot `query()`, and the CLI kills background shells a few seconds after
+ * its result, so a backgrounded command never finishes while the model reports it as running or done.
  */
 export function subagentHook(options: Pick<Options, "sessionID" | "agent" | "run">): HookCallback {
   return async (event) => {
@@ -364,7 +366,10 @@ export function subagentHook(options: Pick<Options, "sessionID" | "agent" | "run
           updatedInput: { ...input, run_in_background: false },
         },
       }
-    if (!event.agent_id) return { continue: true }
+    const updatedInput =
+      event.tool_name === "Bash" && input.run_in_background === true ? { ...input, run_in_background: false } : undefined
+    if (!event.agent_id)
+      return updatedInput ? { continue: true, hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } } : { continue: true }
     const decided = await options.run(
       Effect.gen(function* () {
         const rules = yield* sessionRules(options.sessionID, options.agent)
@@ -384,6 +389,7 @@ export function subagentHook(options: Pick<Options, "sessionID" | "agent" | "run
           decided === "allow"
             ? "Inherited from parent session permissions"
             : `Subagent tool '${event.tool_name}' ${decided === "deny" ? "denied" : "not pre-approved"} by parent rules`,
+        ...(updatedInput ? { updatedInput } : {}),
       },
     }
   }

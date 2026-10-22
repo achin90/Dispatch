@@ -100,6 +100,8 @@ invariants that still hold:
   (`shell`, `read`, `write`, `edit`, `subagent`, `question`, `<server>_<tool>` for MCP).
 - Agent/Task subagents write into child Sessions (`metadata.sessionID` on the parent's `subagent`
   part). PreToolUse forces them to run synchronously and applies the parent's rules to their calls.
+- PreToolUse also forces `Bash` `run_in_background` to false, on the main thread and in subagents: a
+  one-shot `query()` kills background shells a few seconds after its result, so they never finish.
 - Interrupting the drain aborts the CLI and settles open messages as aborted.
 
 ### Callbacks and the Effect boundary

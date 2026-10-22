@@ -286,6 +286,19 @@ describe("subagent hook", () => {
     expect(await decide(build, { tool_name: "Bash", tool_input: { command: "ls" } })).toBeUndefined()
   })
 
+  test("background Bash runs in the foreground, on the main thread and in subagents", async () => {
+    const input = { command: "bun test", description: "Run tests", run_in_background: true }
+    expect((await decide(build, { tool_name: "Bash", tool_input: input }))?.updatedInput).toEqual({
+      ...input,
+      run_in_background: false,
+    })
+    // A subagent's shell call keeps its permission decision alongside the rewritten input.
+    expect(await decide(yolo, { agent_id: "a1", tool_name: "Bash", tool_input: input })).toMatchObject({
+      permissionDecision: "allow",
+      updatedInput: { ...input, run_in_background: false },
+    })
+  })
+
   test("main-thread calls pass through to canUseTool", async () => {
     expect(await decide(build, { tool_name: "Bash", tool_input: { command: "rm -rf /" } })).toBeUndefined()
   })
