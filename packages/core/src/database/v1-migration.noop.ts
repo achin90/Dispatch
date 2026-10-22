@@ -9,3 +9,7 @@ export function status() {
 export function run() {
   return Effect.succeed({ status: "completed" } as const)
 }
+// Dispatch: the incremental legacy import has nothing to do without the bun migration.
+export function importMissing() {
+  return Effect.succeed([] as ReadonlyArray<string>)
+}

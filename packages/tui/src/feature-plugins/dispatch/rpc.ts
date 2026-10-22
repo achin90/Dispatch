@@ -55,6 +55,7 @@ export type Methods = {
   "worktree.diffstat": { input: { directory?: string }; output: DiffStat }
   "session.lastResponse": { input: { sessionID: string }; output: LastResponse }
   "mcp.health": { input: {}; output: boolean }
+  "migration.sync": { input: {}; output: string[] }
   // dispatch-bridge
   "session.remoteControl": { input: { sessionID: string }; output: { codeSessionID: string } }
   "session.remoteControlStop": { input: { sessionID: string }; output: boolean }

@@ -102,16 +102,20 @@ export function Dashboard(props: { context: Plugin.Context }) {
     })
     // Session tabs open a tab for every routed session, so this also focuses the agent's tab.
     route.navigate({ type: "session", sessionID: agent.sessionID })
+    // If V1 wrote to this session since the server imported it, pull the new messages in.
+    void DispatchRpc.optional(context.client, "migration.sync", {}).then((ids) => {
+      if (ids?.includes(agent.sessionID)) return data.session.message.sync(agent.sessionID)
+    })
   }
 
   // Session-scoped commands (terminal, diff) register once the session view mounts.
   function openThen(agent: DispatchModel.AgentEntry, command: string, label: string) {
     open(agent)
     const attempt = (remaining: number) => {
-      const ready =
-        route.data.type === "session" && context.keymap.commands().some((item) => item.id === command)
+      const ready = route.data.type === "session" && context.keymap.commands().some((item) => item.id === command)
       if (ready) return context.keymap.dispatch(command)
-      if (remaining === 0) return toast.show({ message: `${label} is not available for this session`, variant: "warning" })
+      if (remaining === 0)
+        return toast.show({ message: `${label} is not available for this session`, variant: "warning" })
       setTimeout(() => attempt(remaining - 1), 50)
     }
     setTimeout(() => attempt(40), 0)
@@ -142,7 +146,9 @@ export function Dashboard(props: { context: Plugin.Context }) {
     toast.show({ message: "Creating worktree…", variant: "info" })
     await createWorktreeAgent(host(), { name: name.trim(), repository })
       .then((created) => setIndex(created.index))
-      .catch((error: unknown) => toast.show({ title: "Creating worktree failed", message: errorMessage(error), variant: "error" }))
+      .catch((error: unknown) =>
+        toast.show({ title: "Creating worktree failed", message: errorMessage(error), variant: "error" }),
+      )
       .finally(() => setBusy(false))
   }
 
@@ -352,7 +358,11 @@ export function Dashboard(props: { context: Plugin.Context }) {
             </box>
           }
         >
-          <scrollbox flexGrow={1} scrollbarOptions={{ visible: false }} ref={(value: ScrollBoxRenderable) => (scroll = value)}>
+          <scrollbox
+            flexGrow={1}
+            scrollbarOptions={{ visible: false }}
+            ref={(value: ScrollBoxRenderable) => (scroll = value)}
+          >
             <For each={groups()}>
               {(group) => (
                 <>
@@ -545,7 +555,9 @@ function PermissionDetail(props: { request: PermissionRequest; selected: boolean
     const tool = props.request.source
     const message = tool ? data.session.message.get(props.request.sessionID, tool.messageID) : undefined
     const part =
-      message?.type === "assistant" ? message.content.find((item) => item.type === "tool" && item.id === tool?.id) : undefined
+      message?.type === "assistant"
+        ? message.content.find((item) => item.type === "tool" && item.id === tool?.id)
+        : undefined
     if (part?.type !== "tool" || part.state.status === "streaming") return {}
     return { input: part.state.input, metadata: part.state.metadata }
   })

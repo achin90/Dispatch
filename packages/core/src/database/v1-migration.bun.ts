@@ -590,10 +590,10 @@ export function run(options: Options = {}): Effect.Effect<RunResult, never, Data
       while (true) {
         const state = yield* readState(db)
         const cursorValue = state?.phase === "sessions" ? state.cursor : undefined
-        const nextID = yield* db.get<{ id: string; project_id: string; directory: string }>(
+        const nextID = yield* db.get<LegacySessionRef>(
           cursorValue === undefined
-            ? sql`SELECT id, project_id, directory FROM session ORDER BY id DESC LIMIT 1`
-            : sql`SELECT id, project_id, directory FROM session WHERE id < ${cursorValue} ORDER BY id DESC LIMIT 1`,
+            ? sql`SELECT id, project_id, directory, time_updated FROM session ORDER BY id DESC LIMIT 1`
+            : sql`SELECT id, project_id, directory, time_updated FROM session WHERE id < ${cursorValue} ORDER BY id DESC LIMIT 1`,
         )
         if (!nextID) break
         yield* db
@@ -607,83 +607,7 @@ export function run(options: Options = {}): Effect.Effect<RunResult, never, Data
                   set: { value: { phase: "sessions", cursor: nextID.id }, time_updated: Date.now() },
                 })
                 .run()
-              const projectID = projects.has(nextID.project_id) ? nextID.project_id : Project.ID.global
-              if (projectID !== nextID.project_id)
-                yield* Effect.logWarning("Reassigned V1 session with missing project", {
-                  sessionID: nextID.id,
-                  projectID: nextID.project_id,
-                })
-              // Legacy ACP sessions can store a cwd relative to an unknown process directory.
-              // Use the project worktree instead, and leave the original V1 row intact.
-              const directory =
-                !nextID.directory || storedAbsolutePath(nextID.directory)
-                  ? nextID.directory
-                  : (storedAbsolutePath(projects.get(projectID) ?? path.parse(global.data).root) ?? "")
-              if (directory !== nextID.directory)
-                yield* Effect.logWarning("Replaced relative V1 session directory", {
-                  sessionID: nextID.id,
-                  directory: nextID.directory,
-                  resolved: directory,
-                })
-              yield* tx.run(sql`
-                  INSERT OR IGNORE INTO session_v2 (
-                    id, project_id, workspace_id, parent_id, slug, directory, path, title, version, share_url,
-                    summary_additions, summary_deletions, summary_files, summary_diffs, metadata, cost,
-                    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
-                    revert, permission, agent, model, time_created, time_updated, time_compacting, time_archived
-                  )
-                  SELECT
-                    id, ${projectID}, workspace_id, parent_id, slug, ${directory}, path, title, version, share_url,
-                    summary_additions, summary_deletions, summary_files, summary_diffs, metadata, cost,
-                    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
-                    revert, NULL, agent, model, time_created, time_updated, time_compacting, time_archived
-                  FROM session
-                  WHERE id = ${nextID.id}
-                `)
-              const next = yield* tx
-                .select()
-                .from(SessionTable)
-                .where(eq(SessionTable.id, SessionSchema.ID.make(nextID.id)))
-                .get()
-              if (!next) return yield* Effect.die(new Error(`Failed to copy V1 session ${nextID.id}`))
-              const sourceMessages = yield* tx.all<SourceMessage>(
-                sql`SELECT id, session_id, time_created, time_updated, data FROM message WHERE session_id = ${next.id}`,
-              )
-              const sourceParts = yield* tx.all<SourcePart>(
-                sql`SELECT id, message_id, session_id, time_created, time_updated, data FROM part WHERE session_id = ${next.id}`,
-              )
-              const transformed = transformSession({ session: next, messages: sourceMessages, parts: sourceParts })
-              yield* Effect.forEach(transformed.warnings, (warning) =>
-                Effect.logWarning("Skipped V1 migration row", warning),
-              )
-              yield* tx.delete(SessionMessageTable).where(eq(SessionMessageTable.session_id, next.id)).run()
-              yield* Effect.forEach(transformed.messages, (message) =>
-                tx
-                  .insert(SessionMessageTable)
-                  .values({
-                    id: SessionMessage.ID.make(message.id),
-                    session_id: SessionSchema.ID.make(message.session_id),
-                    type: message.type,
-                    seq: message.seq,
-                    time_created: message.time_created,
-                    time_updated: message.time_updated,
-                    data: sql`${JSON.stringify(message.data)}`,
-                  })
-                  .run(),
-              )
-              yield* tx
-                .update(SessionTable)
-                .set({ ...transformed.session, time_updated: next.time_updated })
-                .where(eq(SessionTable.id, next.id))
-                .run()
-              yield* tx
-                .insert(EventSequenceTable)
-                .values({ aggregate_id: next.id, seq: transformed.watermark })
-                .onConflictDoUpdate({
-                  target: EventSequenceTable.aggregate_id,
-                  set: { seq: transformed.watermark, owner_id: null },
-                })
-                .run()
+              yield* importSession(tx, global, projects, nextID)
             }),
           )
           .pipe(Effect.orDie)
@@ -713,6 +637,144 @@ export function run(options: Options = {}): Effect.Effect<RunResult, never, Data
         )
         .pipe(Effect.orDie)
       return { status: "completed" as const }
+    }).pipe(Effect.orDie),
+  )
+}
+
+type LegacySessionRef = {
+  readonly id: string
+  readonly project_id: string
+  readonly directory: string
+  readonly time_updated: number
+}
+type Transaction = Parameters<Parameters<Database.Interface["db"]["transaction"]>[0]>[0]
+
+// Dispatch: the per-session copy, shared by the one-time run and the incremental importMissing.
+function importSession(
+  tx: Transaction,
+  global: Global.Interface,
+  projects: Map<string, string>,
+  nextID: LegacySessionRef,
+) {
+  return Effect.gen(function* () {
+    const projectID = projects.has(nextID.project_id) ? nextID.project_id : Project.ID.global
+    if (projectID !== nextID.project_id)
+      yield* Effect.logWarning("Reassigned V1 session with missing project", {
+        sessionID: nextID.id,
+        projectID: nextID.project_id,
+      })
+    // Legacy ACP sessions can store a cwd relative to an unknown process directory.
+    // Use the project worktree instead, and leave the original V1 row intact.
+    const directory =
+      !nextID.directory || storedAbsolutePath(nextID.directory)
+        ? nextID.directory
+        : (storedAbsolutePath(projects.get(projectID) ?? path.parse(global.data).root) ?? "")
+    if (directory !== nextID.directory)
+      yield* Effect.logWarning("Replaced relative V1 session directory", {
+        sessionID: nextID.id,
+        directory: nextID.directory,
+        resolved: directory,
+      })
+    yield* tx.run(sql`
+          INSERT OR IGNORE INTO session_v2 (
+            id, project_id, workspace_id, parent_id, slug, directory, path, title, version, share_url,
+            summary_additions, summary_deletions, summary_files, summary_diffs, metadata, cost,
+            tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
+            revert, permission, agent, model, time_created, time_updated, time_compacting, time_archived
+          )
+          SELECT
+            id, ${projectID}, workspace_id, parent_id, slug, ${directory}, path, title, version, share_url,
+            summary_additions, summary_deletions, summary_files, summary_diffs, metadata, cost,
+            tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
+            revert, NULL, agent, model, time_created, time_updated, time_compacting, time_archived
+          FROM session
+          WHERE id = ${nextID.id}
+        `)
+    const next = yield* tx
+      .select()
+      .from(SessionTable)
+      .where(eq(SessionTable.id, SessionSchema.ID.make(nextID.id)))
+      .get()
+    if (!next) return yield* Effect.die(new Error(`Failed to copy V1 session ${nextID.id}`))
+    const sourceMessages = yield* tx.all<SourceMessage>(
+      sql`SELECT id, session_id, time_created, time_updated, data FROM message WHERE session_id = ${next.id}`,
+    )
+    const sourceParts = yield* tx.all<SourcePart>(
+      sql`SELECT id, message_id, session_id, time_created, time_updated, data FROM part WHERE session_id = ${next.id}`,
+    )
+    const transformed = transformSession({ session: next, messages: sourceMessages, parts: sourceParts })
+    yield* Effect.forEach(transformed.warnings, (warning) => Effect.logWarning("Skipped V1 migration row", warning))
+    yield* tx.delete(SessionMessageTable).where(eq(SessionMessageTable.session_id, next.id)).run()
+    yield* Effect.forEach(transformed.messages, (message) =>
+      tx
+        .insert(SessionMessageTable)
+        .values({
+          id: SessionMessage.ID.make(message.id),
+          session_id: SessionSchema.ID.make(message.session_id),
+          type: message.type,
+          seq: message.seq,
+          time_created: message.time_created,
+          time_updated: message.time_updated,
+          data: sql`${JSON.stringify(message.data)}`,
+        })
+        .run(),
+    )
+    // Carry V1's time_updated so a refreshed Session is not picked up as stale again.
+    yield* tx
+      .update(SessionTable)
+      .set({ ...transformed.session, time_updated: nextID.time_updated })
+      .where(eq(SessionTable.id, next.id))
+      .run()
+    yield* tx
+      .insert(EventSequenceTable)
+      .values({ aggregate_id: next.id, seq: transformed.watermark })
+      .onConflictDoUpdate({
+        target: EventSequenceTable.aggregate_id,
+        set: { seq: transformed.watermark, owner_id: null },
+      })
+      .run()
+  })
+}
+
+/**
+ * Dispatch: a V1 client can keep writing `session`/`message` rows after the one-time run has
+ * completed, when both versions share a database. Imports legacy Sessions missing from `session_v2`
+ * and refreshes the ones V1 wrote to since their import, as long as V2 never added a message of its
+ * own (every projected message id still comes from the legacy table). Returns the Session ids touched.
+ */
+export function importMissing(): Effect.Effect<ReadonlyArray<string>, never, Database.Service | Global.Service> {
+  return lock.withPermit(
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      const global = yield* Global.Service
+      if (!(yield* hasLegacySessions(db))) return []
+      if ((yield* readState(db))?.phase !== "completed") return []
+      const missing = yield* db.all<LegacySessionRef>(sql`
+        SELECT id, project_id, directory, time_updated FROM session
+        WHERE id NOT IN (SELECT id FROM session_v2)
+      `)
+      const stale = yield* db.all<LegacySessionRef>(sql`
+        SELECT s.id, s.project_id, s.directory, s.time_updated FROM session s
+        JOIN session_v2 v ON v.id = s.id
+        WHERE s.time_updated > v.time_updated
+          AND NOT EXISTS (
+            SELECT 1 FROM session_message m
+            WHERE m.session_id = s.id AND m.id NOT IN (SELECT id FROM message WHERE session_id = s.id)
+          )
+      `)
+      const targets = [...missing, ...stale]
+      if (targets.length === 0) return []
+      const projects = new Map(
+        (yield* db.all<{ id: string; worktree: string }>(sql`SELECT id, worktree FROM project`)).map((project) => [
+          project.id,
+          project.worktree,
+        ]),
+      )
+      yield* Effect.forEach(targets, (target) =>
+        db.transaction((tx) => importSession(tx, global, projects, target)).pipe(Effect.orDie),
+      )
+      yield* Effect.logInfo("imported legacy sessions", { missing: missing.length, refreshed: stale.length })
+      return targets.map((target) => target.id)
     }).pipe(Effect.orDie),
   )
 }

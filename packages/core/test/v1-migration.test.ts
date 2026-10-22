@@ -1430,4 +1430,57 @@ describe("V1Migration database workflow", () => {
       }),
     )
   })
+
+  // Dispatch: a V1 client sharing the database keeps writing after the one-time run.
+  const legacy = (sessionID: string, created: number) =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      yield* db.run(sql`
+        INSERT OR REPLACE INTO session (id, project_id, slug, directory, title, version, time_created, time_updated)
+        VALUES (${sessionID}, 'global', 'slug', '/tmp/project', 'legacy', '1.0.0', ${created}, ${created})
+      `)
+      yield* db.run(sql`
+        INSERT INTO message (id, session_id, time_created, time_updated, data)
+        VALUES (${`msg_${created}`}, ${sessionID}, ${created}, ${created}, ${JSON.stringify({ role: "user", time: { created }, agent: "build", model: { providerID: "p", modelID: "m" } })})
+      `)
+      yield* db.run(sql`
+        INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+        VALUES (${`prt_${created}`}, ${`msg_${created}`}, ${sessionID}, ${created}, ${created}, ${JSON.stringify({ type: "text", text: `hello ${created}` })})
+      `)
+    })
+  const count = (sessionID: string) =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      return (yield* db.get<{ value: number }>(
+        sql`SELECT COUNT(*) AS value FROM session_message WHERE session_id = ${sessionID}`,
+      ))?.value
+    })
+
+  test("imports sessions written after the run and refreshes ones only V1 touched since", async () => {
+    await database(
+      Effect.gen(function* () {
+        const { db } = yield* Database.Service
+        expect(yield* V1Migration.run()).toEqual({ status: "completed" })
+        expect(yield* V1Migration.importMissing()).toEqual([])
+        yield* legacy("ses_late", 1000)
+        expect(yield* V1Migration.importMissing()).toEqual(["ses_late"])
+        expect(yield* count("ses_late")).toBe(1)
+        expect(yield* V1Migration.importMissing()).toEqual([])
+        // V1 appends to the session: it is refreshed from the legacy rows.
+        yield* legacy("ses_late", 2000)
+        expect(yield* V1Migration.importMissing()).toEqual(["ses_late"])
+        expect(yield* count("ses_late")).toBe(2)
+        // A refresh carries V1's time_updated forward, so the same rows are not refreshed again.
+        expect(yield* V1Migration.importMissing()).toEqual([])
+        // Once V2 has written a message of its own, the legacy rows are left alone.
+        yield* db.run(sql`
+          INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+          VALUES ('msg_v2', 'ses_late', 'user', 2, 3000, 3000, '{}')
+        `)
+        yield* legacy("ses_late", 4000)
+        expect(yield* V1Migration.importMissing()).toEqual([])
+        expect(yield* count("ses_late")).toBe(3)
+      }),
+    )
+  })
 })

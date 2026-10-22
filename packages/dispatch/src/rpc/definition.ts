@@ -85,6 +85,8 @@ export const Definition = Rpc.define({
       output: portable(Schema.Struct({ text: Schema.String, summary: Schema.Boolean })),
     },
     "mcp.health": { input: Empty, output: portable(Schema.Boolean) },
+    /** Imports Sessions a V1 client wrote to the shared database since the one-time migration. */
+    "migration.sync": { input: Empty, output: portable(Schema.Array(Schema.String)) },
   },
   events: {},
 })

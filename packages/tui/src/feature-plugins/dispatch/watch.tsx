@@ -129,22 +129,24 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
       [() => store.agents.agents.map((agent) => agent.sessionID).join("\n"), () => client.connection.status()],
       ([ids, status]) => {
         if (status !== "connected" || !ids) return
-        ids.split("\n").forEach((sessionID) => {
-          void Promise.allSettled([
-            data.session.sync(sessionID, { children: true }),
-            data.session.message.sync(sessionID),
-          ]).then(() =>
-            Promise.allSettled(
-              data.session
-                .family(sessionID)
-                .concat(sessionID)
-                .flatMap((id) => [data.session.permission.sync(id), data.session.form.sync(id)]),
-            ),
-          )
-        })
+        // A V1 client sharing the database may have written these sessions since the server imported.
+        void DispatchRpc.optional(context.client, "migration.sync", {}).then(() => ids.split("\n").forEach(load))
       },
     ),
   )
+  const load = (sessionID: string) => {
+    void Promise.allSettled([
+      data.session.sync(sessionID, { children: true }),
+      data.session.message.sync(sessionID),
+    ]).then(() =>
+      Promise.allSettled(
+        data.session
+          .family(sessionID)
+          .concat(sessionID)
+          .flatMap((id) => [data.session.permission.sync(id), data.session.form.sync(id)]),
+      ),
+    )
+  }
 
   createEffect(
     on(
