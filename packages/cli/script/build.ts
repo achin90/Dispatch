@@ -19,6 +19,14 @@ const dir = path.resolve(import.meta.dirname, "..")
 // Dispatch: the fork ships as `dispatch`, packaged as `dispatch-tui-<platform>-<arch>` like the v1 releases.
 const binary = "dispatch"
 const packageName = "dispatch-tui"
+// Dispatch: the platforms sherpa-onnx-node publishes a native addon package for (see sherpaPlugin).
+const SHERPA_PACKAGES = new Set([
+  "sherpa-onnx-darwin-arm64",
+  "sherpa-onnx-darwin-x64",
+  "sherpa-onnx-linux-arm64",
+  "sherpa-onnx-linux-x64",
+  "sherpa-onnx-win-x64",
+])
 // Dispatch: a channel of its own keeps the background service registration, port and database apart from a stock
 // opencode install on the same machine. Preview builds get their own channel so they never share a release's service;
 // install-from-source sets OPENCODE_CHANNEL=dispatch so source installs share the release's service and database.
@@ -159,6 +167,20 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
       }))
     },
   }
+  // Dispatch: sherpa-onnx-node (Jarvis voice) requires every platform's native addon with static paths, so the
+  // bundler embedded all six into each binary and failed the arch check. Keep only this target's addon.
+  const sherpaPackage = `sherpa-onnx-${item.os === "win32" ? "win" : item.os}-${item.arch}`
+  const sherpaPlugin: BunPlugin = {
+    name: "sherpa-onnx-addon",
+    setup(build) {
+      build.onLoad({ filter: /sherpa-onnx-node[/\\]addon-static-import\.js$/ }, () => ({
+        contents: SHERPA_PACKAGES.has(sherpaPackage)
+          ? `module.exports = require(${JSON.stringify(`${sherpaPackage}/sherpa-onnx.node`)})`
+          : "module.exports = null",
+        loader: "js",
+      }))
+    },
+  }
   const claudeBin = claudeSdkDir ? resolveClaudeBin(claudeSdkDir, item) : undefined
   // Dispatch: packages/dispatch/src/sdk/bin.ts does `await import("./bin.gen.ts")` and extracts the embedded file
   // from $bunfs. The module never exists on disk, so in dev the import fails and the SDK finds its own binary.
@@ -191,6 +213,7 @@ export default { path: file, version: ${JSON.stringify(opencodePty.version)}, sh
       pluginRuntimePlugin,
       simulationGraphPlugin,
       claudeBinPlugin,
+      sherpaPlugin,
     ],
     external: ["node-gyp"],
     format: "esm",
