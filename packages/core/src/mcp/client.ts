@@ -230,6 +230,8 @@ export const connect = Effect.fnUntraced(function* (
   const session: { transport?: StreamableHTTPClientTransport; expired?: () => void; reported: boolean } = {
     reported: false,
   }
+  // Dispatch: set when the SDK schedules a reopen of a dropped SSE stream; see the onerror below.
+  const reopen = { scheduled: false }
   const failure = (error: unknown) => {
     if (!(error instanceof SdkHttpError) || session.transport?.sessionId === undefined) return new Error(explain(error))
     const expired =
@@ -275,6 +277,12 @@ export const connect = Effect.fnUntraced(function* (
         requestInit: config.headers ? { headers: config.headers } : undefined,
         authProvider,
         fetch,
+        // Dispatch: the SDK's default scheduling, plus a mark that it chose to reopen a dropped stream.
+        reconnectionScheduler: (reconnect, delay) => {
+          reopen.scheduled = true
+          const handle = setTimeout(reconnect, delay)
+          return () => clearTimeout(handle)
+        },
       })
       return yield* initialize(session.transport)
     })
@@ -296,17 +304,30 @@ export const connect = Effect.fnUntraced(function* (
   }).pipe(Effect.exit)
   if (Exit.isSuccess(exit)) {
     const client = exit.value
-    // Dispatch: a transport error (an SSE timeout, a dead stream) can leave the client "connected"
-    // without ever firing onclose. Close it once so onclose runs and the Mcp service reconnects.
-    // Armed only after connect so it cannot race the startup retries. HTTP status errors belong to a
-    // request that already reports them (session expiry recovers through `failure`), so they pass.
+    // Dispatch: a dropped SSE stream reports "SSE stream disconnected" and the SDK then either
+    // reopens it in the same tick (the standalone stream, which servers such as Devin's close when
+    // idle) or gives up on it. Giving up on a request's response stream leaves that request pending
+    // until its timeout, and running out of reopen attempts leaves the client "connected" with no
+    // stream; both report only here. Close the client in those cases so pending requests fail and the
+    // Mcp service reconnects, but never while the SDK is reopening, which a close would cancel. A
+    // response stream that drops after its response arrived also lands here and costs one needless
+    // reconnect. The SDK gives these errors no code, so match their messages.
     const record = client.onerror
     let closing = false
-    client.onerror = (error) => {
-      record?.(error)
-      if (error.name === "AbortError" || error instanceof SdkHttpError || closing) return
+    const close = () => {
+      if (closing) return
       closing = true
       void client.close().catch(() => {})
+    }
+    client.onerror = (error) => {
+      record?.(error)
+      if (!(error instanceof Error)) return
+      if (error.message.startsWith("Maximum reconnection attempts")) return close()
+      if (!error.message.startsWith("SSE stream disconnected")) return
+      reopen.scheduled = false
+      queueMicrotask(() => {
+        if (!reopen.scheduled) close()
+      })
     }
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
@@ -315,7 +336,8 @@ export const connect = Effect.fnUntraced(function* (
         const transport = session.transport
         // Termination failures are logged below; onerror would report them a second time.
         client.onerror = undefined
-        if (transport?.sessionId !== undefined && !session.reported)
+        // Dispatch: after a close from onerror the DELETE's shared signal is already aborted.
+        if (transport?.sessionId !== undefined && !session.reported && !closing)
           yield* Effect.tryPromise({ try: () => transport.terminateSession(), catch: toError }).pipe(
             Effect.timeoutOrElse({
               duration: TERMINATE_TIMEOUT,

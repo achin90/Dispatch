@@ -1238,6 +1238,146 @@ test("does not reconnect an SSE stream after a JSON-RPC error response", async (
   expect(requests).toBe(1)
 })
 
+// Dispatch: the standalone SSE stream a server drops is the SDK's to reopen; only a reopen that runs
+// out of retries closes the connection. `retry: 1` makes the SDK's reopen backoff 1ms. The first stream
+// carries a list-changed notification, and the test drops it only once the client has handled that, so
+// the client is reading the stream and the connection's error handler is in place.
+const droppedStream = (later: () => Response) => {
+  const gets = { count: 0 }
+  const first = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>()
+  const respond = (request: Request) => {
+    if (request.method !== "GET") return undefined
+    gets.count += 1
+    if (gets.count > 1) return later()
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              'retry: 1\n\ndata: {"jsonrpc":"2.0","method":"notifications/resources/list_changed"}\n\n',
+            ),
+          )
+          first.resolve(controller)
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    )
+  }
+  const listening = (connection: McpClient.Connection) => {
+    const changed = Promise.withResolvers<void>()
+    connection.onResourcesChanged(() => changed.resolve())
+    return changed.promise
+  }
+  const drop = () => first.promise.then((controller) => controller.error(new Error("dropped")))
+  return { gets, respond, listening, drop }
+}
+
+test("keeps an MCP connection while the SDK reopens a dropped SSE stream", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reopened = Promise.withResolvers<void>()
+        const stream = droppedStream(() => {
+          reopened.resolve()
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode(": open\n\n"))
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          )
+        })
+        const server = yield* resourceServer({ listChanged: true, respond: stream.respond })
+        const connection = yield* connect(
+          "resources",
+          new ConfigMCP.Remote({ type: "remote", url: server.url, oauth: false }),
+          import.meta.dir,
+        )
+        const closed = { reason: undefined as string | undefined }
+        connection.onClose((reason) => (closed.reason = reason))
+
+        yield* Effect.promise(() => stream.listening(connection)).pipe(Effect.timeout("10 seconds"))
+        yield* Effect.promise(stream.drop)
+        yield* Effect.promise(() => reopened.promise).pipe(Effect.timeout("10 seconds"))
+
+        expect(stream.gets.count).toBe(2)
+        expect(closed.reason).toBeUndefined()
+        expect((yield* connection.tools()).length).toBeGreaterThan(0)
+        expect(server.state.initializations).toBe(1)
+      }),
+    ),
+  )
+})
+
+test("closes an MCP connection once the SDK stops reopening its SSE stream", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stream = droppedStream(() => new Response("unavailable", { status: 503 }))
+        const server = yield* resourceServer({ listChanged: true, respond: stream.respond })
+        const connection = yield* connect(
+          "resources",
+          new ConfigMCP.Remote({ type: "remote", url: server.url, oauth: false }),
+          import.meta.dir,
+        )
+        const closed = yield* Deferred.make<string>()
+        connection.onClose((reason) => Deferred.doneUnsafe(closed, Exit.succeed(reason)))
+
+        yield* Effect.promise(() => stream.listening(connection)).pipe(Effect.timeout("10 seconds"))
+        yield* Effect.promise(stream.drop)
+        const reason = yield* Deferred.await(closed).pipe(Effect.timeout("10 seconds"))
+        expect(reason).toContain("Maximum reconnection attempts")
+        // The first stream, then the SDK's default two reopen attempts.
+        expect(stream.gets.count).toBe(3)
+      }),
+    ),
+  )
+})
+
+test("fails an MCP tool call whose response stream drops before the response", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        // The response stream asks the client for a ping and drops once the client answers, so the
+        // client is reading it. It sends no `id:` priming event, so the SDK cannot resume it.
+        const stream = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>()
+        const server = yield* resourceServer({
+          respond: async (request) => {
+            if (request.method === "GET") return new Response(null, { status: 405 })
+            if (request.method !== "POST") return undefined
+            const body: unknown = await request.clone().json()
+            if (typeof body !== "object" || body === null) return undefined
+            if ("id" in body && body.id === "probe" && !("method" in body)) {
+              ;(await stream.promise).error(new Error("dropped"))
+              return new Response(null, { status: 202 })
+            }
+            if (!("method" in body) || body.method !== "tools/call") return undefined
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","id":"probe","method":"ping"}\n\n'))
+                  stream.resolve(controller)
+                },
+              }),
+              { headers: { "content-type": "text/event-stream" } },
+            )
+          },
+        })
+        const connection = yield* connect(
+          "resources",
+          new ConfigMCP.Remote({ type: "remote", url: server.url, oauth: false }),
+          import.meta.dir,
+        )
+        const result = yield* connection.callTool({ name: "echo" }).pipe(Effect.timeout("10 seconds"), Effect.exit)
+        expect(Exit.isFailure(result)).toBe(true)
+        if (Exit.isSuccess(result)) return
+        expect(String(result.cause)).toContain("SSE stream disconnected")
+      }),
+    ),
+  )
+})
+
 test("skips MCP resource requests when the capability is absent", async () => {
   await Effect.runPromise(
     Effect.scoped(
