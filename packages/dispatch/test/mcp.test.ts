@@ -36,7 +36,18 @@ const subagent: Effect.Success<ReturnType<Tool.Interface["list"]>>[number] = {
 
 // The bridge only lists MCP servers (to skip their namespaces) and the registered plugin tools.
 const mcp = { servers: () => Effect.succeed([]) } as unknown as Mcp.Interface
-const registry = { list: () => Effect.succeed([subagent]) } as unknown as Tool.Interface
+// Host `opencode` tools stay hidden from the SDK, except `models`, which `subagent` points at.
+const host = (name: string): typeof subagent => ({
+  id: name,
+  name,
+  description: name,
+  input: Schema.Struct({}),
+  options: { namespace: "opencode" },
+  execute: () => Effect.succeed({ content: [] }),
+})
+const registry = {
+  list: () => Effect.succeed([subagent, host("models"), host("worktree_create")]),
+} as unknown as Tool.Interface
 
 const bridge = (controller = new AbortController()) =>
   fixture.run(
@@ -92,6 +103,13 @@ describe("plugin MCP server", () => {
     expect(description).toContain("Available subagents:")
     expect(description).toContain("- reviewer: Reviews code")
     expect(description).not.toContain("secret")
+  })
+
+  test("exposes the host models tool but no other host tools", async () => {
+    const { client } = await bridge()
+    const names = (await client.listTools()).tools.map((tool) => tool.name)
+    expect(names).toContain("opencode_models")
+    expect(names).not.toContain("opencode_worktree_create")
   })
 
   test("links the call to its tool part, forwards progress and keeps the result metadata", async () => {

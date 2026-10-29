@@ -54,6 +54,9 @@ const BUILTIN_TOOLS = new Set([
   "skill",
 ])
 const HOST_NAMESPACES = ["opencode", "browser"]
+// Host tools let through anyway. `subagent`'s `model` parameter tells the model to look the reference
+// up with `models`; without it the model has to guess the id.
+const HOST_TOOLS = new Set(["opencode_models"])
 
 /**
  * Proxies the Location's connected MCP servers into a Claude Agent SDK query.
@@ -111,6 +114,7 @@ export function make(mcp: Mcp.Interface, registry: Tool.Interface, agents: Agent
       const namespace = tool.options?.namespace
       if (namespace === undefined) return !BUILTIN_TOOLS.has(tool.id)
       if (mcpNamespaces.has(namespace)) return false
+      if (HOST_TOOLS.has(effectiveName(tool))) return true
       return !HOST_NAMESPACES.some((host) => namespace === host || namespace.startsWith(`${host}.`))
     })
     if (tools.length === 0) return {} as Record<string, McpServerConfig>
