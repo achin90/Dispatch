@@ -41,6 +41,28 @@ export type LastResponse = {
   readonly summary: boolean
 }
 
+export type UsageShare = { readonly name: string; readonly percent: number }
+
+export type UsageWindow = {
+  readonly requests: number
+  readonly sessions: number
+  readonly behaviors: ReadonlyArray<{ readonly key: string; readonly percent: number }>
+  readonly skills: ReadonlyArray<UsageShare>
+  readonly agents: ReadonlyArray<UsageShare>
+  readonly plugins: ReadonlyArray<UsageShare>
+  readonly mcpServers: ReadonlyArray<UsageShare>
+}
+
+/** Claude subscription plan limits, as the CLI's `/usage` shows them. */
+export type Usage = {
+  /** False for API key, Bedrock and Vertex logins, where plan limits do not apply. */
+  readonly available: boolean
+  readonly plan: string | null
+  readonly limits: ReadonlyArray<{ readonly label: string; readonly percent: number | null; readonly resetsAt: string | null }>
+  readonly extra: { readonly used: number | null; readonly limit: number | null; readonly currency: string | null } | null
+  readonly behaviors: { readonly day: UsageWindow; readonly week: UsageWindow } | null
+}
+
 export type Methods = {
   "gitRepos.list": { input: { root?: string; query?: string }; output: { repos: string[] } }
   "github.status": { input: {}; output: { authenticated: boolean } }
@@ -55,6 +77,7 @@ export type Methods = {
   "worktree.diffstat": { input: { directory?: string }; output: DiffStat }
   "session.lastResponse": { input: { sessionID: string }; output: LastResponse }
   "mcp.health": { input: {}; output: boolean }
+  "usage.get": { input: {}; output: Usage | { error: string } }
   "migration.sync": { input: {}; output: string[] }
   // dispatch-bridge
   "session.remoteControl": { input: { sessionID: string }; output: { codeSessionID: string } }

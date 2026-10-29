@@ -11,6 +11,7 @@ import { useDialog } from "../../ui/dialog"
 import { useToast } from "../../ui/toast"
 import { errorMessage } from "../../util/error"
 import { DialogAdvisor } from "./dialog-advisor"
+import { DialogUsage } from "./dialog-usage"
 import { DispatchModel } from "./model"
 import { DispatchRpc } from "./rpc"
 import { dispatchState, type DispatchState } from "./state"
@@ -259,6 +260,14 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
         palette: true,
         slash: { name: "advisor" },
         run: () => dialog.replace(() => <DialogAdvisor />),
+      },
+      {
+        id: "usage.show",
+        title: "Show Claude plan usage",
+        group: "Agent",
+        palette: true,
+        slash: { name: "usage" },
+        run: () => dialog.replace(() => <DialogUsage />, undefined, { size: "large" }),
       },
       {
         id: "app.toggle.agent_summaries",

@@ -17,6 +17,7 @@ import { Global } from "@opencode/util/global"
 import { Effect, Layer } from "effect"
 import { SdkEnv } from "../sdk/env.js"
 import { SdkModels } from "../sdk/models.js"
+import { SdkUsage } from "../sdk/usage.js"
 import { DispatchRpc } from "./definition.js"
 import { DispatchGit } from "./git.js"
 import { DispatchGitHub } from "./github.js"
@@ -96,6 +97,12 @@ const layer = Layer.effectDiscard(
             Effect.as(true),
           ),
         "migration.sync": () => importLegacy,
+        "usage.get": () =>
+          SdkEnv.apiKey(integrations).pipe(
+            Effect.flatMap(SdkUsage.read),
+            Effect.tapError((cause) => Effect.logWarning("usage read failed", { cause })),
+            Effect.orElseSucceed(() => ({ error: "Could not read usage from Claude Code" })),
+          ),
       })
       .pipe(Effect.orDie)
     // A V1 client may share this database; pick up what it wrote while this server was down.

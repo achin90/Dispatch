@@ -39,6 +39,40 @@ export type WorktreeInfo = typeof WorktreeInfo.Type
 export const DiffStat = Schema.Struct({ files: Schema.Number, additions: Schema.Number, deletions: Schema.Number })
 export type DiffStat = typeof DiffStat.Type
 
+const UsageShare = Schema.Struct({ name: Schema.String, percent: Schema.Number })
+const UsageWindow = Schema.Struct({
+  requests: Schema.Number,
+  sessions: Schema.Number,
+  behaviors: Schema.Array(Schema.Struct({ key: Schema.String, percent: Schema.Number })),
+  skills: Schema.Array(UsageShare),
+  agents: Schema.Array(UsageShare),
+  plugins: Schema.Array(UsageShare),
+  mcpServers: Schema.Array(UsageShare),
+})
+
+/** The CLI's `/usage` data, see `sdk/usage.ts`. */
+export const Usage = Schema.Struct({
+  /** False for API key, Bedrock and Vertex logins, where plan limits do not apply. */
+  available: Schema.Boolean,
+  plan: Schema.NullOr(Schema.String),
+  limits: Schema.Array(
+    Schema.Struct({
+      label: Schema.String,
+      percent: Schema.NullOr(Schema.Number),
+      resetsAt: Schema.NullOr(Schema.String),
+    }),
+  ),
+  extra: Schema.NullOr(
+    Schema.Struct({
+      used: Schema.NullOr(Schema.Number),
+      limit: Schema.NullOr(Schema.Number),
+      currency: Schema.NullOr(Schema.String),
+    }),
+  ),
+  behaviors: Schema.NullOr(Schema.Struct({ day: UsageWindow, week: UsageWindow })),
+})
+export type Usage = typeof Usage.Type
+
 /**
  * Dispatch's server API (the v1 `/experimental/*` dashboard routes). Call it at
  * `POST /api/rpc/dispatch/<method>` with `{ input }`; the Location comes from `?location[directory]=`
@@ -85,6 +119,8 @@ export const Definition = Rpc.define({
       output: portable(Schema.Struct({ text: Schema.String, summary: Schema.Boolean })),
     },
     "mcp.health": { input: Empty, output: portable(Schema.Boolean) },
+    /** Claude subscription plan limits, as the CLI's `/usage` shows them. */
+    "usage.get": { input: Empty, output: portable(Schema.Union([Usage, CreateError])) },
     /** Imports Sessions a V1 client wrote to the shared database since the one-time migration. */
     "migration.sync": { input: Empty, output: portable(Schema.Array(Schema.String)) },
   },

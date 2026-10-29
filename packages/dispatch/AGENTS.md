@@ -40,7 +40,7 @@ registration points, each marked `// Dispatch:`.
 Defined in `src/rpc/definition.ts` (Standard Schema, imports only `effect` and `@opencode/schema`, so
 the TUI may import it). Methods mirror the v1 `/experimental/*` dashboard routes:
 `gitRepos.list`, `github.status|pr|createPr|mergePr`, `worktree.info|diff|diffstat`,
-`session.lastResponse`, `mcp.health`. `directory`/`cwd` inputs default to the request's Location.
+`session.lastResponse`, `mcp.health`, plus `usage.get`. `directory`/`cwd` inputs default to the request's Location.
 
 Calling it from the TUI (promise client, `client.api`):
 
@@ -54,6 +54,12 @@ const stat = await dispatch["worktree.diffstat"](undefined, { location: { direct
 Over HTTP: `POST /api/rpc/dispatch/<method>` with body `{ "input": … }` and the Location as
 `?location[directory]=<dir>` or header `x-opencode-directory: <dir>`; the response is `{ output }`.
 Targeting a worktree agent's directory boots (or reuses) that Location.
+
+`usage.get` (`src/sdk/usage.ts`) is the CLI's `/usage` data for the TUI `/usage` popup: plan limit bars,
+extra usage and the local "what's contributing" scan. It spawns a `claude` process whose input never
+sends a message, so it costs nothing, and calls the SDK's experimental
+`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`; keep that call in `sdk/usage.ts` so an
+SDK rename is a one-line fix. Failures come back as `{ error }`.
 
 `session.lastResponse` reads the Session through the global store, so any Location can answer it.
 Short replies (≤3 lines, ≤300 chars) are returned raw; longer ones are summarized with a one-turn
