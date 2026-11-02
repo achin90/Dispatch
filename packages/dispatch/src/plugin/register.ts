@@ -6,6 +6,7 @@ import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import type { LayerNode } from "@opencode/util/effect/layer-node"
 import type { Plugin } from "@opencode/plugin/effect/plugin"
 import { Effect, Layer } from "effect"
+import { SdkFork } from "../sdk/fork.js"
 import { DispatchModelsPlugin } from "./models.js"
 import { DispatchAgentsPlugin } from "./agents.js"
 import { DispatchCommandsPlugin } from "./commands.js"
@@ -32,6 +33,11 @@ const layer = Layer.effect(
   }),
 ).pipe(Layer.provide(SdkPlugins.layer))
 
-export const node = makeGlobalNode({ service: SdkPlugins.Service, layer, deps: [Bus.node] })
+/**
+ * Also carries Dispatch's process-wide services that nothing else depends on (`SdkFork`). This node
+ * is built once with the server; a global node reached only through a Location node is built in the
+ * first Location's scope instead, and stops when that Location is invalidated.
+ */
+export const node = makeGlobalNode({ service: SdkPlugins.Service, layer, deps: [Bus.node, SdkFork.node] })
 
 export const replacements: LayerNode.Replacements = [SdkPlugins.node.replace(node)]

@@ -152,6 +152,13 @@ Children and forks inherit metadata, so an entry is only honoured by the Session
 always uses the stored `cwd`. A "No conversation found" failure before any output drops the entry and
 retries without resume.
 
+`src/sdk/fork.ts` (a global node carried by the `SdkPlugins` replacement in `plugin/register.ts`, so it
+is built once with the server) handles `session.forked`: a whole-session fork
+(`through` boundary) copies the parent's SDK conversation with the SDK's `forkSession()` right away
+and stores the copy as the fork's own entry, unless a turn already recorded one. A fork from an
+earlier message (`before`) starts a fresh SDK conversation: the v2 boundary is not mapped to an SDK
+message yet.
+
 ### Models and single-shot calls
 
 `src/plugin/models.ts` enables the `anthropic` provider without credentials (the CLI falls back to
