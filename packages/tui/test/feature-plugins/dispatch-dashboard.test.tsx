@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { InputRenderable } from "@opentui/core"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import type { OpenCodeEvent } from "@opencode/client"
@@ -70,8 +71,7 @@ test("the dashboard surfaces a subagent's permission and replies to the session 
       }
       if (url.pathname === "/api/session" && url.searchParams.get("parentID") === "ses_root")
         return json({ data: [sessions.ses_child], cursor: {} })
-      if (url.pathname === "/api/session" && url.searchParams.get("parentID"))
-        return json({ data: [], cursor: {} })
+      if (url.pathname === "/api/session" && url.searchParams.get("parentID")) return json({ data: [], cursor: {} })
       if (!match) return undefined
       const [, id, rest] = match
       if (!(id in sessions)) return undefined
@@ -131,4 +131,83 @@ test("the dashboard surfaces a subagent's permission and replies to the session 
   // The cursor is on Fixer, whose request was answered, so nothing else is sent.
   await Bun.sleep(50)
   expect(replies).toHaveLength(2)
+})
+
+test("/fork on the dashboard forks the selected agent into a new agent named after the fork", async () => {
+  await using state = await tmpdir()
+  const storage = path.join(state.path, "test", "tui")
+  await mkdir(storage, { recursive: true })
+  await Bun.write(
+    path.join(storage, "plugin.dispatch.agents.json"),
+    JSON.stringify({ agents: [{ id: "a1", name: "Builder", sessionID: "ses_root", createdAt: 0, directory }] }),
+  )
+  const forks: string[] = []
+  const known: Record<string, ReturnType<typeof session>> = {
+    ses_root: sessions.ses_root,
+    ses_fork: session("ses_fork", { title: "Builder (fork #1)" }),
+    ses_fork2: session("ses_fork2", { title: "Builder (fork #2)" }),
+  }
+  await using app = await createAppFixture({
+    width: 120,
+    height: 30,
+    state: state.path,
+    fetch: async (url, request) => {
+      // Same RPC answers as the test above: the RPC client remembers unavailable methods per process.
+      if (url.pathname === "/api/rpc/dispatch-bridge/session.remoteControlList") return json({ output: [] })
+      if (url.pathname === "/api/rpc/dispatch/worktree.diffstat")
+        return json({ output: { additions: 0, deletions: 0, files: 0 } })
+      if (url.pathname.startsWith("/api/rpc/"))
+        return json({ _tag: "RpcError", type: "rpc.method_not_found", message: "missing" }, { status: 400 })
+      if (url.pathname === "/api/session" && url.searchParams.get("parentID")) return json({ data: [], cursor: {} })
+      const match = url.pathname.match(/^\/api\/session\/([^/]+)(\/.*)?$/)
+      if (!match) return undefined
+      const [, id, rest] = match
+      if (!(id in known)) return undefined
+      if (rest === "/fork" && request.method === "POST") {
+        forks.push(id)
+        return json({ data: known.ses_fork })
+      }
+      if (!rest) return json({ data: known[id] })
+      if (rest === "/message") return json({ data: [], cursor: {} })
+      if (rest === "/inbox" || rest === "/form" || rest === "/permission") return json({ data: [] })
+      return undefined
+    },
+  })
+  await app.ready
+  await app.waitForFrame((frame) => frame.includes("Builder") && frame.includes("new worktree"))
+
+  app.mockInput.pressKey("p", { ctrl: true })
+  await app.waitFor(() => app.renderer.currentFocusedRenderable instanceof InputRenderable)
+  app.mockInput.typeText("Fork agent")
+  await app.waitForFrame((frame) => frame.includes("Fork agent"))
+  app.mockInput.pressEnter()
+
+  await app.waitFor(() => forks.length === 1)
+  expect(forks).toEqual(["ses_root"])
+  await app.waitForFrame((frame) => frame.includes("Builder (fork #1)"))
+  // The server announces the dashboard's own fork too; it must not list it twice.
+  const forked = (sessionID: string, id: string) =>
+    app.events.emit({
+      id,
+      type: "session.forked",
+      created: 1,
+      location: { directory },
+      data: { sessionID, parentID: "ses_root", boundary: { type: "end" } },
+    } as unknown as OpenCodeEvent)
+  forked("ses_fork", "evt_fork")
+  // A fork made from the session view's /fork arrives only as the event.
+  forked("ses_fork2", "evt_fork2")
+  await app.waitForFrame((frame) => frame.includes("Builder (fork #2)"))
+  const agents = path.join(storage, "plugin.dispatch.agents.json")
+  const saved = async () =>
+    (await Bun.file(agents).json()).agents.map((agent: { name: string; sessionID: string }) => [
+      agent.name,
+      agent.sessionID,
+    ])
+  await app.waitFor(async () => (await saved()).length === 3)
+  expect(await saved()).toEqual([
+    ["Builder", "ses_root"],
+    ["Builder (fork #1)", "ses_fork"],
+    ["Builder (fork #2)", "ses_fork2"],
+  ])
 })

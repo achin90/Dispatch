@@ -10,6 +10,7 @@ import { useTuiPaths } from "../../context/runtime"
 import { useDialog } from "../../ui/dialog"
 import { useToast } from "../../ui/toast"
 import { errorMessage } from "../../util/error"
+import { addForkedAgent } from "./create"
 import { DialogAdvisor } from "./dialog-advisor"
 import { DialogUsage } from "./dialog-usage"
 import { DispatchModel } from "./model"
@@ -201,6 +202,15 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
     context.data.on("session.execution.succeeded", (event) => settled(event.data.sessionID)),
     context.data.on("session.execution.failed", (event) => settled(event.data.sessionID)),
     context.data.on("session.execution.interrupted", (event) => settled(event.data.sessionID)),
+    // A fork of an agent, from the dashboard or the session view's /fork, becomes an agent too.
+    context.data.on("session.forked", (event) => {
+      const source = store.agents.agents.find((agent) => agent.sessionID === event.data.parentID)
+      if (!source) return
+      void client.api.session
+        .get({ sessionID: event.data.sessionID })
+        .then((info) => addForkedAgent({ store, root: data.location.default().directory }, source, info))
+        .catch(toast.error)
+    }),
     context.data.on("session.deleted", (event) => {
       if (!isAgent(event.data.sessionID)) return
       void store.updateAgents((draft) => {

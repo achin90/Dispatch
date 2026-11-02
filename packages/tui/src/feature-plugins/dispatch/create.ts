@@ -35,16 +35,54 @@ export async function createAgent(
     metadata: DispatchModel.agentMetadata({ name: input.name, createdAt, worktree: input.worktree }, id),
   })
   host.data.session.remember(info)
-  const entry: DispatchModel.AgentEntry = {
+  return addAgent(host, {
     id: crypto.randomUUID(),
     name: input.name,
     sessionID: info.id,
     createdAt,
     directory: input.directory,
     ...(input.worktree ? { worktree: input.worktree } : {}),
-  }
+  })
+}
+
+/** Forks the agent's full session and lists the fork right away, so the dashboard can select it. */
+export async function forkAgent(host: CreateHost, agent: DispatchModel.AgentEntry) {
+  const info = await host.client.api.session.fork({ sessionID: agent.sessionID })
+  host.data.session.remember(info)
+  return addForkedAgent(host, agent, info)
+}
+
+/**
+ * Lists a fork of an agent's session as a new agent next to it. The server names the fork
+ * ("<name> (fork #1)") and copies the source's location, agent and model.
+ */
+export function addForkedAgent(
+  host: Pick<CreateHost, "store" | "root">,
+  source: DispatchModel.AgentEntry,
+  fork: { id: string; title?: string },
+) {
+  return addAgent(host, {
+    id: crypto.randomUUID(),
+    name: fork.title || `${source.name} (fork #1)`,
+    sessionID: fork.id,
+    createdAt: Date.now(),
+    ...(source.directory ? { directory: source.directory } : {}),
+    ...(source.worktree ? { worktree: { ...source.worktree } } : {}),
+  })
+}
+
+/**
+ * Inserts the entry into the dashboard list next to its directory group. A session already listed
+ * keeps its row: a dashboard fork is added both here and by the session.forked watcher.
+ */
+async function addAgent(host: Pick<CreateHost, "store" | "root">, entry: DispatchModel.AgentEntry) {
+  const listed = (agents: readonly DispatchModel.AgentEntry[]) =>
+    agents.find((agent) => agent.sessionID === entry.sessionID)
+  const existing = listed(host.store.agents.agents)
+  if (existing) return { entry: existing, index: host.store.agents.agents.indexOf(existing) }
   const inserted = DispatchModel.insertAgent(host.store.agents.agents, entry, host.root)
   await host.store.updateAgents((draft) => {
+    if (listed(draft.agents)) return
     draft.agents = DispatchModel.insertAgent(draft.agents, entry, host.root).agents
   })
   return { entry, index: inserted.index }

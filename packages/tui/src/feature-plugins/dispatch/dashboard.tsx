@@ -21,7 +21,7 @@ import { Prompt } from "../../component/prompt"
 import { filetype } from "../../util/filetype"
 import { errorMessage } from "../../util/error"
 import { permissionPresentation } from "../../util/permission"
-import { createDirectoryAgent, createWorktreeAgent } from "./create"
+import { createDirectoryAgent, createWorktreeAgent, forkAgent } from "./create"
 import { DialogDirectorySelect } from "./dialog-directory-select"
 import { DialogGitRepoSelect } from "./dialog-git-repo-select"
 import { DispatchModel } from "./model"
@@ -148,6 +148,20 @@ export function Dashboard(props: { context: Plugin.Context }) {
       .then((created) => setIndex(created.index))
       .catch((error: unknown) =>
         toast.show({ title: "Creating worktree failed", message: errorMessage(error), variant: "error" }),
+      )
+      .finally(() => setBusy(false))
+  }
+
+  async function fork(agent: DispatchModel.AgentEntry) {
+    setPromptOpen(false)
+    setBusy(true)
+    await forkAgent(host(), agent)
+      .then((created) => {
+        setIndex(created.index)
+        toast.show({ message: `Forked "${agent.name}" as "${created.entry.name}"`, variant: "success" })
+      })
+      .catch((error: unknown) =>
+        toast.show({ title: "Forking agent failed", message: errorMessage(error), variant: "error" }),
       )
       .finally(() => setBusy(false))
   }
@@ -323,6 +337,27 @@ export function Dashboard(props: { context: Plugin.Context }) {
     enabled: promptOpen(),
     priority: 2,
     commands: [{ bind: "escape", title: "Dismiss prompt", group: "Dashboard", run: () => setPromptOpen(false) }],
+  }))
+
+  // Only registered while the dashboard is mounted; inside a session, /fork is the session route's.
+  // Global so the command palette, which opens in its own mode, can still reach it.
+  context.keymap.layer(() => ({
+    mode: "global",
+    commands: [
+      {
+        id: "dispatch.agent.fork",
+        title: "Fork agent",
+        group: "Agent",
+        palette: true,
+        slash: { name: "fork" },
+        enabled: () => selected() !== undefined && !busy(),
+        run: () => {
+          dialog.clear()
+          const agent = selected()
+          if (agent) void fork(agent)
+        },
+      },
+    ],
   }))
 
   return (
