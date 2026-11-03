@@ -18,6 +18,9 @@ export function build(input: { readonly apiKey?: string; readonly base?: Record<
     _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1",
     // The optimistic tool-search mode returns empty results that models read as dead MCP servers.
     ENABLE_TOOL_SEARCH: "false",
+    // The CLI withholds the claude.ai Artifact tool from SDK entrypoints unless this opts back in.
+    // It still needs a claude.ai login on a plan (and org policy) that allows artifacts.
+    CLAUDE_CODE_ARTIFACT: "1",
     ...(input.apiKey ? { ANTHROPIC_API_KEY: input.apiKey } : {}),
   }
 }

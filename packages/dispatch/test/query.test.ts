@@ -137,6 +137,7 @@ describe("CLI environment", () => {
       HOME: "/h",
       _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1",
       ENABLE_TOOL_SEARCH: "false",
+      CLAUDE_CODE_ARTIFACT: "1",
       ANTHROPIC_API_KEY: "sk-test",
     })
     expect(SdkEnv.build({ base: {} })).not.toHaveProperty("ANTHROPIC_API_KEY")
