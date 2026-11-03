@@ -1,3 +1,4 @@
+import type { SessionInfo } from "@opencode/client"
 import type { Plugin } from "@opencode/plugin/tui"
 import { createEffect, on, onCleanup, onMount } from "solid-js"
 import { existsSync, readFileSync } from "node:fs"
@@ -222,6 +223,59 @@ export function DispatchWatcher(props: { context: Plugin.Context; route: string 
   void refreshRemote(context, store)
 
   const currentSession = () => (route.data.type === "session" ? data.session.root(route.data.sessionID) : undefined)
+
+  // Switching straight from an agent's session to another one (the session list, a tab) moves the
+  // agent to it, so entering the agent later reopens where the user left off. Passing through the
+  // dashboard or home breaks the chain, and a fork made from inside the agent becomes its own agent.
+  createEffect(
+    on(
+      () => (route.data.type === "session" ? route.data.sessionID : undefined),
+      (next, previous) => {
+        if (!next || !previous || next === previous) return
+        const agent = store.agents.agents.find((item) => item.sessionID === data.session.root(previous))
+        if (agent) void retarget(agent.id, agent.sessionID, next).catch(toast.error)
+      },
+    ),
+  )
+  const retarget = async (agentID: string, from: string, sessionID: string) => {
+    const info = await rootSession(sessionID)
+    if (info.id === from || isAgent(info.id) || info.fork?.sessionID === from) return
+    const fallback = data.location.default().directory
+    const directory = info.location.directory.replace(/\/+$/, "") || "/"
+    const agent = store.agents.agents.find((item) => item.id === agentID)
+    const moved = agent !== undefined && directory !== DispatchModel.agentDirectory(agent, fallback)
+    const worktree = moved
+      ? await DispatchRpc.optional(client.api, "worktree.info", { directory }, directory)
+      : undefined
+    await store.updateAgents((draft) => {
+      const entry = draft.agents.find((item) => item.id === agentID)
+      if (!entry || entry.sessionID !== from || draft.agents.some((item) => item.sessionID === info.id)) return
+      entry.sessionID = info.id
+      if (!moved) return
+      // A session in another directory regroups the row there, with that directory's worktree if any.
+      const updated = {
+        ...entry,
+        directory,
+        worktree: worktree
+          ? { branch: worktree.branch, directory: worktree.directory, sourceRepo: worktree.sourceRepo }
+          : undefined,
+      }
+      draft.agents = DispatchModel.insertAgent(
+        draft.agents.filter((item) => item.id !== agentID),
+        updated,
+        fallback,
+      ).agents
+    })
+    store.setState((draft) => {
+      if (draft.lastEntered === from) draft.lastEntered = info.id
+      if (draft.selected === from) draft.selected = info.id
+    })
+    summarize(info.id)
+  }
+  const rootSession = async (sessionID: string): Promise<SessionInfo> => {
+    const info = data.session.get(sessionID) ?? (await client.api.session.get({ sessionID }))
+    return info.parentID ? rootSession(info.parentID) : info
+  }
   const remote = async (action: "session.remoteControl" | "session.remoteControlStop") => {
     const sessionID = currentSession()
     dialog.clear()
