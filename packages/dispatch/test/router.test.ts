@@ -17,6 +17,7 @@ import type { Tool } from "@opencode/core/tool"
 import { Provider } from "@opencode/schema/provider"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Effect } from "effect"
+import { TestClock } from "effect/testing"
 import { SdkPermission } from "../src/runner/permission"
 import { SdkRouter } from "../src/runner/router"
 import * as sdk from "./sdk"
@@ -57,9 +58,12 @@ const insertSession = (id: SessionSchema.ID, parent?: SessionSchema.ID) =>
       .pipe(Effect.orDie)
   })
 
-/** Routes frames through a real Bus and projector, then reads the projected Session messages. */
+/**
+ * Routes frames through a real Bus and projector, then reads the projected Session messages.
+ * A number among the frames advances a test clock by that many milliseconds.
+ */
 const route = (
-  frames: SDKMessage[],
+  frames: (SDKMessage | number)[],
   options: {
     readonly summary?: string
     readonly metadata?: Map<string, Tool.Metadata>
@@ -100,7 +104,8 @@ const route = (
         compactSummary: () => options.summary,
         declined: () => options.declined === true,
       })
-      for (const frame of frames) yield* router.handle(frame)
+      for (const frame of frames)
+        yield* typeof frame === "number" ? TestClock.adjust(frame) : router.handle(frame)
       if (options.interrupt) yield* router.abort({ type: "aborted", message: "Step interrupted" }, true)
       const read = (id: SessionSchema.ID) =>
         store.context(id).pipe(Effect.map((messages) => messages.filter((message) => message.type !== "user")))
@@ -113,7 +118,12 @@ const route = (
         child: children.length > 0 ? yield* read(childID) : [],
         childMessages: yield* Effect.forEach(childIDs, read),
       }
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      // Only clock tests get the test clock: compaction waits on real sleeps.
+      frames.some((frame) => typeof frame === "number") ? Effect.provide(TestClock.layer()) : (effect) => effect,
+    ),
   )
 
 const assistants = (messages: readonly SessionMessage.Info[]) =>
@@ -155,6 +165,23 @@ describe("SDK frames → v2 messages", () => {
     const [first, second] = assistants(out.main)
     expect(first.tokens).toEqual({ input: 10, output: 25, reasoning: 0, cache: { read: 300, write: 40 } })
     expect(second.tokens).toEqual({ input: 1, output: 2, reasoning: 0, cache: { read: 500, write: 0 } })
+  })
+
+  test("a step's streaming time ends at message_stop, not after the SDK runs its tools", async () => {
+    const out = await route([
+      ...sdk.toolTurn("msg_1", { id: "toolu_1", name: "Bash", input: { command: "sleep 30" } }, usage).flatMap(
+        (frame) => [frame, 100],
+      ),
+      30_000,
+      sdk.toolResult("toolu_1", [{ type: "text", text: "" }]),
+      ...sdk.textTurn("msg_2", "Done.", usage),
+      sdk.result(),
+    ])
+    const [first] = assistants(out.main)
+    const streamed = first.time.streamed!.epochMilliseconds - first.time.created.epochMilliseconds
+    // Five 100ms gaps between message_start and message_stop; the 30s tool run stays out.
+    expect(streamed).toBe(500)
+    expect(first.time.completed!.epochMilliseconds - first.time.created.epochMilliseconds).toBeGreaterThan(30_000)
   })
 
   test("complete frames publish when a call was not streamed; empty thinking is dropped", async () => {

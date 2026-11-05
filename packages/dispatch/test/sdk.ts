@@ -41,6 +41,8 @@ export const blockStop = (index: number, parent: string | null = null) =>
 export const messageDelta = (stop: string, usage: Partial<Usage>, parent: string | null = null) =>
   stream({ type: "message_delta", delta: { stop_reason: stop }, usage }, parent)
 
+export const messageStop = (parent: string | null = null) => stream({ type: "message_stop" }, parent)
+
 /** A whole streamed text reply. */
 export const textTurn = (id: string, text: string, usage: Usage, parent: string | null = null) => [
   messageStart(id, { ...usage, output_tokens: 1 }, parent),
@@ -48,6 +50,7 @@ export const textTurn = (id: string, text: string, usage: Usage, parent: string 
   textDelta(0, text, parent),
   blockStop(0, parent),
   messageDelta("end_turn", { output_tokens: usage.output_tokens }, parent),
+  messageStop(parent),
 ]
 
 /** A streamed turn that calls one tool. */
@@ -62,6 +65,7 @@ export const toolTurn = (
   jsonDelta(0, JSON.stringify(tool.input), parent),
   blockStop(0, parent),
   messageDelta("tool_use", { output_tokens: usage.output_tokens }, parent),
+  messageStop(parent),
 ]
 
 /** A streamed turn that calls several tools in parallel, as one API call. */
@@ -77,6 +81,7 @@ export const toolsTurn = (
     blockStop(index),
   ]),
   messageDelta("tool_use", { output_tokens: usage.output_tokens }),
+  messageStop(),
 ]
 
 /** A complete (non-streamed) assistant frame. */

@@ -69,6 +69,8 @@ interface Turn {
   /** Raw usage of this API call, replaced (never summed) as later frames report it. */
   usage: ApiUsage
   stop: string | null | undefined
+  /** Step.Streamed already published, at message_stop; close() publishes it only when missing. */
+  streamed: boolean
 }
 
 const TOOLS_INTERRUPTED = { type: "aborted", message: "Tool execution interrupted" } as const
@@ -128,6 +130,7 @@ export function make(input: Input) {
       settled: new Set(),
       usage: {},
       stop: undefined,
+      streamed: false,
     }
     turn = next
     yield* next.publisher.startAssistant()
@@ -183,6 +186,12 @@ export function make(input: Input) {
       current.usage = merge(current.usage, event.usage as ApiUsage)
       current.stop = event.delta.stop_reason ?? current.stop
       return
+    }
+    // The step closes only at the next message_start or the result, after the SDK has run this
+    // call's tools; marking the stream's end here keeps tool time out of tok/s.
+    if (event.type === "message_stop") {
+      current.streamed = true
+      return yield* current.publisher.streamed()
     }
     if (event.type === "content_block_start") {
       const block = event.content_block as {
@@ -356,7 +365,7 @@ export function make(input: Input) {
         usage: usageOf(current.usage),
       }),
     )
-    yield* current.publisher.streamed()
+    if (!current.streamed) yield* current.publisher.streamed()
     const record = current.publisher.record()
     const tokens = SessionUsage.tokens(usageOf(current.usage))
     const cost = SessionUsage.calculateCost(input.cost, tokens)
