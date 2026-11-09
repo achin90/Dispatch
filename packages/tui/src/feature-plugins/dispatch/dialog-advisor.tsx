@@ -7,7 +7,8 @@ import { errorMessage } from "../../util/error"
 
 const options = [
   { value: "off", title: "Off", description: "No advisor" },
-  { value: "fable", title: "Fable", description: "Strongest reviewer" },
+  // Pinned to a full id: the CLI's bare "fable" alias moves with each CLI release.
+  { value: "claude-fable-5-2", title: "Fable 5.2", description: "Strongest reviewer" },
   { value: "opus", title: "Opus", description: "Only advises models at or below Opus" },
   { value: "sonnet", title: "Sonnet", description: "Only advises models at or below Sonnet" },
 ]
@@ -54,8 +55,9 @@ export function DialogAdvisor() {
 // Config entries run lowest to highest precedence, so the last document that sets the key wins.
 async function readAdvisor(api: ReturnType<typeof useClient>["api"]) {
   const entries = await api.config.get().catch(() => [])
-  return (
+  const value =
     entries.flatMap((entry) => (entry.type === "document" && entry.info.advisor ? [entry.info.advisor] : [])).at(-1) ??
     "off"
-  )
+  // Configs saved before the pin store the bare alias, which the CLI resolves to Fable 5.2.
+  return value === "fable" ? "claude-fable-5-2" : value
 }

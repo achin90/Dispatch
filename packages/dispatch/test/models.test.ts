@@ -11,7 +11,7 @@ import { SdkModels } from "../src/sdk/models"
 describe("SDK models", () => {
   test("contains the expected aliases and opus-5-5 is the default", () => {
     expect(Object.keys(SdkModels.definitions)).toEqual(
-      expect.arrayContaining(["default", "fable-5-1", "opus-5-5", "opus-4-6[1m]", "sonnet", "haiku"]),
+      expect.arrayContaining(["default", "fable-5-2", "opus-5-5", "opus-4-6[1m]", "sonnet", "haiku"]),
     )
     expect(SdkModels.DEFAULT).toBe("opus-5-5")
     expect(SdkModels.definitions.default.resolves).toBe(SdkModels.definitions["opus-5-5"].resolves)
@@ -45,7 +45,7 @@ describe("SDK models", () => {
   })
 
   test("effort ladders", () => {
-    expect(SdkModels.efforts("claude-fable-5-1", true)).toEqual(["low", "medium", "high", "xhigh", "max"])
+    expect(SdkModels.efforts("claude-fable-5-2", true)).toEqual(["low", "medium", "high", "xhigh", "max"])
     expect(SdkModels.efforts("claude-opus-4-6[1m]", true)).toEqual(["low", "medium", "high", "max"])
     expect(SdkModels.efforts("claude-opus-4-5", true)).toEqual([])
   })

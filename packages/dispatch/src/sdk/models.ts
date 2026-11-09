@@ -25,7 +25,7 @@ export interface Definition {
  *
  * Every Opus entry that claims a 1M window carries the `[1m]` suffix: the suffix is the
  * opt-in, and a bare id makes the CLI report a 200k window and auto-compact early.
- * Sonnet 5 is native 1M and rejects the suffix.
+ * Sonnet 5 and Fable 5.2 are native 1M and take a bare id.
  */
 export const definitions: Readonly<Record<string, Definition>> = {
   default: {
@@ -37,14 +37,14 @@ export const definitions: Readonly<Record<string, Definition>> = {
     reasoning: true,
     catalog: "claude-opus-5-5",
   },
-  "fable-5-1": {
-    resolves: "claude-fable-5-1",
-    name: "Fable 5.1",
+  "fable-5-2": {
+    resolves: "claude-fable-5-2",
+    name: "Fable 5.2",
     context: 1_000_000,
     output: 64_000,
-    description: "Most intelligent, for the hardest problems · $10/$50 per Mtok",
+    description: "Most intelligent, for the hardest problems · $8/$40 per Mtok",
     reasoning: true,
-    catalog: "claude-fable-5-1",
+    catalog: "claude-fable-5-2",
   },
   "opus-5-5": {
     resolves: "claude-opus-5-5[1m]",
